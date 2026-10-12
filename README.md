@@ -41,25 +41,26 @@ warmctl up ghcr.io/you/qwen3-8b
 
 ## Measured
 
-`warmctl up` to serving, by where the snapshot is read from.
+`warmctl up` to serving, snapshot in page cache, against a vLLM cold start
+(weights on local disk, empty compile caches).
 
-| Model | GPUs | Image | Page cache | File share, cold | vLLM cold start |
-|---|---|---|---|---|---|
-| GLM-5.3-Flash | 8×H100 | 404 GiB | **37 s** | **57 s** | 650 s |
-| GLM-5.3-Flash | 8×B200 | 418 GiB | **44 s** | | |
-| DeepSeek-V4.1-Flash | 8×H100 | 678 GiB | **75–86 s** | | 357 s |
-| DeepSeek-V4.1-Flash | 4×B200 | 621 GiB | **73 s** | | |
-| gpt-oss-120b | 1×B200 · 2–4×H100 | 78–81 GiB | **13–16 s** | | 351 s |
-| Qwen3-32B | 4–8×H100 · 1×B200 | 72–116 GiB | **13–21 s** | | |
-| Qwen3.6-35B-A3B | 1×H100 · 1×B200 | 43–46 GiB | **10–12 s** | | |
-| Gemma 4 26B-A4B | 1×H100 · 1×B200 | 57–60 GiB | **12–14 s** | | |
-| Qwen3-8B | 1–2×H100 · 2×L40S | 23–30 GiB | **8–10 s** | | |
+| Model | GPUs | Image | warmctl up | vLLM cold start |
+|---|---|---|---|---|
+| GLM-5.3-Flash | 8×H100 | 404 GiB | **37 s** | 650 s |
+| DeepSeek-V4.1-Flash | 8×H100 | 678 GiB | **78 s** | 357 s |
+| gpt-oss-120b | 1×B200 | 78 GiB | **13 s** | 351 s |
+| Gemma 4 26B-A4B | 1×B200 | 60 GiB | **12 s** | ~330 s |
+| Qwen3-32B | 1×B200 | 72 GiB | **13 s** | ~300 s |
+| Qwen3.6-35B-A3B | 1×B200 | 46 GiB | **10 s** | ~240 s |
+| Qwen3-8B | 1×H100 | 23 GiB | **9 s** | ~80 s |
 
-- **Page cache**: the snapshot is already in host memory.
-- **File share, cold**: the snapshot on a network file share (about 10 GB/s),
-  page cache dropped. `up` reads it ahead in 32 streams, 7.8 GiB/s.
+~ is the time to a ready engine while building the snapshot; where we
+measured both, a plain cold start was 1–24% shorter. On B200, GLM-5.3-Flash
+restores in 44 s (8×B200) and DeepSeek-V4.1-Flash in 73 s (4×B200); every
+platform is in the [catalog](https://warmctl.io/catalog/).
 
-GLM-5.3-Flash on 8×H100, by phase:
+GLM-5.3-Flash on 8×H100 by phase, from page cache and from a cold network
+file share (about 10 GB/s):
 
 | Phase | Page cache | File share, cold |
 |---|---|---|
