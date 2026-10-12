@@ -91,10 +91,11 @@ pod-image:
 	docker build -t $(POD_IMAGE) -f deploy/kubernetes/Dockerfile --build-context cuinterpose=bin/cuinterpose \
 		--build-arg VERSION=$(VERSION) .
 
-release: linux cuinterpose
-	mkdir -p dist
-	cp LICENSE NOTICE bin/
-	tar -C bin -czf dist/warmctl-$(VERSION)-linux-amd64.tar.gz warmctl-linux-amd64 LICENSE NOTICE cuinterpose
+# The release archives as .github/workflows/release.yml builds them, as a
+# local snapshot in dist/ (nothing signed or published). Needs goreleaser v2.
+release:
+	test -f bin/cuinterpose/libcuinterpose.so || $(MAKE) cuinterpose
+	goreleaser release --snapshot --clean --skip=sign,sbom
 
 # Record docs/assets/up.gif from docs/demo/up.tape (a replay of a real
 # restore log) with charmbracelet/vhs in Docker.

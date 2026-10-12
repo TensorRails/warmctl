@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+Releases
+
+- Every release ships archives for linux/amd64 (with cuInterpose),
+  linux/arm64 and macOS (amd64, arm64), built by GitHub Actions from the tag.
+  The binary is `warmctl` in every archive (was `warmctl-linux-amd64`).
+  linux/arm64 has no cuInterpose build yet and is not proven on a GPU; on
+  macOS warmctl runs the registry side (`catalog`, `images`, `mirror`, `push`,
+  `pull`, `profile`).
+- `warmctl-<tag>-checksums.txt` is signed keylessly with cosign, every archive
+  has an SBOM and build provenance (`gh attestation verify`); how to check
+  them: [RELEASING.md](RELEASING.md#verify-a-release).
+- CI also tests on arm64, cross-compiles every release platform and runs
+  govulncheck; actions are pinned by commit and kept current by Dependabot.
+
 ## v2.0.0-beta.5 — 2026-10-12
 
 The first public release. Restore in a Kubernetes pod with the same

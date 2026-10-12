@@ -1,0 +1,72 @@
+# Release archives for every v* tag, built by .github/workflows/release.yml
+# (RELEASING.md). Locally: make release (a snapshot, nothing published).
+version: 2
+project_name: warmctl
+
+builds:
+  # linux/amd64 ships with cuInterpose (bin/cuinterpose, from make cuinterpose).
+  - id: full
+    main: ./cmd/warmctl
+    binary: warmctl
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64]
+    flags: [-trimpath]
+    ldflags: ['-s -w -X main.version={{ if .IsSnapshot }}{{ .Tag }}-dev+{{ .ShortCommit }}{{ else }}{{ .Tag }}{{ end }}']
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  # linux/arm64 has no cuInterpose build yet; macOS runs the registry side
+  # (catalog, images, mirror, push, pull, profile), not build or up.
+  - id: plain
+    main: ./cmd/warmctl
+    binary: warmctl
+    env: [CGO_ENABLED=0]
+    targets: [linux_arm64, darwin_amd64, darwin_arm64]
+    flags: [-trimpath]
+    ldflags: ['-s -w -X main.version={{ if .IsSnapshot }}{{ .Tag }}-dev+{{ .ShortCommit }}{{ else }}{{ .Tag }}{{ end }}']
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: full
+    ids: [full]
+    formats: [tar.gz]
+    name_template: "warmctl-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - src: bin/cuinterpose/*
+        dst: cuinterpose
+        strip_parent: true
+  - id: plain
+    ids: [plain]
+    formats: [tar.gz]
+    name_template: "warmctl-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+
+checksum:
+  name_template: "warmctl-{{ .Tag }}-checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+# Keyless: the bundle holds the workflow's certificate, so verifying needs no key.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--bundle=${signature}", "--yes", "${artifact}"]
+
+# Notes come from CHANGELOG.md (scripts/release-notes.sh), not from commits.
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: TensorRails
+    name: warmctl
+  name_template: "{{ .Tag }}"
+  prerelease: auto

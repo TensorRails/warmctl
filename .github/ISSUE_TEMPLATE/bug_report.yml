@@ -1,0 +1,41 @@
+name: Bug report
+description: A build, restore, pull or push that fails or misbehaves
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what it did and what you expected.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: warmctl version
+      description: Output of `warmctl version`.
+      placeholder: warmctl v2.0.0-beta.5
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: GPUs and driver
+      placeholder: 8× H100 SXM, driver 580.95.05
+  - type: input
+    id: snapshot
+    attributes:
+      label: Profile or snapshot
+      placeholder: glm53-flash-prod-tp8, or registry.warmctl.io/warmctl/glm53-flash
+  - type: textarea
+    id: doctor
+    attributes:
+      label: warmctl doctor
+      description: Output of `warmctl doctor` on the host.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The output of the failing command; for a restore, its progress log and the error.
+      render: text

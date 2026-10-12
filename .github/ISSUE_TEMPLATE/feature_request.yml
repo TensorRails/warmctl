@@ -1,0 +1,16 @@
+name: Model, GPU or feature
+description: A model or GPU to support, or something warmctl should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you need
+      description: The model and GPUs (with vLLM flags if they matter), or the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What it would let you do, and what you do today instead.

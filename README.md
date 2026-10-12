@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="release v2.0.0-beta.5" src="https://img.shields.io/badge/release-v2.0.0--beta.5-ededed?style=flat-square&labelColor=0a0a0a"></a>
+  <a href="https://github.com/TensorRails/warmctl/releases"><img alt="latest release" src="https://img.shields.io/github/v/release/TensorRails/warmctl?include_prereleases&sort=semver&label=release&color=ededed&style=flat-square&labelColor=0a0a0a"></a>
+  <a href="https://github.com/TensorRails/warmctl/actions/workflows/ci.yml"><img alt="ci" src="https://img.shields.io/github/actions/workflow/status/TensorRails/warmctl/ci.yml?branch=main&label=ci&style=flat-square&labelColor=0a0a0a"></a>
   <a href="LICENSE"><img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-ededed?style=flat-square&labelColor=0a0a0a"></a>
   <img alt="engine vLLM" src="https://img.shields.io/badge/engine-vLLM-7aa7d9?style=flat-square&labelColor=0a0a0a">
   <img alt="GPUs H100, H200, B200, L40S" src="https://img.shields.io/badge/GPUs-H100%20%C2%B7%20H200%20%C2%B7%20B200%20%C2%B7%20L40S-6dbb9a?style=flat-square&labelColor=0a0a0a">
@@ -22,8 +23,9 @@ vLLM cold start 650 s, `warmctl up` 37 s, then stock serving speed.
 Linux GPU host, Docker with the NVIDIA runtime, root:
 
 ```bash
-mkdir -p /opt/warmctl && tar xzf warmctl-v2.0.0-beta.5-linux-amd64.tar.gz -C /opt/warmctl
-ln -sf warmctl-linux-amd64 /opt/warmctl/warmctl && export PATH=/opt/warmctl:$PATH
+V=v2.0.0-beta.6 && mkdir -p /opt/warmctl
+curl -fsSL https://github.com/TensorRails/warmctl/releases/download/$V/warmctl-$V-linux-amd64.tar.gz | tar xz -C /opt/warmctl
+export PATH=/opt/warmctl:$PATH
 sysctl -w kernel.io_uring_disabled=2         # CRIU cannot dump io_uring
 warmctl doctor                              # check the host
 warmctl catalog                             # models this host can restore
@@ -107,13 +109,18 @@ Linux x86-64, Docker with the NVIDIA runtime, root, driver 580+,
 `kernel.io_uring_disabled=2`. A snapshot restores under any release of the
 driver branch it was built on (580.x, 610.x). Proven on H100 SXM, H200, B200
 and L40S.
-Keep `warmctl-linux-amd64` and `cuinterpose/` from the release archive side by
-side, or build both with `make linux cuinterpose`.
+Keep `warmctl` and `cuinterpose/` from the linux-amd64 archive side by side,
+or build both with `make build cuinterpose`. Releases also ship linux-arm64
+(no cuInterpose yet, not proven on a GPU) and macOS builds, which run the
+registry side: `catalog`, `images`, `mirror`, `push`, `pull`. Every release
+is signed and has build provenance ([verify](RELEASING.md#verify-a-release)).
 
 ## Develop
 
 `make test` · `make lint` · `make e2e-test` (CPU, Docker, root) ·
-`make release`. GPU acceptance: [docs/gpu-runbook.md](docs/gpu-runbook.md).
+`make release` (the release archives as a local snapshot). Releases:
+[RELEASING.md](RELEASING.md). GPU acceptance:
+[docs/gpu-runbook.md](docs/gpu-runbook.md).
 
 ## License
 
