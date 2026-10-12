@@ -1,0 +1,42 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - funlen
+    - gocognit
+    - lll
+    - misspell
+    - revive
+  settings:
+    errcheck:
+      # Best-effort cleanup and console output. Writes that matter (files
+      # we produce) check Sync and Close explicitly.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*os.Root).Close
+        - (io/fs.File).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - os.Remove
+        - os.RemoveAll
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    funlen:
+      lines: 60
+      statements: 45
+    gocognit:
+      min-complexity: 20
+    lll:
+      line-length: 120
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck, funlen, gocognit, lll]
+      - path: tests/
+        linters: [funlen, lll]
+formatters:
+  enable:
+    - gofmt
+    - goimports

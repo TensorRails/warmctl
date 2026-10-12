@@ -1,0 +1,8 @@
+# gpt-oss-120b on one 180 GB GPU: the MXFP4 experts on Blackwell's native
+# FP4 kernels.
+schema: warmctl.profile/v1
+id: gpt-oss-120b-tp1
+model: {id: openai/gpt-oss-120b, revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a, served_names: [gpt-oss-120b]}
+parallel: {tp: 1}
+hardware: [b200-180gb]
+resources: {memory: 128GiB}

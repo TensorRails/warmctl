@@ -1,0 +1,16 @@
+[project]
+name = "warmctl-vllm"
+version = "2.0.0a0"
+description = "vLLM worker extension for warmctl snapshots: export and reload the weights pool"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+dependencies = []
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# Percent formatting is the house style; type hints stay 3.9-compatible.
+ignore = ["UP006", "UP007", "UP031", "UP035"]

@@ -1,0 +1,7 @@
+schema: warmctl.profile/v1
+id: nemotron35-30b-a3b-tp1
+model: {id: RedHatAI/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-FP8, revision: bff279eb543e15f7c0e3f922661e66a1b78ac2e0, served_names: [nemotron35]}
+parallel: {tp: 1}
+hardware: [h100-80gb-sxm]
+vllm: {mamba-cache-mode: align}
+resources: {memory: 128GiB}

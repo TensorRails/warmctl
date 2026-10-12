@@ -1,0 +1,10 @@
+# profile: deepseek-v41-flash-prod-tp8
+# B: the profile's exact fast flags, minus warmctl lifecycle flags
+# Stock vLLM cold serve + deepseek-prod-probe.py (quality + bench). Generated from
+# profile deepseek-v41-flash-prod-tp8 (docs/profiles/deepseek-v41-flash-prod.md).
+ID=dsp-b
+MODEL=/var/lib/warmctl/models/deepseek-v41-flash
+GPUS=0,1,2,3,4,5,6,7
+PROBE=/var/lib/warmctl/bin/deepseek-prod-probe.py
+STOCK_IMAGE=vllm/vllm-openai:cu134-nightly@sha256:ad9dc6397abc878d8e764daa39e16bdc7f1ecf9fb3d0283c076530b299c31ad0
+STOCK_ARGS='--async-scheduling --compilation-config {"cudagraph_capture_sizes":[6,12,24,48,96,144,192,288,384,480,576,672,768],"cudagraph_mode":"FULL_AND_PIECEWISE","mode":3,"pass_config":{"fuse_allreduce_rms":true}} --distributed-executor-backend=mp --dtype=bfloat16 --enable-auto-tool-choice --enable-chunked-prefill --enable-expert-parallel --enable-prefix-caching --enable-prompt-tokens-details --engram-config {"cpu_offload":true,"dp_shared_memory":false,"use_thp":false} --gpu-memory-utilization 0.85 --kv-cache-dtype=fp8 --kv-cache-memory-bytes 21474836480 --limit-mm-per-prompt {"image":0,"video":0} --max-model-len 196608 --max-num-batched-tokens 8192 --max-num-seqs 128 --moe-backend=marlin --override-generation-config {"temperature":1,"top_p":0.95} --reasoning-parser=deepseek_v41 --seed 42 --served-model-name deepseek-v41-flash deepseek-ai/DeepSeek-V4.1-Flash --speculative-config {"draft_sample_method":"probabilistic","enable_adaptive_verification":true,"method":"dspark","num_speculative_tokens":5} --tensor-parallel-size 8 --tokenizer-mode=deepseek_v41 --tool-call-parser=deepseek_v41'

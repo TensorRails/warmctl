@@ -1,0 +1,7 @@
+schema: warmctl.profile/v1
+id: t-pro-it-2.1-tp2
+model: {id: t-tech/T-pro-it-2.1, revision: a677a7c27bb8820c816fbcf578d912acedcf4439, served_names: [t-pro]}
+parallel: {tp: 2}
+hardware: [l40s-48gb, h100-80gb-sxm]
+vllm: {disable-custom-all-reduce: null}
+resources: {memory: 128GiB}

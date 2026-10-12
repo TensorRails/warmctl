@@ -1,0 +1,10 @@
+warmctl
+Copyright 2026 The warmctl Authors
+
+This product is licensed under the Apache License, Version 2.0 (LICENSE).
+
+Release archives also contain cuInterpose (cuinterpose/), Copyright (c) 2026
+NVIDIA CORPORATION & AFFILIATES, licensed under the Apache License, Version
+2.0 (cuinterpose/LICENSE). It is built unmodified from
+https://github.com/ai-dynamo/snapshot at commit
+50bf0db3575df64c968e3f3255d5fa8938950b7a (v0.2.0-rc.2), agent/cmd/cuinterpose.

@@ -1,0 +1,6 @@
+schema: warmctl.profile/v1
+id: gpt-oss-120b-tp2
+model: {id: openai/gpt-oss-120b, revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a, served_names: [gpt-oss-120b]}
+parallel: {tp: 2}
+hardware: [h100-80gb-sxm]
+resources: {memory: 128GiB}

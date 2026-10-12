@@ -1,0 +1,750 @@
+{
+ "registry": "registry.warmctl.io/warmctl",
+ "driver": "580.173.02",
+ "updated": "2026-10-12",
+ "note": "restore_s: `warmctl up` to serving, measured right after the build on the same host (warm page cache); size_gib: snapshot pulled; every snapshot answered a completion after its restore before it was published; drivers: the NVIDIA drivers a snapshot restores under (580.x: any 580 release)",
+ "models": [
+  {
+   "name": "glm53-flash",
+   "title": "GLM-5.3-Flash",
+   "org": "Z.ai",
+   "params": "MoE",
+   "type": "MoE · FP8 · MTP",
+   "license": "MIT",
+   "tags": [
+    "frontier",
+    "reasoning"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 8,
+     "size_gib": 404.1,
+     "restore_s": 37.3,
+     "context": 204800,
+     "stock_cold_start_s": 650,
+     "tag": "8xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 8,
+     "size_gib": 418.4,
+     "restore_s": 44.3,
+     "context": 204800,
+     "tag": "8xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "deepseek-v41-flash",
+   "title": "DeepSeek-V4.1-Flash",
+   "org": "DeepSeek",
+   "params": "MoE",
+   "type": "MoE · Engram · DSpark",
+   "license": "MIT",
+   "tags": [
+    "frontier",
+    "reasoning"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 8,
+     "size_gib": 678.1,
+     "restore_s": 78.0,
+     "context": 196608,
+     "stock_cold_start_s": 357,
+     "tag": "8xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 4,
+     "restore_s": 72.8,
+     "context": 196608,
+     "tag": "4xb200-180gb-580.173.02",
+     "size_gib": 621.1,
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "mimo-v26-flash",
+   "title": "MiMo-V2.6-Flash",
+   "org": "Xiaomi",
+   "params": "310B · 15B active",
+   "type": "MoE · FP8",
+   "license": "MIT",
+   "tags": [
+    "frontier"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 8,
+     "size_gib": 244.3,
+     "restore_s": 28.0,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "8xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "qwen36-35b-a3b",
+   "title": "Qwen3.6-35B-A3B",
+   "org": "Qwen",
+   "params": "35B · 3B active",
+   "type": "hybrid MoE · FP8",
+   "license": "Apache-2.0",
+   "tags": [
+    "popular"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 1,
+     "size_gib": 43.3,
+     "restore_s": 13.4,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x · 610.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 43.3,
+     "restore_s": 10.6,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 45.7,
+     "restore_s": 10.7,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 2,
+     "size_gib": 48.3,
+     "restore_s": 11.9,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "2xl40s-48gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "qwen36-27b",
+   "title": "Qwen3.6-27B",
+   "org": "Qwen",
+   "params": "27B",
+   "type": "hybrid dense · FP8",
+   "license": "Apache-2.0",
+   "tags": [],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 1,
+     "size_gib": 37.5,
+     "restore_s": 12.1,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x · 610.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 37.6,
+     "restore_s": 11.8,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 39.5,
+     "restore_s": 11.6,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 1,
+     "size_gib": 36.8,
+     "restore_s": 14.6,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xl40s-48gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "qwen38-27b",
+   "title": "Qwen3.8-27B",
+   "org": "Qwen",
+   "params": "27B",
+   "type": "hybrid dense · FP8",
+   "license": "Apache-2.0",
+   "tags": [
+    "new"
+   ],
+   "platforms": [
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 37.6,
+     "restore_s": 10.4,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 39.5,
+     "restore_s": 11.7,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "gemma4-26b-a4b",
+   "title": "Gemma 4 26B-A4B",
+   "org": "Google",
+   "params": "26B · 4B active",
+   "type": "MoE · BF16",
+   "license": "Apache-2.0",
+   "tags": [
+    "popular"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 1,
+     "size_gib": 57.2,
+     "restore_s": 14.3,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x · 610.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 57.2,
+     "restore_s": 11.6,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 59.6,
+     "restore_s": 12.4,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 2,
+     "size_gib": 62.3,
+     "restore_s": 11.9,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "2xl40s-48gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "gemma4-31b",
+   "title": "Gemma 4 31B",
+   "org": "Google",
+   "params": "31B",
+   "type": "dense · BF16",
+   "license": "Apache-2.0",
+   "tags": [],
+   "platforms": [
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 67.2,
+     "restore_s": 26.9,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 71.6,
+     "restore_s": 15.2,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "gpt-oss-120b",
+   "title": "gpt-oss-120b",
+   "org": "OpenAI",
+   "params": "117B · 5B active",
+   "type": "MoE · MXFP4",
+   "license": "Apache-2.0",
+   "tags": [
+    "popular",
+    "reasoning"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 2,
+     "size_gib": 81.3,
+     "restore_s": 15.8,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "2xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 70.4,
+     "restore_s": 13.0,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.173.02"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 77.6,
+     "restore_s": 13.0,
+     "context": 131072,
+     "stock_cold_start_s": 351,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 4,
+     "size_gib": 92.9,
+     "restore_s": 13.1,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "4xl40s-48gb-580.173.02",
+     "drivers": "580.173.02"
+    }
+   ]
+  },
+  {
+   "name": "gpt-oss-20b",
+   "title": "gpt-oss-20b",
+   "org": "OpenAI",
+   "params": "21B · 4B active",
+   "type": "MoE · MXFP4",
+   "license": "Apache-2.0",
+   "tags": [
+    "popular"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 1,
+     "size_gib": 22.1,
+     "restore_s": 8.9,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x · 610.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 22.1,
+     "restore_s": 7.4,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 24.8,
+     "restore_s": 9.8,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 1,
+     "size_gib": 22.2,
+     "restore_s": 8.9,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xl40s-48gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "nemotron35-30b-a3b",
+   "title": "Nemotron 3.5 Lightning 30B-A3B",
+   "org": "NVIDIA",
+   "params": "30B · 3B active",
+   "type": "Mamba MoE · FP8",
+   "license": "OpenMDW-1.1",
+   "tags": [],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 1,
+     "size_gib": 40.5,
+     "restore_s": 12.7,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x · 610.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 40.5,
+     "restore_s": 9.7,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 43.4,
+     "restore_s": 12.9,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 1,
+     "size_gib": 39.0,
+     "restore_s": null,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xl40s-48gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "qwen3-30b-a3b",
+   "title": "Qwen3-30B-A3B-Instruct-2507",
+   "org": "Qwen",
+   "params": "30B · 3B active",
+   "type": "MoE · BF16",
+   "license": "Apache-2.0",
+   "tags": [],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 1,
+     "size_gib": 65.4,
+     "restore_s": 13.5,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x · 610.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 65.4,
+     "restore_s": 18.3,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 67.6,
+     "restore_s": 12.6,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 2,
+     "size_gib": 69.7,
+     "restore_s": 11.6,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "2xl40s-48gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "qwen3-coder-30b-a3b",
+   "title": "Qwen3-Coder-30B-A3B",
+   "org": "Qwen",
+   "params": "30B · 3B active",
+   "type": "MoE · FP8 · tools",
+   "license": "Apache-2.0",
+   "tags": [
+    "coding"
+   ],
+   "platforms": [
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 37.8,
+     "restore_s": 9.5,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 40.0,
+     "restore_s": 11.5,
+     "context": 131072,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "qwen3-32b",
+   "title": "Qwen3-32B",
+   "org": "Qwen",
+   "params": "32B",
+   "type": "dense · BF16",
+   "license": "Apache-2.0",
+   "tags": [],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 2,
+     "size_gib": 76.3,
+     "restore_s": 14.7,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "2xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 69.1,
+     "restore_s": 42.0,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.173.02"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 72.2,
+     "restore_s": 14.4,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 2,
+     "size_gib": 73.1,
+     "restore_s": 14.7,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "2xl40s-48gb-580.173.02",
+     "drivers": "580.173.02"
+    }
+   ]
+  },
+  {
+   "name": "qwen3-vl-8b",
+   "title": "Qwen3-VL-8B-Instruct",
+   "org": "Qwen",
+   "params": "8B",
+   "type": "vision · BF16",
+   "license": "Apache-2.0",
+   "tags": [
+    "vision"
+   ],
+   "platforms": [
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 26.2,
+     "restore_s": 8.4,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 28.1,
+     "restore_s": 9.1,
+     "context": 65536,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "qwen3-8b",
+   "title": "Qwen3-8B",
+   "org": "Qwen",
+   "params": "8B",
+   "type": "dense · BF16",
+   "license": "Apache-2.0",
+   "tags": [
+    "popular"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 1,
+     "size_gib": 23.1,
+     "restore_s": 15.0,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x · 610.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 23.1,
+     "restore_s": 7.4,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 25.4,
+     "restore_s": 12.2,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 1,
+     "size_gib": 22.7,
+     "restore_s": 9.5,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xl40s-48gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  },
+  {
+   "name": "qwen3-0.6b",
+   "title": "Qwen3-0.6B",
+   "org": "Qwen",
+   "params": "0.6B",
+   "type": "dense · BF16",
+   "license": "Apache-2.0",
+   "tags": [
+    "try it"
+   ],
+   "platforms": [
+    {
+     "gpu": "H100",
+     "gpus": 1,
+     "size_gib": 8.9,
+     "restore_s": 6.6,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xh100-80gb-sxm-580.173.02",
+     "drivers": "580.x · 610.x"
+    },
+    {
+     "gpu": "H200",
+     "gpus": 1,
+     "size_gib": 8.9,
+     "restore_s": 5.4,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xh200-141gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "B200",
+     "gpus": 1,
+     "size_gib": 10.5,
+     "restore_s": 10.0,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xb200-180gb-580.173.02",
+     "drivers": "580.x"
+    },
+    {
+     "gpu": "L40S",
+     "gpus": 1,
+     "size_gib": 8.6,
+     "restore_s": 6.4,
+     "context": 32768,
+     "stock_cold_start_s": null,
+     "tag": "1xl40s-48gb-580.173.02",
+     "drivers": "580.x"
+    }
+   ]
+  }
+ ]
+}

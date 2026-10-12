@@ -1,0 +1,22 @@
+# qwen3-coder-30b-a3b served from the public catalog on 1×H200 (MoE FP8, tool calls on): 128 K context,
+# 64 sequences, 96 GiB of KV cache, full and piecewise CUDA graphs up to batch 64.
+schema: warmctl.profile/v1
+id: qwen3-coder-30b-a3b-h200-tp1
+model: {id: Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8, revision: dcaee4d4dfc5ee71ad501f01f530e5652438fde0, served_names: [qwen3-coder-30b-a3b]}
+parallel: {tp: 1}
+hardware: [h200-141gb]
+vllm:
+  max-model-len: 131072
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 103079215104
+  enable-chunked-prefill: true
+  enable-auto-tool-choice: true
+  tool-call-parser: qwen3_coder
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 160GiB}

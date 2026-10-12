@@ -1,0 +1,13 @@
+#!/bin/sh
+# Two fake GPUs joined by NVLink, idle.
+case "$*" in
+  *--query-gpu=*)
+    echo "0, GPU-00000000-0000-0000-0000-000000000000, Fake GPU, 00000000:01:00.0, 1024, 1.0"
+    echo "1, GPU-11111111-1111-1111-1111-111111111111, Fake GPU, 00000000:02:00.0, 1024, 1.0" ;;
+  *--query-compute-apps=*) ;;
+  *topo*)
+    printf '\tGPU0\tGPU1\tCPU Affinity\n'
+    printf 'GPU0\t X \tNV1\t0-23\n'
+    printf 'GPU1\tNV1\t X \t0-23\n' ;;
+  *) echo "fake nvidia-smi: $*" >&2; exit 1 ;;
+esac

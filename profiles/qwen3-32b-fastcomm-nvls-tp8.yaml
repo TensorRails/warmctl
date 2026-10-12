@@ -1,0 +1,19 @@
+# Qwen3-32B TP8 with vLLM's fast collectives on (custom all-reduce,
+# FlashInfer and symmetric-memory all-reduce, the all-reduce+RMSNorm fusion)
+# under cuInterpose; NCCL NVLS on.
+schema: warmctl.profile/v1
+id: qwen3-32b-fastcomm-nvls-tp8
+model: {id: Qwen/Qwen3-32B, revision: 9216db5781bf21249d130ec9da846c4624c16137, served_names: [qwen32]}
+parallel: {tp: 8}
+hardware: [h100-80gb-sxm]
+vllm:
+  # 64 sequences of 2048 tokens at 32 KiB per token and rank.
+  kv-cache-memory-bytes: 4294967296
+  disable-custom-all-reduce: null
+graphs: {decode_batches: [1, 2, 4, 8, 16, 32, 64], fuse_allreduce_rms: true}
+env:
+  VLLM_ALLREDUCE_USE_FLASHINFER: "1"
+  VLLM_ALLREDUCE_USE_SYMM_MEM: "1"
+  NCCL_NVLS_ENABLE: null
+resources: {memory: 256GiB}
+ipc: interpose

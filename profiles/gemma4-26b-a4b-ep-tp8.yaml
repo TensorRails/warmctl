@@ -1,0 +1,15 @@
+# Gemma 4 26B-A4B, TP8 with experts sharded whole (expert parallel) and the
+# fast collectives on.
+schema: warmctl.profile/v1
+id: gemma4-26b-a4b-ep-tp8
+model: {id: google/gemma-4-26B-A4B-it, revision: 4d7ae4984b7db7de8f8457170b3f1a419ee76d52, served_names: [gemma4-26b-a4b]}
+parallel: {tp: 8, ep: true}
+hardware: [h100-80gb-sxm]
+vllm:
+  limit-mm-per-prompt: {image: 0, video: 0}
+  disable-custom-all-reduce: null
+graphs: {fuse_allreduce_rms: true}
+env:
+  VLLM_ALLREDUCE_USE_FLASHINFER: "1"
+  VLLM_ALLREDUCE_USE_SYMM_MEM: "1"
+resources: {memory: 128GiB}

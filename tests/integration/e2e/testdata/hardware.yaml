@@ -1,0 +1,10 @@
+schema: warmctl.hardware/v1
+rows:
+  - id: fake-gpu
+    nvidia_smi_name: "Fake GPU"
+    memory_mib: 1024
+    arch: sm_00
+    nvlink: true
+    topology_class: nvlink
+    device_config_name: FAKE
+    driver_min: "1"

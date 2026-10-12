@@ -1,0 +1,25 @@
+# Optional: scale warmctl.yaml's Deployment on vLLM's queue depth with KEDA
+# (docs/kubernetes.md#readiness-and-autoscaling). Needs KEDA and a
+# Prometheus that scrapes the pods' :8080/metrics (a PodMonitor). A new
+# replica is a restore on a prepared node, not a cold start.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: glm53-flash
+spec:
+  scaleTargetRef:
+    name: glm53-flash
+  minReplicaCount: 1
+  maxReplicaCount: 4
+  pollingInterval: 5
+  # Scale down slowly: a replica gone is a node's restore to redo.
+  cooldownPeriod: 600
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-operated.monitoring.svc:9090
+        # Requests waiting for a slot, per ready replica: the gateway
+        # answers /metrics only once the restore admitted.
+        query: sum(vllm:num_requests_waiting{model_name="glm53-flash"})
+        threshold: "8"
+        activationThreshold: "1"

@@ -1,0 +1,88 @@
+# Defaults every profile is laid over. A profile key set to null removes the
+# default (used by serving profiles that want vLLM's own fast-collective
+# settings back). Values come from the GPU-qualified warmctl v1 launches.
+schema: warmctl.profile-defaults/v1
+image: vllm/vllm-openai:cu134-nightly@sha256:ad9dc6397abc878d8e764daa39e16bdc7f1ecf9fb3d0283c076530b299c31ad0
+vllm:
+  dtype: bfloat16
+  kv-cache-dtype: auto
+  seed: 42
+  gpu-memory-utilization: 0.85
+  kv-cache-memory-bytes: 1073741824
+  max-model-len: 2048
+  max-num-batched-tokens: 2048
+  enable-prefix-caching: true
+  enable-prompt-tokens-details: true
+  disable-custom-all-reduce: true
+  distributed-executor-backend: mp
+  # Lifecycle: sleep mode, NCCL suspend and the worker extension are what
+  # make a process snapshot possible. A stock A/B baseline drops them.
+  enable-sleep-mode: true
+  enable-nccl-comm-suspend: true
+  worker-extension-cls: warmctl_vllm.worker.Extension
+graphs:
+  mode: FULL_DECODE_ONLY
+  decode_batches: [1, 2, 4, 8]
+  fuse_allreduce_rms: false
+  compile_mode: 3
+env:
+  CUDA_DEVICE_ORDER: PCI_BUS_ID
+  # Rendezvous on loopback inside the container's own net namespace: the
+  # snapshot must not hold sockets bound to a host address.
+  NCCL_SOCKET_IFNAME: "=lo"
+  NCCL_SOCKET_FAMILY: AF_INET
+  GLOO_SOCKET_IFNAME: lo
+  VLLM_HOST_IP: 127.0.0.1
+  NCCL_RAS_ENABLE: "0"
+  NCCL_IB_DISABLE: "1"
+  NCCL_CUMEM_HOST_ENABLE: "0"
+  # NVLS multicast and the symmetric-memory collectives are off unless a
+  # profile turns them back on (and then the adapter's comm_checkpoint
+  # detaches and rebuilds them around the checkpoint).
+  NCCL_NVLS_ENABLE: "0"
+  VLLM_ALLREDUCE_USE_FLASHINFER: "0"
+  VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC: "0"
+  VLLM_ALLREDUCE_USE_SYMM_MEM: "0"
+  VLLM_USE_NCCL_SYMM_MEM: "0"
+  VLLM_SERVER_DEV_MODE: "1"
+  VLLM_WORKER_MULTIPROC_METHOD: spawn
+  DO_NOT_TRACK: "1"
+  VLLM_NO_USAGE_STATS: "1"
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  TOKENIZERS_PARALLELISM: "false"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONPATH: /opt/warmctl/adapter
+  # Every compile and JIT cache lives under /workspace so the snapshot
+  # carries it and the JIT cache can be seeded between bakes.
+  TORCHINDUCTOR_CACHE_DIR: /workspace/inductor
+  TRITON_CACHE_DIR: /workspace/triton
+  VLLM_CACHE_ROOT: /workspace/vllm-cache
+  FLASHINFER_WORKSPACE_BASE: /workspace/flashinfer
+  CUDA_CACHE_PATH: /workspace/cuda-cache
+  XDG_CACHE_HOME: /workspace/cache
+  TILELANG_CACHE_DIR: /workspace/tilelang
+  TILELANG_TMP_DIR: /workspace/tilelang/tmp
+  TMPDIR: /tmp
+  # The root filesystem is read-only; libraries that write under $HOME
+  # (TensorRT-LLM's ~/.tensorrt_llm/tmp) need a writable, carried tree.
+  HOME: /workspace/home
+argv:
+  negatable: [enable-prefix-caching, enable-chunked-prefill, async-scheduling]
+warmup:
+  generated_tokens: 32
+canary:
+  mode: warn
+  tolerance: 0.001
+  prefix_tokens: 512
+resources:
+  memory: 64GiB
+  pids: 32768
+  shm: 16GiB
+  cpus: 16
+restore:
+  warmup: canary
+  cuda_restore: auto
+# Cross-process CUDA memory (docs/interpose.md): an engine on several GPUs
+# runs under cuInterpose when every GPU supports VMM with POSIX handles.
+ipc: auto

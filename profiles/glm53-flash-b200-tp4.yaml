@@ -1,0 +1,49 @@
+# GLM-5.3-Flash serving release on 4xB200 (half the node; two replicas per
+# 8xB200): the 8xH100 release (glm53-flash-prod-tp8) with vLLM's default
+# fused-MoE configs (the tuned table is H100's). Known issue: under 32 users
+# with 4K-token random prompts a Triton kernel of GLM's linear attention
+# (glm5next kda.py) fails with an unspecified launch failure at TP4 and the
+# engine dies; TP8 and ordinary text are fine (2026-10-12).
+schema: warmctl.profile/v1
+id: glm53-flash-b200-tp4
+model: {id: zai-org/GLM-5.3-Flash, revision: eb9eb208eb0d988989d07a6a12d0fdeb5f52574a, served_names: [glm53-flash]}
+parallel: {tp: 4}
+hardware: [b200-180gb]
+vllm:
+  max-model-len: 204800
+  max-num-batched-tokens: 8192
+  # Rank budget of ~170 GiB: ~80 weights with the MTP layer, ~10 graphs and
+  # activations, 56 KV + KDA state, the rest headroom.
+  kv-cache-memory-bytes: 60129542144
+  quantization: fp8
+  mamba-cache-mode: align
+  enable-chunked-prefill: true
+  enable-auto-tool-choice: true
+  tool-call-parser: glm47
+  reasoning-parser: glm47
+  speculative-config: {method: mtp, num_speculative_tokens: 3}
+  default-chat-template-kwargs: {reasoning_effort: high}
+  limit-mm-per-prompt: {image: 0, video: 0}
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64]
+  # Piecewise-only sizes for small mixed prefill steps up to 512 tokens.
+  extra_capture_sizes: [384, 512]
+  fuse_allreduce_rms: true
+env:
+  DG_JIT_CACHE_DIR: /workspace/deep_gemm
+  VLLM_ALLREDUCE_USE_FLASHINFER: null
+  VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC: null
+  VLLM_ALLREDUCE_USE_SYMM_MEM: null
+  VLLM_USE_NCCL_SYMM_MEM: null
+warmup:
+  # One prompt of each capture size (a lone prefill of N tokens replays the
+  # piecewise graph of N), the 64-token grid, every 512 tokens to the 8K
+  # chunk, one two-chunk prompt, one decode batch per full decode graph.
+  prefill_capture_sizes: true
+  prefill_tokens: [{from: 64, to: 2560, step: 64}, {from: 3072, to: 8192, step: 512}, 16384]
+  decode_prompt_tokens: 32
+  mixed: [{prompt_tokens: [128, 512], batches: [2, 4, 8]}]
+canary: {mode: bitwise, prefix_tokens: 1280}
+resources: {memory: 1TiB}

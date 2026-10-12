@@ -1,0 +1,12 @@
+# Only what the Go build and the extension need.
+*
+!go.mod
+!go.sum
+!assets.go
+!cmd
+!internal
+!profiles
+!hardware
+!python/warmctl_vllm
+**/*_test.go
+**/__pycache__

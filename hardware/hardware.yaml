@@ -1,0 +1,34 @@
+schema: warmctl.hardware/v1
+rows:
+  - id: h100-80gb-sxm
+    nvidia_smi_name: "NVIDIA H100 80GB HBM3"
+    memory_mib: 81559
+    arch: sm_90
+    nvlink: true
+    topology_class: nvswitch
+    device_config_name: NVIDIA_H100_80GB_HBM3
+    driver_min: "580"
+  - id: h200-141gb
+    nvidia_smi_name: "NVIDIA H200"
+    memory_mib: 143771
+    arch: sm_90
+    nvlink: true
+    topology_class: nvswitch
+    device_config_name: NVIDIA_H200
+    driver_min: "580"
+  - id: l40s-48gb
+    nvidia_smi_name: "NVIDIA L40S"
+    memory_mib: 46068
+    arch: sm_89
+    nvlink: false
+    topology_class: pcie
+    device_config_name: NVIDIA_L40S
+    driver_min: "580"
+  - id: b200-180gb
+    nvidia_smi_name: "NVIDIA B200"
+    memory_mib: 183359
+    arch: sm_100
+    nvlink: true
+    topology_class: nvswitch
+    device_config_name: NVIDIA_B200
+    driver_min: "580"

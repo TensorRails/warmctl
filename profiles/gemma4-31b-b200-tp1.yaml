@@ -1,0 +1,21 @@
+# gemma4-31b served from the public catalog on 1×B200 (dense BF16): 64 K context,
+# 128 sequences, 96 GiB of KV cache, full and piecewise CUDA graphs up to batch 128.
+schema: warmctl.profile/v1
+id: gemma4-31b-b200-tp1
+model: {id: google/gemma-4-31B-it, revision: 842da3794eaa0b77d5f08bae87a17459d91ff475, served_names: [gemma4-31b]}
+parallel: {tp: 1}
+hardware: [b200-180gb]
+vllm:
+  max-model-len: 65536
+  max-num-seqs: 128
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 103079215104
+  enable-chunked-prefill: true
+  limit-mm-per-prompt: {image: 0, video: 0}
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 160GiB}

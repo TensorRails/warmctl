@@ -1,0 +1,9 @@
+[    0.0s] snapshot glm2: profile glm53-flash-prod-tp8, 8 ranks, 403.95 GiB
+[    1.0s] receiver warmctl-glm2-r2 started
+[   11.7s] trees installed in 2.6s, CRIU restore in 8.1s
+[   22.2s] CUDA restored: 10 owners (8 in parallel) in 10.5s
+[   22.8s] cross-process memory restored in 0.6s
+[   36.4s] weights reloaded and fingerprints match: 319.77 GiB, slowest rank 12.3s
+[   37.3s] canary matches (policy bitwise; miss 0.452s, hit 0.415s)
+serving started 37.3s
+[   37.3s] serving glm53-flash-prod-tp8 on http://127.0.0.1:8112

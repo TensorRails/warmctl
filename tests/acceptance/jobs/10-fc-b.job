@@ -1,0 +1,12 @@
+# profile: qwen3-32b-fastcomm-tp8
+# B: stock vLLM, cold, with qwen3-32b-fastcomm-tp8's flags minus warmctl's
+# lifecycle flags (sleep mode, NCCL suspend, worker extension). Stock keeps
+# vLLM's and NCCL's environment defaults: FlashInfer, symmetric-memory and
+# custom all-reduce on, NCCL NVLS on. Pinned to the profile by
+# TestFastCommStockBaselineJobMatchesTheProfile.
+ID=fc-b
+MODEL=/var/lib/warmctl/models/qwen3-32b
+GPUS=0,1,2,3,4,5,6,7
+PROBE=/var/lib/warmctl/bin/comm-probe.py
+STOCK_IMAGE=vllm/vllm-openai:cu134-nightly@sha256:ad9dc6397abc878d8e764daa39e16bdc7f1ecf9fb3d0283c076530b299c31ad0
+STOCK_ARGS='--compilation-config {"cudagraph_capture_sizes":[1,2,4,8,16,32,64],"cudagraph_mode":"FULL_DECODE_ONLY","mode":3,"pass_config":{"fuse_allreduce_rms":true}} --distributed-executor-backend=mp --dtype=bfloat16 --enable-prefix-caching --enable-prompt-tokens-details --gpu-memory-utilization 0.85 --kv-cache-dtype=auto --kv-cache-memory-bytes 4294967296 --max-model-len 2048 --max-num-batched-tokens 2048 --max-num-seqs 64 --seed 42 --served-model-name qwen32 --tensor-parallel-size 8'

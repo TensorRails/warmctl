@@ -1,0 +1,20 @@
+# qwen3-0.6b served from the public catalog on 1×B200: 32 K context, 128 sequences,
+# 32 GiB of KV cache, full and piecewise CUDA graphs up to batch 128.
+schema: warmctl.profile/v1
+id: qwen3-0.6b-b200-tp1
+model: {id: Qwen/Qwen3-0.6B, revision: c1899de289a04d12100db370d81485cdf75e47ca, served_names: [qwen3-0.6b]}
+parallel: {tp: 1}
+hardware: [b200-180gb]
+vllm:
+  max-model-len: 32768
+  max-num-seqs: 128
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 34359738368
+  enable-chunked-prefill: true
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 160GiB}

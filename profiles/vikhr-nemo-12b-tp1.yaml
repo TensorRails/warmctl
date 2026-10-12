@@ -1,0 +1,5 @@
+schema: warmctl.profile/v1
+id: vikhr-nemo-12b-tp1
+model: {id: Vikhrmodels/Vikhr-Nemo-12B-Instruct-R-21-09-24, revision: 7499757d9f41a2965b0e9db94c976e0982e292b8, served_names: [vikhr-nemo]}
+parallel: {tp: 1}
+hardware: [l40s-48gb, h100-80gb-sxm]

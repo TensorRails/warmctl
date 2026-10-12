@@ -1,0 +1,21 @@
+# gpt-oss-120b from the public catalog on 2×H100 (it does not fit one 80 GB GPU under
+# sleep mode): 128 K context, 64 sequences, 32 GiB of KV cache per GPU, custom all-reduce.
+schema: warmctl.profile/v1
+id: gpt-oss-120b-h100-tp2
+model: {id: openai/gpt-oss-120b, revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a, served_names: [gpt-oss-120b]}
+parallel: {tp: 2}
+hardware: [h100-80gb-sxm]
+vllm:
+  max-model-len: 131072
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 34359738368
+  enable-chunked-prefill: true
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 192GiB}

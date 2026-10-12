@@ -1,0 +1,15 @@
+# Qwen3-0.6B TP2 with vLLM's fast collectives on (custom all-reduce,
+# FlashInfer and symmetric-memory all-reduce, the all-reduce+RMSNorm fusion)
+# under cuInterpose: the small model to iterate on cross-process memory. On
+# PCIe GPUs vLLM keeps only the collectives the hardware supports.
+schema: warmctl.profile/v1
+id: qwen3-0.6b-fastcomm-tp2
+model: {id: Qwen/Qwen3-0.6B, revision: c1899de289a04d12100db370d81485cdf75e47ca, served_names: [qwen3-0.6b]}
+parallel: {tp: 2}
+hardware: [h100-80gb-sxm, l40s-48gb]
+vllm: {disable-custom-all-reduce: null}
+graphs: {fuse_allreduce_rms: true}
+env:
+  VLLM_ALLREDUCE_USE_FLASHINFER: "1"
+  VLLM_ALLREDUCE_USE_SYMM_MEM: "1"
+ipc: interpose

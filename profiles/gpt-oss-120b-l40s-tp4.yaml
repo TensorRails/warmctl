@@ -1,0 +1,21 @@
+# gpt-oss-120b served from the public catalog on 4×L40S: 64 K context, 64 sequences,
+# 16 GiB of KV cache per GPU, full and piecewise CUDA graphs up to batch 64.
+schema: warmctl.profile/v1
+id: gpt-oss-120b-l40s-tp4
+model: {id: openai/gpt-oss-120b, revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a, served_names: [gpt-oss-120b]}
+parallel: {tp: 4}
+hardware: [l40s-48gb]
+vllm:
+  max-model-len: 65536
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 17179869184
+  enable-chunked-prefill: true
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 192GiB}

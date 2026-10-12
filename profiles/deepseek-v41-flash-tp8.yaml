@@ -1,0 +1,19 @@
+# DeepSeek-V4.1-Flash, the test layout: short context, Triton experts,
+# Engram tables in pinned host memory.
+schema: warmctl.profile/v1
+id: deepseek-v41-flash-tp8
+model: {id: deepseek-ai/DeepSeek-V4.1-Flash, revision: 2cba9e42aa026125f3ed06c6d98c1db82f7ca027, served_names: [deepseek-v41-flash]}
+parallel: {tp: 8}
+hardware: [h100-80gb-sxm]
+vllm:
+  limit-mm-per-prompt: {image: 0, video: 0}
+  # Marlin, vLLM's SM90 pick for the FP4 experts, is not bitwise repeatable.
+  moe-backend: triton_unfused
+  # Per-rank Engram tables in pinned host memory, carried by the CRIU dump
+  # (the host_tables hook that would export them is not ported); a /dev/shm
+  # copy would be an unlinked tmpfs file for CRIU to carry.
+  engram-config: {cpu_offload: true, dp_shared_memory: false, use_thp: false}
+hooks: {host_tables: auto, plugins: [deterministic_topk, checkpoint_cache]}
+# Bitwise repeats need the deterministic_topk plugin, not ported yet.
+canary: {mode: warn, tolerance: 1.0e-3}
+resources: {memory: 1TiB}

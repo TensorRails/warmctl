@@ -1,0 +1,7 @@
+schema: warmctl.profile/v1
+id: qwen36-27b-tp1
+model: {id: Qwen/Qwen3.6-27B-FP8, revision: e89b16ebf1988b3d6befa7de50abc2d76f26eb09, served_names: [qwen36-27b]}
+parallel: {tp: 1}
+hardware: [h100-80gb-sxm]
+vllm: {limit-mm-per-prompt: {image: 0, video: 0}, mamba-cache-mode: align}
+resources: {memory: 128GiB}

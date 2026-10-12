@@ -1,0 +1,5 @@
+schema: warmctl.profile/v1
+id: yandexgpt5-lite-8b-tp1
+model: {id: yandex/YandexGPT-5-Lite-8B-instruct, revision: b556811768376b46c69caab60c4d1b69df9faaa1, served_names: [yandexgpt5-lite]}
+parallel: {tp: 1}
+hardware: [l40s-48gb, h100-80gb-sxm]

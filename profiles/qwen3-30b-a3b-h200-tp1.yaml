@@ -1,0 +1,20 @@
+# qwen3-30b-a3b served from the public catalog on 1×H200: 64 K context, 64 sequences,
+# 56 GiB of KV cache per GPU, full and piecewise CUDA graphs up to batch 64.
+schema: warmctl.profile/v1
+id: qwen3-30b-a3b-h200-tp1
+model: {id: Qwen/Qwen3-30B-A3B-Instruct-2507, revision: 0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe, served_names: [qwen3-30b-a3b]}
+parallel: {tp: 1}
+hardware: [h200-141gb]
+vllm:
+  max-model-len: 65536
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 60129542144
+  enable-chunked-prefill: true
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 160GiB}

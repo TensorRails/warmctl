@@ -1,0 +1,5 @@
+schema: warmctl.profile/v1
+id: t-lite-it-2.1-tp1
+model: {id: t-tech/T-lite-it-2.1, revision: d125c970c553de58fcee3c937d5e4867d4a448d8, served_names: [t-lite]}
+parallel: {tp: 1}
+hardware: [l40s-48gb, h100-80gb-sxm]

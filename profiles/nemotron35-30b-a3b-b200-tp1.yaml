@@ -1,0 +1,21 @@
+# nemotron35-30b-a3b served from the public catalog on 1×B200: 128 K context, 128 sequences,
+# 96 GiB of KV cache, full and piecewise CUDA graphs up to batch 128.
+schema: warmctl.profile/v1
+id: nemotron35-30b-a3b-b200-tp1
+model: {id: RedHatAI/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-FP8, revision: bff279eb543e15f7c0e3f922661e66a1b78ac2e0, served_names: [nemotron35]}
+parallel: {tp: 1}
+hardware: [b200-180gb]
+vllm:
+  max-model-len: 131072
+  max-num-seqs: 128
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 103079215104
+  enable-chunked-prefill: true
+  mamba-cache-mode: align
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 160GiB}

@@ -1,0 +1,9 @@
+/bin/
+/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.test
+.cloudflare/

@@ -1,0 +1,54 @@
+# GLM-5.3-Flash serving release on 8xH100: 200K context (320 whole 640-token
+# attention blocks), 64 sequences, 8K prefill chunks, MTP with 3 draft
+# tokens, full decode plus piecewise mixed-step graphs, custom and FlashInfer
+# all-reduce with the RMSNorm fusion. NCCL NVLS stays off: on SM90 at world 8
+# every model all-reduce up to 64 MiB goes to symmetric memory, so NVLS
+# would only speed up NCCL calls this profile never makes for a model op.
+schema: warmctl.profile/v1
+id: glm53-flash-prod-tp8
+model: {id: zai-org/GLM-5.3-Flash, revision: eb9eb208eb0d988989d07a6a12d0fdeb5f52574a, served_names: [glm53-flash]}
+parallel: {tp: 8}
+hardware: [h100-80gb-sxm]
+vllm:
+  max-model-len: 204800
+  max-num-batched-tokens: 8192
+  # Rank budget of 79.6 GiB: 39.5 weights with the MTP layer, ~2.5 graphs,
+  # ~4.3 activations at 8K tokens, ~1.5 all-reduce workspaces, 26 KV + KDA
+  # state, ~5.8 headroom.
+  kv-cache-memory-bytes: 27917287424
+  quantization: fp8
+  mamba-cache-mode: align
+  enable-chunked-prefill: true
+  enable-auto-tool-choice: true
+  tool-call-parser: glm47
+  reasoning-parser: glm47
+  speculative-config: {method: mtp, num_speculative_tokens: 3}
+  default-chat-template-kwargs: {reasoning_effort: high}
+  limit-mm-per-prompt: {image: 0, video: 0}
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64]
+  # Piecewise-only sizes for small mixed prefill steps up to 512 tokens.
+  extra_capture_sizes: [384, 512]
+  fuse_allreduce_rms: true
+env:
+  DG_JIT_CACHE_DIR: /workspace/deep_gemm
+  VLLM_ALLREDUCE_USE_FLASHINFER: null
+  VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC: null
+  VLLM_ALLREDUCE_USE_SYMM_MEM: null
+  VLLM_USE_NCCL_SYMM_MEM: null
+  # The tuned fused-MoE table the moe_tuned_configs hook writes; inside
+  # VLLM_CACHE_ROOT so the sealed JIT cache carries the same bytes.
+  VLLM_TUNED_CONFIG_FOLDER: /workspace/vllm-cache/tuned-moe
+warmup:
+  # One prompt of each capture size (a lone prefill of N tokens replays the
+  # piecewise graph of N), the 64-token grid, every 512 tokens to the 8K
+  # chunk, one two-chunk prompt, one decode batch per full decode graph.
+  prefill_capture_sizes: true
+  prefill_tokens: [{from: 64, to: 2560, step: 64}, {from: 3072, to: 8192, step: 512}, 16384]
+  decode_prompt_tokens: 32
+  mixed: [{prompt_tokens: [128, 512], batches: [2, 4, 8]}]
+canary: {mode: bitwise, prefix_tokens: 1280}
+hooks: {moe_tuned_configs: glm53-flash-prod-tp8/tuned-moe}
+resources: {memory: 1TiB}

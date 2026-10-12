@@ -1,0 +1,51 @@
+# DeepSeek-V4.1-Flash serving release on 4xB200 (half the node): the 8xH100
+# release (deepseek-v41-flash-prod-tp8) on four GPUs, 32 GiB of FP8 KV per GPU
+# and vLLM's own SM100 pick for the FP4 experts instead of Marlin.
+schema: warmctl.profile/v1
+id: deepseek-v41-flash-b200-tp4
+model:
+  id: deepseek-ai/DeepSeek-V4.1-Flash
+  revision: 2cba9e42aa026125f3ed06c6d98c1db82f7ca027
+  served_names: [deepseek-v41-flash, deepseek-ai/DeepSeek-V4.1-Flash]
+parallel: {tp: 4, ep: true}
+hardware: [b200-180gb]
+vllm:
+  max-model-len: 196608
+  max-num-batched-tokens: 8192
+  # ~111 GiB of weights per rank leaves room for 32 GiB of FP8 KV.
+  kv-cache-memory-bytes: 34359738368
+  kv-cache-dtype: fp8
+  enable-chunked-prefill: true
+  async-scheduling: true
+  limit-mm-per-prompt: {image: 0, video: 0}
+  # Engram tables in pinned host memory, carried by the CRIU dump (the
+  # host_tables hook that would export them is not ported).
+  engram-config: {cpu_offload: true, dp_shared_memory: false, use_thp: false}
+  speculative-config: {method: dspark, num_speculative_tokens: 5, draft_sample_method: probabilistic, enable_adaptive_verification: true}
+  tokenizer-mode: deepseek_v41
+  tool-call-parser: deepseek_v41
+  reasoning-parser: deepseek_v41
+  enable-auto-tool-choice: true
+  # The checkpoint ships no generation_config.json; the model card's sampling.
+  override-generation-config: {temperature: 1.0, top_p: 0.95}
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 80, 96, 112, 128]
+  fuse_allreduce_rms: true
+env:
+  NCCL_NVLS_ENABLE: null
+  VLLM_ALLREDUCE_USE_FLASHINFER: null
+  VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC: null
+  VLLM_ALLREDUCE_USE_SYMM_MEM: null
+  VLLM_USE_NCCL_SYMM_MEM: null
+warmup:
+  # One 32-token decode batch per graph, then single prefills up to one 8K
+  # chunk and one that continues into a second chunk.
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192, 12288]
+# The FP4 experts are not bitwise repeatable: the canary compares within a
+# tolerance and only warns.
+canary: {mode: warn, tolerance: 1.0e-3}
+hooks: {host_tables: auto, plugins: [deterministic_topk, checkpoint_cache]}
+resources: {memory: 1TiB}

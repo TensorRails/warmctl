@@ -1,0 +1,7 @@
+schema: warmctl.profile/v1
+id: qwen3-vl-8b-tp1
+model: {id: Qwen/Qwen3-VL-8B-Instruct, revision: 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b, served_names: [qwen3-vl-8b]}
+parallel: {tp: 1}
+hardware: [h100-80gb-sxm]
+vllm: {limit-mm-per-prompt: {image: 0, video: 0}}
+resources: {memory: 64GiB}

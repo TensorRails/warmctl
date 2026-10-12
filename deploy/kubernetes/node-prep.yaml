@@ -1,0 +1,43 @@
+# Optional: prepares the GPU nodes before warmctl.yaml lands there
+# (docs/kubernetes.md#node-preparation): io_uring off as on a bake host,
+# the image pulled by running it, the snapshot pulled into the node's
+# /var/lib/warmctl and read once into the page cache, so a pod restores in
+# seconds from memory.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: warmctl-node-prep
+spec:
+  selector:
+    matchLabels: {app: warmctl-node-prep}
+  template:
+    metadata:
+      labels: {app: warmctl-node-prep}
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      initContainers:
+        - name: io-uring
+          image: registry.warmctl.io/warmctl/runtime:latest
+          command: [/bin/sh, -c, "echo 2 > /proc/sys/kernel/io_uring_disabled"]
+          securityContext: {privileged: true}
+        - name: pull
+          image: registry.warmctl.io/warmctl/runtime:latest
+          # By platform tag, as `warmctl catalog --all` lists it (choosing
+          # from the index would need the GPUs). It restores on any 580.x.
+          args: [pull, glm53-flash:8xh100-80gb-sxm-580.173.02]
+          volumeMounts:
+            - {name: snapshots, mountPath: /var/lib/warmctl}
+        - name: page-cache
+          image: registry.warmctl.io/warmctl/runtime:latest
+          command: [/bin/sh, -c, "find /var/lib/warmctl/pulled -type f -exec cat {} + > /dev/null"]
+          volumeMounts:
+            - {name: snapshots, mountPath: /var/lib/warmctl}
+      containers:
+        # Keeps the pod, and so the image, on the node.
+        - name: hold
+          image: registry.warmctl.io/warmctl/runtime:latest
+          command: [/usr/local/bin/tini, --, /bin/sleep, infinity]
+      volumes:
+        - name: snapshots
+          hostPath: {path: /var/lib/warmctl, type: DirectoryOrCreate}

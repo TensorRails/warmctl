@@ -1,0 +1,10 @@
+# profile: glm53-flash-prod-tp8
+# B: the profile's exact fast flags, minus warmctl lifecycle flags (default Triton MoE config)
+# Stock vLLM cold serve + glm53-prod-probe.py (quality + bench). Generated from
+# profile glm53-flash-prod-tp8 (docs/profiles/glm53-flash-prod.md).
+ID=glmab-base
+MODEL=/var/lib/warmctl/models/glm53-flash
+GPUS=0,1,2,3,4,5,6,7
+PROBE=/var/lib/warmctl/bin/glm53-prod-probe.py
+STOCK_IMAGE=vllm/vllm-openai:cu134-nightly@sha256:ad9dc6397abc878d8e764daa39e16bdc7f1ecf9fb3d0283c076530b299c31ad0
+STOCK_ARGS='--compilation-config {"cudagraph_capture_sizes":[4,8,16,32,64,96,128,160,192,224,256,384,512],"cudagraph_mode":"FULL_AND_PIECEWISE","mode":3,"pass_config":{"fuse_allreduce_rms":true}} --default-chat-template-kwargs {"reasoning_effort":"high"} --distributed-executor-backend=mp --dtype=bfloat16 --enable-auto-tool-choice --enable-chunked-prefill --enable-prefix-caching --enable-prompt-tokens-details --gpu-memory-utilization 0.85 --kv-cache-dtype=auto --kv-cache-memory-bytes 27917287424 --limit-mm-per-prompt {"image":0,"video":0} --mamba-cache-mode=align --max-model-len 204800 --max-num-batched-tokens 8192 --max-num-seqs 64 --quantization=fp8 --reasoning-parser=glm47 --seed 42 --served-model-name glm53-flash --speculative-config {"method":"mtp","num_speculative_tokens":3} --tensor-parallel-size 8 --tool-call-parser=glm47'

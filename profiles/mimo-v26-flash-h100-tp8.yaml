@@ -1,0 +1,30 @@
+# MiMo-V2.6-Flash (310B-A15B, FP8 blocks) served from the public catalog on
+# 8×H100: 128 K context, 64 sequences, 16 GiB of KV cache per GPU (sliding-
+# window attention keeps it small), full and piecewise CUDA graphs, custom
+# and FlashInfer all-reduce with the RMSNorm fusion. MTP is off.
+schema: warmctl.profile/v1
+id: mimo-v26-flash-h100-tp8
+model: {id: XiaomiMiMo/MiMo-V2.6-Flash-RL, revision: dcd3fd83fb181622fbc606fbb1709901982a62c2, served_names: [mimo-v26-flash]}
+parallel: {tp: 8}
+hardware: [h100-80gb-sxm]
+vllm:
+  max-model-len: 131072
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 17179869184
+  enable-chunked-prefill: true
+  trust-remote-code: true
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+  fuse_allreduce_rms: true
+env:
+  VLLM_ALLREDUCE_USE_FLASHINFER: null
+  VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC: null
+  VLLM_ALLREDUCE_USE_SYMM_MEM: null
+  VLLM_USE_NCCL_SYMM_MEM: null
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 1TiB}

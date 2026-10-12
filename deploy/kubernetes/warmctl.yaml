@@ -1,0 +1,43 @@
+# GLM-5.3-Flash from its snapshot on an 8xH100 node (docs/kubernetes.md).
+# The image is the warmctl runtime image (make pod-image); its command is
+# the host's, `warmctl up NAME`, and it restores in place.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glm53-flash
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: glm53-flash}
+  template:
+    metadata:
+      labels: {app: glm53-flash}
+    spec:
+      containers:
+        - name: warmctl
+          image: registry.warmctl.io/warmctl/runtime:latest
+          args: [up, glm53-flash]
+          # CRIU and cuda-checkpoint restore processes: root with every capability.
+          securityContext: {privileged: true}
+          resources:
+            limits: {nvidia.com/gpu: 8}
+          # 503 while pulling and restoring, 200 once the canary passed.
+          readinessProbe:
+            httpGet: {path: /health, port: 8080}
+            periodSeconds: 1
+          volumeMounts:
+            - {name: snapshots, mountPath: /var/lib/warmctl}
+      volumes:
+        # Optional: snapshots stay on the node, so the next pod there restores
+        # without downloading again (and node-prep.yaml can pull ahead).
+        - name: snapshots
+          hostPath: {path: /var/lib/warmctl, type: DirectoryOrCreate}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: glm53-flash
+spec:
+  selector: {app: glm53-flash}
+  ports:
+    - {port: 80, targetPort: 8080}

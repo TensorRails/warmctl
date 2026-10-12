@@ -1,0 +1,7 @@
+schema: warmctl.profile/v1
+id: gemma4-26b-a4b-tp4
+model: {id: google/gemma-4-26B-A4B-it, revision: 4d7ae4984b7db7de8f8457170b3f1a419ee76d52, served_names: [gemma4-26b-a4b]}
+parallel: {tp: 4}
+hardware: [h100-80gb-sxm]
+resources: {memory: 128GiB}
+vllm: {limit-mm-per-prompt: {image: 0, video: 0}}

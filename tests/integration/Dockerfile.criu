@@ -1,0 +1,16 @@
+# CRIU 4.2.1 for the CPU roundtrip (make criu-test). Not a serving image.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config python3 protobuf-c-compiler libprotobuf-c-dev protobuf-compiler libprotobuf-dev \
+    libnet-dev libnl-3-dev libcap-dev libaio-dev libgnutls28-dev libnftables-dev libbsd-dev uuid-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:feffdf4638125ebb12d2434754f80a1d7bbba85a3e6bee98c216f88fb99a5d96 \
+    https://github.com/checkpoint-restore/criu/archive/refs/tags/v4.2.1.tar.gz /tmp/criu.tar.gz
+RUN tar -xzf /tmp/criu.tar.gz -C /tmp && make -C /tmp/criu-4.2.1 -j8 criu
+
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libprotobuf-c1 libnet1 libnl-3-200 libcap2 libaio1 libgnutls30 libnftables1 libbsd0 iproute2 iptables ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /tmp/criu-4.2.1/criu/criu /usr/local/sbin/criu
+LABEL io.warmctl.purpose="criu-roundtrip" io.warmctl.criu.version="4.2.1"

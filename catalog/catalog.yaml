@@ -1,0 +1,75 @@
+# The models registry.warmctl.io/warmctl publishes: `make catalog-push`
+# writes this list to warmctl/catalog:latest. Each name is a repository,
+# warmctl/<name>, whose `latest` indexes one snapshot per platform.
+#
+# Check every license against the model card before publishing; `gated`
+# makes `warmctl up` ask for --accept-license once per host.
+models:
+  - name: glm53-flash
+    title: GLM-5.3-Flash
+    license: MIT
+    description: Frontier MoE with MTP; 8×H100, 8×B200 and 4×B200 prod profiles, 200K context.
+  - name: deepseek-v41-flash
+    title: DeepSeek-V4.1-Flash
+    license: MIT
+    description: Frontier MoE with Engram and DSpark; 8×H100 and 4×B200 prod profiles, 192K context.
+  - name: mimo-v26-flash
+    title: MiMo-V2.6-Flash
+    license: MIT
+    description: Xiaomi's 310B-A15B MoE, FP8; 8×H100.
+  - name: qwen3-vl-8b
+    title: Qwen3-VL-8B-Instruct
+    license: Apache-2.0
+    description: Vision and text, one GPU, images on.
+  - name: gemma4-31b
+    title: Gemma 4 31B
+    license: Apache-2.0
+    description: Dense, one large GPU.
+  - name: qwen38-27b
+    title: Qwen3.8-27B FP8
+    license: Apache-2.0
+    description: Hybrid dense, one GPU.
+  - name: qwen3-coder-30b-a3b
+    title: Qwen3-Coder-30B-A3B-Instruct FP8
+    license: Apache-2.0
+    description: Coding MoE with tool calls, one GPU.
+  - name: qwen36-35b-a3b
+    title: Qwen3.6-35B-A3B FP8
+    license: Apache-2.0
+    description: Hybrid MoE, one GPU.
+  - name: qwen36-27b
+    title: Qwen3.6-27B FP8
+    license: Apache-2.0
+    description: Hybrid dense, one GPU.
+  - name: gemma4-26b-a4b
+    title: Gemma 4 26B-A4B
+    license: Apache-2.0
+    description: MoE, one GPU.
+  - name: gpt-oss-120b
+    title: gpt-oss-120b
+    license: Apache-2.0
+    description: MXFP4 MoE, one GPU.
+  - name: gpt-oss-20b
+    title: gpt-oss-20b
+    license: Apache-2.0
+    description: MXFP4 MoE, one GPU.
+  - name: nemotron35-30b-a3b
+    title: Nemotron 3.5 Lightning 30B-A3B FP8
+    license: OpenMDW-1.1
+    description: Mamba MoE, one GPU.
+  - name: qwen3-30b-a3b
+    title: Qwen3-30B-A3B-Instruct-2507
+    license: Apache-2.0
+    description: MoE, one GPU.
+  - name: qwen3-32b
+    title: Qwen3-32B
+    license: Apache-2.0
+    description: Dense, one H200.
+  - name: qwen3-8b
+    title: Qwen3-8B
+    license: Apache-2.0
+    description: Dense, one GPU.
+  - name: qwen3-0.6b
+    title: Qwen3-0.6B
+    license: Apache-2.0
+    description: The smallest one, to try warmctl in a minute.

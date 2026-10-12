@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-labelledby="title desc">
+  <title id="title">warmctl: warm up once, serve in seconds</title>
+  <desc id="desc">A GLM-5.3-Flash replica on 8×H100: vLLM cold start 650 s, warmctl restore 37 s.</desc>
+  <defs>
+    <radialGradient id="glow" cx="78%" cy="30%" r="60%">
+      <stop offset="0" stop-color="#7aa7d9" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#7aa7d9" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.035"/>
+    </pattern>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif; }
+    </style>
+  </defs>
+  <rect width="1280" height="400" rx="20" fill="#000"/>
+  <rect width="1280" height="400" rx="20" fill="url(#grid)"/>
+  <rect width="1280" height="400" rx="20" fill="url(#glow)"/>
+  <rect x="0.5" y="0.5" width="1279" height="399" rx="19.5" fill="none" stroke="#1f1f1f"/>
+
+  <!-- logo and wordmark -->
+  <g transform="translate(64 64)">
+    <rect width="44" height="44" rx="11" fill="#0a0a0a" stroke="#1f1f1f"/>
+    <circle cx="22" cy="22" r="12.5" fill="none" stroke="#a1a1a1" stroke-width="2"/>
+    <circle cx="22" cy="22" r="5" fill="#fff"/>
+    <text x="62" y="31" class="mono" font-size="26" font-weight="600" fill="#ededed">warmctl</text>
+  </g>
+
+  <!-- headline -->
+  <text x="64" y="194" class="sans" font-size="56" font-weight="700" letter-spacing="-1.5" fill="#ededed">Warm up once.</text>
+  <text x="64" y="258" class="sans" font-size="56" font-weight="700" letter-spacing="-1.5" fill="#a1a1a1">Serve in seconds.</text>
+  <text x="64" y="312" class="sans" font-size="19" fill="#a1a1a1">Snapshot a warm vLLM engine once. Restore it on any matching</text>
+  <text x="64" y="340" class="sans" font-size="19" fill="#a1a1a1">GPU host in seconds, sharded and at full serving speed.</text>
+
+  <!-- comparison card -->
+  <g transform="translate(760 92)">
+    <rect width="456" height="236" rx="14" fill="#0a0a0a" stroke="#1f1f1f"/>
+    <text x="28" y="44" class="mono" font-size="14" fill="#666">GLM-5.3-Flash · FP8 · 8×H100</text>
+    <text x="28" y="66" class="mono" font-size="14" fill="#666">new replica → serving</text>
+
+    <text x="28" y="112" class="mono" font-size="15" fill="#a1a1a1">vLLM cold start</text>
+    <text x="428" y="112" class="mono" font-size="15" fill="#a1a1a1" text-anchor="end">650 s</text>
+    <rect x="28" y="124" width="400" height="12" rx="3" fill="#3d3d3d"/>
+
+    <text x="28" y="172" class="mono" font-size="15" fill="#ededed">warmctl up</text>
+    <text x="428" y="172" class="mono" font-size="15" font-weight="700" fill="#6dbb9a" text-anchor="end">37 s</text>
+    <rect x="28" y="184" width="23" height="12" rx="3" fill="#6dbb9a"/>
+
+    <text x="28" y="222" class="mono" font-size="13" fill="#666">17× faster · canary bitwise · stock throughput</text>
+  </g>
+</svg>
