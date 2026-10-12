@@ -4,6 +4,13 @@
 
 Releases
 
+- `curl -fsSL https://warmctl.io/install.sh | sh` installs the newest
+  release, pre-releases included, in `/opt/warmctl` and links
+  `/usr/local/bin/warmctl`; run it again to upgrade. It checks the archive
+  against the release checksums and, with cosign on PATH, their signature.
+  `WARMCTL_VERSION`, `WARMCTL_PREFIX`, `WARMCTL_BIN_DIR` and
+  `WARMCTL_DOWNLOAD` (a mirror) change what and where. The script is
+  [scripts/install.sh](scripts/install.sh).
 - Every release ships archives for linux/amd64 (with cuInterpose),
   linux/arm64 and macOS (amd64, arm64), built by GitHub Actions from the tag.
   The binary is `warmctl` in every archive (was `warmctl-linux-amd64`).

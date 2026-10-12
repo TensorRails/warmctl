@@ -23,13 +23,11 @@ vLLM cold start 650 s, `warmctl up` 37 s, then stock serving speed.
 Linux GPU host, Docker with the NVIDIA runtime, root:
 
 ```bash
-V=v2.0.0-beta.6 && mkdir -p /opt/warmctl
-curl -fsSL https://github.com/TensorRails/warmctl/releases/download/$V/warmctl-$V-linux-amd64.tar.gz | tar xz -C /opt/warmctl
-export PATH=/opt/warmctl:$PATH
-sysctl -w kernel.io_uring_disabled=2         # CRIU cannot dump io_uring
-warmctl doctor                              # check the host
-warmctl catalog                             # models this host can restore
-warmctl up qwen3-8b --listen 0.0.0.0:8000   # pull, restore, serve
+curl -fsSL https://warmctl.io/install.sh | sh  # newest release in /opt/warmctl
+sysctl -w kernel.io_uring_disabled=2           # CRIU cannot dump io_uring
+warmctl doctor                                 # check the host
+warmctl catalog                                # models this host can restore
+warmctl up qwen3-8b --listen 0.0.0.0:8000      # pull, restore, serve
 ```
 
 The public catalog has 17 models on H100, H200, B200 and L40S. Any other
