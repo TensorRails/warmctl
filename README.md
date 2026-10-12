@@ -43,40 +43,30 @@ warmctl up ghcr.io/you/qwen3-8b
 
 `warmctl up` to serving, by where the snapshot is read from.
 
-| Model | GPUs | Page cache | File share, cold | vLLM cold start |
-|---|---|---|---|---|
-| GLM-5.3-Flash | 8×H100 | **37 s** | **57 s** | 650 s |
-| GLM-5.3-Flash | 8×B200 | **44 s** | | |
-| DeepSeek-V4.1-Flash | 8×H100 | **75–86 s** | | 357 s |
-| DeepSeek-V4.1-Flash | 4×B200 | **73 s** | | |
-| gpt-oss-120b | 1×B200 · 2–4×H100 | **13–16 s** | | 351 s |
-| Qwen3-32B | 4–8×H100 · 1×B200 | **13–21 s** | | |
-| Qwen3.6-35B-A3B | 1×H100 · 1×B200 | **10–12 s** | | |
-| Gemma 4 26B-A4B | 1×H100 · 1×B200 | **12–14 s** | | |
-| Qwen3-8B | 1–2×H100 · 2×L40S | **8–10 s** | | |
+| Model | GPUs | Image | Page cache | File share, cold | vLLM cold start |
+|---|---|---|---|---|---|
+| GLM-5.3-Flash | 8×H100 | 404 GiB | **37 s** | **57 s** | 650 s |
+| GLM-5.3-Flash | 8×B200 | 418 GiB | **44 s** | | |
+| DeepSeek-V4.1-Flash | 8×H100 | 678 GiB | **75–86 s** | | 357 s |
+| DeepSeek-V4.1-Flash | 4×B200 | 621 GiB | **73 s** | | |
+| gpt-oss-120b | 1×B200 · 2–4×H100 | 78–81 GiB | **13–16 s** | | 351 s |
+| Qwen3-32B | 4–8×H100 · 1×B200 | 72–116 GiB | **13–21 s** | | |
+| Qwen3.6-35B-A3B | 1×H100 · 1×B200 | 43–46 GiB | **10–12 s** | | |
+| Gemma 4 26B-A4B | 1×H100 · 1×B200 | 57–60 GiB | **12–14 s** | | |
+| Qwen3-8B | 1–2×H100 · 2×L40S | 23–30 GiB | **8–10 s** | | |
 
-- **Page cache**: the snapshot is already in host memory, as on a second
-  `up` on the same host.
-- **File share, cold**: the snapshot on a shared network file system that
-  fio rates at about 10 GB/s, page cache dropped. `up` reads the snapshot
-  with 32 readers that start before CRIU: CRIU images first, then the
-  weights rank by rank. GLM-5.3-Flash reads 401.6 GiB at 7.8 GiB/s.
-- **vLLM cold start**: `vllm serve` with the same profile, to serving.
+- **Page cache**: the snapshot is already in host memory.
+- **File share, cold**: the snapshot on a network file share (about 10 GB/s),
+  page cache dropped. `up` reads it ahead in 32 streams, 7.8 GiB/s.
 
-Where the time goes, GLM-5.3-Flash on 8×H100. From the file share,
-v2.0.0-beta.5 reads the snapshot ahead of CRIU and the weights reload:
+GLM-5.3-Flash on 8×H100, by phase:
 
-| Phase | Page cache | File share, cold, beta.4 | File share, cold, beta.5 |
-|---|---|---|---|
-| CRIU restores the process tree | 8.1 s | 15.1 s | 15.3 s |
-| GPU state restored (8 ranks in parallel) | 10.5 s | 10.9 s | 13.3 s |
-| Weights reloaded, slowest rank (320 GiB) | 12.3 s | 41.6 s | 19.3 s |
-| **Serving** | **37.3 s** | **75.1 s** | **56.8 s** |
-
-From the registry into an empty store, `up` pulls first: Qwen3-0.6B on
-1×B200 serves in 39 s, and large snapshots pull at about 840 MB/s. Copy a
-snapshot to a file share once, and every host runs
-`warmctl up /share/glm53-flash` and starts in the time above.
+| Phase | Page cache | File share, cold |
+|---|---|---|
+| CRIU restores the process tree | 8.1 s | 15.3 s |
+| GPU state restored | 10.5 s | 13.3 s |
+| Weights reloaded (320 GiB) | 12.3 s | 19.3 s |
+| **Serving** | **37.3 s** | **56.8 s** |
 
 Restored engines serve at stock vLLM speed or faster (GLM-5.3-Flash: 100–136% of stock throughput).
 
