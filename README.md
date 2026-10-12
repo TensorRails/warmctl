@@ -15,7 +15,7 @@ host with the same GPUs and NVIDIA driver branch. GLM-5.3-Flash on 8×H100:
 vLLM cold start 650 s, `warmctl up` 37 s, then stock serving speed.
 
 <p align="center">
-  <img src="docs/assets/up.gif" width="100%" alt="warmctl up restoring GLM-5.3-Flash on 8×H100: CRIU, GPU state, shared GPU memory, 320 GiB of weights, bitwise canary, serving started 37.3 s">
+  <img src="docs/assets/build-scale.svg" width="100%" alt="vLLM and GLM-5.3-Flash warm up once on 8×H100 (650 s cold start), warmctl build snapshots them into an OCI image, warmctl up restores it on as many matching hosts as you need, each serving in 37 s">
 </p>
 
 ## Quickstart

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-labelledby="title desc">
+  <title id="title">Build a warm engine once, scale it out as an image</title>
+  <desc id="desc">vLLM and GLM-5.3-Flash warm up once on 8×H100, a 650 s cold start. warmctl build snapshots the warm engine into an OCI image. warmctl up restores that image on as many matching hosts as you need, each serving in 37 s.</desc>
+  <defs>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif; }
+    </style>
+    <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#a1a1a1"/>
+    </marker>
+    <marker id="head-dim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#666"/>
+    </marker>
+  </defs>
+  <rect width="1280" height="400" rx="20" fill="#000"/>
+  <rect x="0.5" y="0.5" width="1279" height="399" rx="19.5" fill="none" stroke="#1f1f1f"/>
+
+  <g class="mono" font-size="13" fill="#666" letter-spacing="1">
+    <text x="56" y="62">01  WARM UP ONCE</text>
+    <text x="496" y="62">02  SHIP AS AN IMAGE</text>
+    <text x="896" y="62">03  SCALE OUT, ALREADY WARM</text>
+  </g>
+
+  <!-- 01: engine and model on the host that warms them up -->
+  <g transform="translate(56 88)">
+    <rect width="280" height="76" rx="12" fill="#0a0a0a" stroke="#1f1f1f"/>
+    <text x="24" y="34" class="sans" font-size="24" font-weight="600" fill="#ededed">vLLM</text>
+    <text x="24" y="58" class="mono" font-size="13" fill="#666">inference engine</text>
+    <circle cx="256" cy="38" r="6" fill="#7aa7d9"/>
+  </g>
+  <g transform="translate(56 176)">
+    <rect width="280" height="76" rx="12" fill="#0a0a0a" stroke="#1f1f1f"/>
+    <text x="24" y="34" class="sans" font-size="24" font-weight="600" fill="#ededed">GLM-5.3-Flash</text>
+    <text x="24" y="58" class="mono" font-size="13" fill="#666">FP8 · 320 GiB of weights</text>
+    <circle cx="256" cy="38" r="6" fill="#a08fd6"/>
+  </g>
+  <g transform="translate(56 264)">
+    <rect width="280" height="80" rx="12" fill="#0a0a0a" stroke="#1f1f1f"/>
+    <text x="24" y="28" class="mono" font-size="13" fill="#a1a1a1">8×H100 · cold start 650 s</text>
+    <g fill="#6dbb9a">
+      <rect x="24"  y="42" width="20" height="20" rx="3"/>
+      <rect x="52"  y="42" width="20" height="20" rx="3"/>
+      <rect x="80"  y="42" width="20" height="20" rx="3"/>
+      <rect x="108" y="42" width="20" height="20" rx="3"/>
+      <rect x="136" y="42" width="20" height="20" rx="3"/>
+      <rect x="164" y="42" width="20" height="20" rx="3"/>
+      <rect x="192" y="42" width="20" height="20" rx="3"/>
+      <rect x="220" y="42" width="20" height="20" rx="3"/>
+    </g>
+  </g>
+
+  <!-- build -->
+  <line x1="352" y1="216" x2="478" y2="216" stroke="#a1a1a1" stroke-width="2" marker-end="url(#head)"/>
+  <text x="414" y="202" class="mono" font-size="15" fill="#ededed" text-anchor="middle">warmctl build</text>
+  <text x="414" y="240" class="mono" font-size="13" fill="#666" text-anchor="middle">snapshot</text>
+
+  <!-- 02: the image, three layers coloured like what they hold:
+       weights (GLM), the engine (vLLM), warm GPU state (the warmed GPUs) -->
+  <g transform="translate(496 88)">
+    <rect width="240" height="256" rx="12" fill="#0a0a0a" stroke="#1f1f1f"/>
+    <g stroke="#0a0a0a" stroke-width="1.5" stroke-linejoin="round">
+      <g transform="translate(120 92)">
+        <path d="M-60 0L0 30L0 44L-60 14z" fill="#5c537a"/>
+        <path d="M0 30L60 0L60 14L0 44z" fill="#3e3951"/>
+        <path d="M0 -30L60 0L0 30L-60 0z" fill="#a08fd6"/>
+      </g>
+      <g transform="translate(120 72)">
+        <path d="M-60 0L0 30L0 44L-60 14z" fill="#48607c"/>
+        <path d="M0 30L60 0L60 14L0 44z" fill="#314152"/>
+        <path d="M0 -30L60 0L0 30L-60 0z" fill="#7aa7d9"/>
+      </g>
+      <g transform="translate(120 52)">
+        <path d="M-60 0L0 30L0 44L-60 14z" fill="#406b59"/>
+        <path d="M0 30L60 0L60 14L0 44z" fill="#2d483c"/>
+        <path d="M0 -30L60 0L0 30L-60 0z" fill="#6dbb9a"/>
+      </g>
+    </g>
+    <text x="120" y="174" class="sans" font-size="22" font-weight="600" fill="#ededed" text-anchor="middle">OCI image</text>
+    <text x="120" y="200" class="mono" font-size="13" fill="#a1a1a1" text-anchor="middle">warmctl/glm53-flash</text>
+    <text x="120" y="222" class="mono" font-size="13" fill="#666" text-anchor="middle">any OCI registry</text>
+  </g>
+
+  <!-- up, fanned out to every host -->
+  <line x1="752" y1="216" x2="836" y2="216" stroke="#a1a1a1" stroke-width="2"/>
+  <text x="790" y="202" class="mono" font-size="15" fill="#ededed" text-anchor="middle">warmctl up</text>
+  <text x="790" y="240" class="mono" font-size="13" fill="#666" text-anchor="middle">× N hosts</text>
+  <g fill="none" stroke-width="1.5">
+    <path d="M836 216C866 216 860 114 890 114" stroke="#a1a1a1" marker-end="url(#head)"/>
+    <path d="M836 216C866 216 860 182 890 182" stroke="#a1a1a1" marker-end="url(#head)"/>
+    <path d="M836 216C866 216 860 250 890 250" stroke="#a1a1a1" marker-end="url(#head)"/>
+    <path d="M836 216C866 216 860 318 890 318" stroke="#666" stroke-dasharray="4 4" marker-end="url(#head-dim)"/>
+  </g>
+
+  <!-- 03: the fleet -->
+  <g id="host">
+    <rect x="896" y="88" width="328" height="52" rx="10" fill="#0a0a0a" stroke="#1f1f1f"/>
+    <g fill="#6dbb9a">
+      <rect x="916"  y="107" width="14" height="14" rx="2"/>
+      <rect x="936"  y="107" width="14" height="14" rx="2"/>
+      <rect x="956"  y="107" width="14" height="14" rx="2"/>
+      <rect x="976"  y="107" width="14" height="14" rx="2"/>
+      <rect x="996"  y="107" width="14" height="14" rx="2"/>
+      <rect x="1016" y="107" width="14" height="14" rx="2"/>
+      <rect x="1036" y="107" width="14" height="14" rx="2"/>
+      <rect x="1056" y="107" width="14" height="14" rx="2"/>
+    </g>
+    <text x="1146" y="119" class="mono" font-size="13" fill="#a1a1a1" text-anchor="end">serving</text>
+    <text x="1204" y="120" class="mono" font-size="16" font-weight="700" fill="#6dbb9a" text-anchor="end">37 s</text>
+  </g>
+  <use href="#host" y="68"/>
+  <use href="#host" y="136"/>
+  <rect x="896.5" y="292.5" width="327" height="51" rx="10" fill="none" stroke="#3d3d3d" stroke-dasharray="5 5"/>
+  <text x="1060" y="323" class="mono" font-size="13" fill="#666" text-anchor="middle">+ more hosts, any cloud</text>
+</svg>
