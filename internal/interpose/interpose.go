@@ -4,7 +4,6 @@
 package interpose
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -93,27 +92,6 @@ func Command(coordinator, action, dir string, pids []int) []string {
 		argv = append(argv, "--process", strconv.Itoa(pid))
 	}
 	return argv
-}
-
-// Device is one GPU as `python3 -m warmctl_vllm.devices` reports it.
-type Device struct {
-	Index             int    `json:"index"`
-	Name              string `json:"name"`
-	ComputeCapability string `json:"compute_capability"`
-	VMM               bool   `json:"vmm"`
-	PosixFD           bool   `json:"posix_fd"`
-	Multicast         bool   `json:"multicast"`
-}
-
-// ParseDevices reads the probe's output.
-func ParseDevices(raw []byte) ([]Device, error) {
-	var out struct {
-		Devices []Device `json:"devices"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("device probe: %w", err)
-	}
-	return out.Devices, nil
 }
 
 // Supported is nil when every GPU can hold an interposed engine: the

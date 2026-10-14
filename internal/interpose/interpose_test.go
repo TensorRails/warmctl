@@ -1,10 +1,13 @@
 package interpose
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCommands(t *testing.T) {
@@ -31,11 +34,9 @@ func TestParticipants(t *testing.T) {
 }
 
 func TestSupported(t *testing.T) {
-	devices, err := ParseDevices([]byte(`{"devices": [` +
-		`{"index": 0, "name": "NVIDIA H100 80GB HBM3", "compute_capability": "9.0", "vmm": true, "posix_fd": true, "multicast": true},` +
-		`{"index": 1, "name": "NVIDIA L40S", "compute_capability": "8.9", "vmm": true, "posix_fd": true, "multicast": false}]}`))
-	if err != nil || len(devices) != 2 || devices[1].Multicast {
-		t.Fatal(devices, err)
+	devices := []Device{
+		{Index: 0, Name: "NVIDIA H100 80GB HBM3", ComputeCapability: "9.0", VMM: true, PosixFD: true, Multicast: true},
+		{Index: 1, Name: "NVIDIA L40S", ComputeCapability: "8.9", VMM: true, PosixFD: true},
 	}
 	if err := Supported(devices); err != nil {
 		t.Fatalf("PCIe GPUs with VMM refused: %v", err)
@@ -47,8 +48,28 @@ func TestSupported(t *testing.T) {
 	if err := Supported(nil); err == nil {
 		t.Fatal("no GPUs accepted")
 	}
-	if _, err := ParseDevices([]byte("Traceback")); err == nil {
-		t.Fatal("garbage parsed")
+}
+
+func TestDevices(t *testing.T) {
+	old := Probe
+	t.Cleanup(func() { Probe = old })
+	Probe = func() ([]Device, error) { return []Device{{Index: 0, Name: "NVIDIA H100 80GB HBM3", VMM: true}}, nil }
+	devices, err := Devices(context.Background())
+	if err != nil || len(devices) != 1 || !devices[0].VMM {
+		t.Fatal(devices, err)
+	}
+	Probe = func() ([]Device, error) { return nil, errors.New("CUDA error 100") }
+	if _, err := Devices(context.Background()); err == nil || !strings.Contains(err.Error(), "CUDA error 100") {
+		t.Fatal(err)
+	}
+	// A probe that never returns, like cuInit on a GPU that fell off the bus.
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	Probe = func() ([]Device, error) { <-block; return nil, nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := Devices(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a blocked probe: %v", err)
 	}
 }
 
