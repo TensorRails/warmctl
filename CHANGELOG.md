@@ -12,8 +12,14 @@ GPUs
   snapshots restore as before. `topology_sha256` in new manifests digests a
   matrix warmctl renders from NVML. A container needs the driver's
   `utility` capability, as it did for `nvidia-smi`.
+- The agent asks the CUDA driver (`libcuda.so.1`, loaded at run time)
+  whether every GPU supports VMM with POSIX handles, the check behind
+  `ipc: auto`, instead of running `python3 -m warmctl_vllm.devices`; that
+  module is gone, and the probe is one driver call in the agent rather than
+  an interpreter start. A container needs the driver's `compute` capability
+  for it, which an engine needs anyway.
 - The linux binaries are now dynamically linked against glibc, which the
-  NVML loader needs; cgo stays off.
+  NVML and CUDA loaders need; cgo stays off.
 
 Releases
 

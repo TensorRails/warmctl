@@ -27,11 +27,7 @@ func (a *agent) chooseIPC(ctx context.Context) (bool, string, error) {
 	if a.cfg.IPC == "" || a.cfg.IPC == interpose.Native {
 		return false, "ipc native", nil
 	}
-	out, err := process.Capture(ctx, time.Minute, "python3", "-m", "warmctl_vllm.devices")
-	if err != nil {
-		return false, "", fmt.Errorf("device probe: %w: %s", err, out.Stderr)
-	}
-	devices, err := interpose.ParseDevices([]byte(out.Stdout))
+	devices, err := interpose.Devices(ctx)
 	if err != nil {
 		return false, "", err
 	}

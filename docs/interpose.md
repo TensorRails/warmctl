@@ -33,8 +33,8 @@ The profile's `ipc` decides:
 
 Only an engine with more than one GPU process can share memory, so a TP1
 engine never changes. The VMM check is a driver attribute read inside the
-donor before the engine starts (`python3 -m warmctl_vllm.devices`), not a
-GPU name: an L40S TP2 engine, whose custom all-reduce shares memory over
+donor before the engine starts (`cuDeviceGetAttribute` through
+`libcuda.so.1`, which the agent loads at run time), not a GPU name: an L40S TP2 engine, whose custom all-reduce shares memory over
 PCIe, is interposed like an H100 one; a vGPU without VMM runs native. The
 choice is recorded in the manifest and the restore follows it.
 
