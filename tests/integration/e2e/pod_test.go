@@ -35,9 +35,8 @@ func (e *env) newPod(name string, extra ...string) *pod {
 	p := &pod{e: e, name: "warmctl-e2e-pod-" + name}
 	p.args = append([]string{"run", "-d", "--name", p.name, "--privileged", "-p", podGateway + ":8080",
 		"-v", filepath.Join(e.base, "model") + ":/model:ro",
-		// The NVIDIA runtime puts nvidia-smi in a GPU pod; here the fake one.
-		"-v", *testdata + ":/opt/fake-nvidia:ro",
-		"-e", "PATH=/opt/fake-nvidia:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}, extra...)
+		// The NVIDIA runtime puts libnvidia-ml in a GPU pod; here the stand-in.
+		"-v", *nvml + ":/opt/fake-nvidia:ro", "-e", "LD_LIBRARY_PATH=/opt/fake-nvidia"}, extra...)
 	e.t.Cleanup(p.remove)
 	return p
 }

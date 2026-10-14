@@ -154,8 +154,12 @@ func (b *bake) preflight(ctx context.Context) error {
 	if !b.launch.Profile.Supports(b.row) {
 		b.p.Printf("warning: profile %s does not list %s; running anyway", b.launch.Profile.ID, b.row.ID)
 	}
-	if busy, err := host.Busy(ctx, b.gpus); err != nil || busy > 0 {
-		return fmt.Errorf("the GPUs run %d other processes (%v)", busy, err)
+	busy, err := host.Busy(ctx, b.gpus)
+	if err != nil {
+		return err
+	}
+	if busy > 0 {
+		return fmt.Errorf("the GPUs run %d other processes", busy)
 	}
 	if b.lease, err = host.Acquire(filepath.Join(b.o.StateDir, "locks"), b.gpus); err != nil {
 		return err

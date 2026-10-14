@@ -2,6 +2,7 @@
 
 GO ?= go
 PY ?= python3
+CC ?= cc
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 CRIU_IMAGE ?= warmctl-criu-test:local
@@ -59,19 +60,23 @@ criu-test: criu-image
 # A whole snapshot and two restores through the real binary on a CPU host,
 # around a stand-in vLLM (tests/integration/e2e/vllm.py) that runs warmctl's
 # Python extension over emulated device memory, then restores in the pod
-# image built on it, run as a Kubernetes pod would run it. Needs Docker and
-# root.
+# image built on it, run as a Kubernetes pod would run it. The GPUs are a
+# stand-in libnvidia-ml.so.1 (tests/integration/e2e/fakenvml). Needs Docker,
+# a C compiler and root.
 e2e-test: criu-image
 	docker build -t $(E2E_IMAGE) --build-arg BASE=$(CRIU_IMAGE) tests/integration/e2e
 	docker build -t $(E2E_POD_IMAGE) -f deploy/kubernetes/Dockerfile --build-arg BASE=$(E2E_IMAGE) \
 		--build-arg BASE_REF=$$(docker image inspect -f '{{.Id}}' $(E2E_IMAGE)) .
-	mkdir -p bin/e2e
+	mkdir -p bin/e2e/nvml
+	$(CC) -O2 -shared -fPIC -nostdlib -ffreestanding -fno-stack-protector -Wl,--no-undefined \
+		-Wl,-soname,libnvidia-ml.so.1 -o bin/e2e/nvml/libnvidia-ml.so.1 tests/integration/e2e/fakenvml/fakenvml.c
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell $(GO) env GOARCH) $(GO) build -o bin/e2e/warmctl ./cmd/warmctl
 	$(GO) test -c -tags e2e -o bin/e2e/e2e.test ./tests/integration/e2e
 	docker rm -f warmctl-e2e-registry >/dev/null 2>&1 || true
 	docker run -d --name warmctl-e2e-registry -p 127.0.0.1:5000:5000 registry:2 >/dev/null
 	$(SUDO) bin/e2e/e2e.test -test.v -test.count=1 -warmctl $(CURDIR)/bin/e2e/warmctl -image $(E2E_IMAGE) \
-		-testdata $(CURDIR)/tests/integration/e2e/testdata -registry localhost:5000 -pod-image $(E2E_POD_IMAGE); \
+		-testdata $(CURDIR)/tests/integration/e2e/testdata -nvml $(CURDIR)/bin/e2e/nvml -registry localhost:5000 \
+		-pod-image $(E2E_POD_IMAGE); \
 	status=$$?; docker rm -f warmctl-e2e-registry >/dev/null; exit $$status
 
 cuinterpose:

@@ -36,6 +36,7 @@ var (
 	warmctl  = flag.String("warmctl", "", "linux warmctl binary")
 	image    = flag.String("image", "warmctl-e2e:local", "image with CRIU, Python and the stand-in vLLM")
 	testdata = flag.String("testdata", "", "tests/integration/e2e/testdata")
+	nvml     = flag.String("nvml", "", "directory of the stand-in libnvidia-ml.so.1 (make e2e-test builds it)")
 	registry = flag.String("registry", "", "plain-HTTP registry for the push/pull leg, e.g. localhost:5000")
 )
 
@@ -62,13 +63,12 @@ type env struct {
 	t     *testing.T
 	base  string
 	state string
-	path  string
 	extra []string // environment for the next commands, after the defaults
 }
 
 func (e *env) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, *warmctl, args...)
-	cmd.Env = append(os.Environ(), "PATH="+e.path)
+	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+*nvml)
 	if *registry != "" {
 		cmd.Env = append(cmd.Env, "WARMCTL_REGISTRY="+*registry+"/e2e")
 	}
@@ -132,8 +132,8 @@ func (e *env) noContainers() {
 }
 
 func setup(t *testing.T) *env {
-	if *warmctl == "" || *testdata == "" {
-		t.Skip("needs -warmctl and -testdata")
+	if *warmctl == "" || *testdata == "" || *nvml == "" {
+		t.Skip("needs -warmctl, -testdata and -nvml")
 	}
 	ctx := context.Background()
 	dk, err := docker.New(ctx, docker.DefaultSocket)
@@ -145,7 +145,7 @@ func setup(t *testing.T) *env {
 		t.Fatalf("image %s: %v (make e2e-test builds it)", *image, err)
 	}
 	base := t.TempDir()
-	e := &env{t: t, base: base, state: filepath.Join(base, "state"), path: *testdata + ":" + os.Getenv("PATH")}
+	e := &env{t: t, base: base, state: filepath.Join(base, "state")}
 	write := func(name, body string) {
 		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 			t.Fatal(err)

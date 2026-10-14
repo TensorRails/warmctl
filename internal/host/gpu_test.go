@@ -1,22 +1,74 @@
 package host
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
 
-const smi = `0, GPU-aaaa, NVIDIA H100 80GB HBM3, 00000000:1B:00.0, 81559, 580.95.05
-1, GPU-bbbb, NVIDIA H100 80GB HBM3, 00000000:18:00.0, 81559, 580.95.05
-2, GPU-cccc, NVIDIA H100 80GB HBM3, 00000000:2A:00.0, 81559, 580.95.05
-`
+// fakeNVML is a host whose GPUs, compute processes and links a test sets.
+type fakeNVML struct {
+	driver string
+	gpus   []GPU // UUID, name, bus ID as NVML prints it, memory
+	procs  map[int]int
+	nvlink [][2]int // pairs joined by NVLink
+	opened int
+	closed int
+}
 
-const topo = `	GPU0	GPU1	GPU2	CPU Affinity	NUMA Affinity
-GPU0	 X 	NV18	PIX	0-47	0
-GPU1	NV18	 X 	NV18	0-47	0
-GPU2	PIX	NV18	 X 	0-47	0
-`
+func (f *fakeNVML) Driver() (string, error) { return f.driver, nil }
+func (f *fakeNVML) Count() (int, error)     { return len(f.gpus), nil }
+func (f *fakeNVML) GPU(i int) (GPU, error)  { return f.gpus[i], nil }
+func (f *fakeNVML) Processes(i int) (int, error) {
+	return f.procs[i], nil
+}
+func (f *fakeNVML) NVLink(i, j int) (bool, error) {
+	for _, p := range f.nvlink {
+		if p == [2]int{i, j} || p == [2]int{j, i} {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (f *fakeNVML) Path(int, int) (string, error) { return "PIX", nil }
+func (f *fakeNVML) Close() error                  { f.closed++; return nil }
+
+// use makes f the host's NVML for the test.
+func (f *fakeNVML) use(t *testing.T) {
+	old := Open
+	Open = func() (Session, error) { f.opened++; return f, nil }
+	t.Cleanup(func() { Open = old })
+}
+
+func h100s() *fakeNVML {
+	return &fakeNVML{driver: "580.95.05", gpus: []GPU{
+		{UUID: "GPU-aaaa", Name: "NVIDIA H100 80GB HBM3", PCIBusID: "00000000:1B:00.0", MemoryMiB: 81559},
+		{UUID: "GPU-bbbb", Name: "NVIDIA H100 80GB HBM3", PCIBusID: "00000000:18:00.0", MemoryMiB: 81559},
+		{UUID: "GPU-cccc", Name: "NVIDIA H100 80GB HBM3", PCIBusID: "00000000:2A:00.0", MemoryMiB: 81559},
+	}, nvlink: [][2]int{{0, 1}, {1, 2}}}
+}
+
+func inventoryOf(t *testing.T, f *fakeNVML) []GPU {
+	t.Helper()
+	f.use(t)
+	gpus, err := Inventory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gpus
+}
 
 func TestInventory(t *testing.T) {
-	gpus, err := ParseInventory(smi)
-	if err != nil || len(gpus) != 3 || gpus[0].PCIBusID != "0000:1b:00.0" || gpus[2].MemoryMiB != 81559 || gpus[1].Driver != "580.95.05" {
-		t.Fatalf("%+v %v", gpus, err)
+	f := h100s()
+	gpus := inventoryOf(t, f)
+	if len(gpus) != 3 || gpus[0].PCIBusID != "0000:1b:00.0" || gpus[2].Index != 2 || gpus[2].MemoryMiB != 81559 ||
+		gpus[1].Driver != "580.95.05" {
+		t.Fatalf("%+v", gpus)
+	}
+	if f.opened != 1 || f.closed != 1 {
+		t.Fatalf("session opened %d, closed %d times", f.opened, f.closed)
 	}
 	sel, err := Select(gpus, "0-1")
 	if err != nil || len(sel) != 2 || sel[0].Index != 1 || sel[1].Index != 0 {
@@ -31,20 +83,82 @@ func TestInventory(t *testing.T) {
 	if all, _ := Select(gpus, ""); len(all) != 3 {
 		t.Fatal("empty spec is not all GPUs")
 	}
-	if c := TopologyClass(topo, gpus[:2]); c != "nvlink" {
-		t.Fatalf("GPU0+GPU1: %s", c)
+}
+
+func TestInventoryRefusesOddHosts(t *testing.T) {
+	(&fakeNVML{driver: "580.95.05"}).use(t)
+	if _, err := Inventory(context.Background()); err == nil || !strings.Contains(err.Error(), "no GPUs") {
+		t.Fatalf("no GPUs: %v", err)
 	}
-	if c := TopologyClass(topo, gpus); c != "pcie" {
-		t.Fatalf("all three: %s", c)
+	f := h100s()
+	f.gpus[1].UUID = "MIG-1"
+	f.use(t)
+	if _, err := Inventory(context.Background()); err == nil || !strings.Contains(err.Error(), "MIG-1") {
+		t.Fatalf("odd UUID: %v", err)
 	}
-	if c := TopologyClass(topo, gpus[:1]); c != "single" {
-		t.Fatal(c)
+	Open = func() (Session, error) { return nil, errors.New("nvml: no driver") }
+	if _, err := Inventory(context.Background()); err == nil || err.Error() != "nvml: no driver" {
+		t.Fatalf("no library: %v", err)
+	}
+}
+
+// A query that NVML never answers gives up with the caller's context.
+func TestQueryGivesUp(t *testing.T) {
+	stuck := make(chan struct{})
+	defer close(stuck)
+	old := Open
+	Open = func() (Session, error) { <-stuck; return nil, errors.New("late") }
+	t.Cleanup(func() { Open = old })
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := Inventory(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stuck NVML: %v", err)
+	}
+}
+
+func TestProcesses(t *testing.T) {
+	f := h100s()
+	f.procs = map[int]int{1: 2}
+	gpus := inventoryOf(t, f)
+	procs, err := Processes(context.Background())
+	if err != nil || len(procs) != 1 || procs["GPU-bbbb"] != 2 {
+		t.Fatalf("%v %v", procs, err)
+	}
+	if n, err := Busy(context.Background(), []GPU{gpus[0], gpus[2]}); err != nil || n != 0 {
+		t.Fatalf("idle GPUs busy: %d %v", n, err)
+	}
+	if n, err := Busy(context.Background(), gpus); err != nil || n != 2 {
+		t.Fatalf("busy GPUs: %d %v", n, err)
+	}
+}
+
+func TestTopology(t *testing.T) {
+	f := h100s()
+	gpus := inventoryOf(t, f)
+	for _, c := range []struct {
+		gpus []GPU
+		want string
+	}{{gpus[:2], "nvlink"}, {gpus[1:], "nvlink"}, {gpus, "pcie"}, {gpus[:1], "single"}} {
+		class, sum, err := Topology(context.Background(), c.gpus)
+		if err != nil || class != c.want || len(sum) != 64 {
+			t.Fatalf("%d GPUs from %d: %s %q %v, want %s", len(c.gpus), c.gpus[0].Index, class, sum, err, c.want)
+		}
+	}
+	m, err := links(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "\tGPU0\tGPU1\tGPU2\nGPU0\tX\tNV\tPIX\nGPU1\tNV\tX\tNV\nGPU2\tPIX\tNV\tX\n"; m.String() != want {
+		t.Fatalf("matrix:\n%s", m)
+	}
+	if c := TopologyClass(m, []GPU{gpus[0], {Index: 5}}); c != "pcie" {
+		t.Fatalf("GPU outside the matrix: %s", c)
 	}
 }
 
 func TestLease(t *testing.T) {
 	dir := t.TempDir()
-	gpus, _ := ParseInventory(smi)
+	gpus := inventoryOf(t, h100s())
 	a, err := Acquire(dir, gpus[:2])
 	if err != nil {
 		t.Fatal(err)
@@ -60,26 +174,12 @@ func TestLease(t *testing.T) {
 	b.Release()
 }
 
-// P129: nvidia-smi underlines the header with SGR escapes; parsing it raw
-// found no header and would call any multi-GPU host NVLink.
-func TestTopologyWithEscapes(t *testing.T) {
-	gpus, _ := ParseInventory(smi)
-	underlined := "\t\x1b[4mGPU0\tGPU1\tGPU2\tCPU Affinity\tNUMA Affinity\x1b[0m\n" +
-		"\x1b[4mGPU0\x1b[0m\t X \tNV18\tPIX\t0-47\t0\n" +
-		"\x1b[4mGPU1\x1b[0m\tNV18\t X \tNV18\t0-47\t0\n" +
-		"\x1b[4mGPU2\x1b[0m\tPIX\tNV18\t X \t0-47\t0\n"
-	if c := TopologyClass(underlined, gpus); c != "pcie" {
-		t.Fatalf("escaped matrix, all three GPUs: %s", c)
-	}
-	if c := TopologyClass(underlined, gpus[:2]); c != "nvlink" {
-		t.Fatalf("escaped matrix, GPU0+GPU1: %s", c)
-	}
-}
-
 // Pick skips GPUs that run a process, that another run leases or that are
 // another model, and keeps PCI order.
 func TestPick(t *testing.T) {
-	gpus, _ := ParseInventory(smi + "3, GPU-dddd, NVIDIA L40S, 00000000:3A:00.0, 46068, 580.95.05\n")
+	f := h100s()
+	f.gpus = append(f.gpus, GPU{UUID: "GPU-dddd", Name: "NVIDIA L40S", PCIBusID: "00000000:3A:00.0", MemoryMiB: 46068})
+	gpus := inventoryOf(t, f)
 	locks := t.TempDir()
 	lease, err := Acquire(locks, gpus[2:3]) // GPU 2
 	if err != nil {

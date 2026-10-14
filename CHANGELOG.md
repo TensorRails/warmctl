@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+GPUs
+
+- warmctl reads the GPUs, their compute processes and their topology from
+  NVML (`libnvidia-ml.so.1`, loaded at run time) instead of running
+  `nvidia-smi` three times and parsing its text. Whether GPUs are joined by
+  NVLink comes from NVML's peer-to-peer status rather than the `topo -m`
+  matrix; the classes (`nvlink`, `pcie`, `single`) are unchanged, so existing
+  snapshots restore as before. `topology_sha256` in new manifests digests a
+  matrix warmctl renders from NVML. A container needs the driver's
+  `utility` capability, as it did for `nvidia-smi`.
+- The linux binaries are now dynamically linked against glibc, which the
+  NVML loader needs; cgo stays off.
+
 Releases
 
 - `curl -fsSL https://warmctl.io/install.sh | sh` installs the newest

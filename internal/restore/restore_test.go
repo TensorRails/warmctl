@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -129,44 +128,35 @@ func TestModelDir(t *testing.T) {
 	}
 }
 
-// fakeSMI makes nvidia-smi a script printing the given inventory, compute
-// processes and an all-NVLink topology of n GPUs.
-func fakeSMI(t *testing.T, inventory, apps string, n int) {
+// fakeNVML is a host of NVLinked H100s on driver 580.173.02, with busy[i]
+// compute processes on GPU i.
+type fakeNVML struct {
+	uuids []string
+	busy  map[int]int
+}
+
+func (f fakeNVML) Driver() (string, error) { return "580.173.02", nil }
+func (f fakeNVML) Count() (int, error)     { return len(f.uuids), nil }
+func (f fakeNVML) GPU(i int) (host.GPU, error) {
+	return host.GPU{UUID: f.uuids[i], Name: "NVIDIA H100 80GB HBM3", MemoryMiB: 81559,
+		PCIBusID: fmt.Sprintf("00000000:%02X:00.0", 0x18+16*i)}, nil
+}
+func (f fakeNVML) Processes(i int) (int, error)  { return f.busy[i], nil }
+func (f fakeNVML) NVLink(int, int) (bool, error) { return true, nil }
+func (f fakeNVML) Path(int, int) (string, error) { return "SYS", nil }
+func (f fakeNVML) Close() error                  { return nil }
+
+func useNVML(t *testing.T, f fakeNVML) {
 	t.Helper()
-	topo := "\t"
-	for i := 0; i < n; i++ {
-		topo += fmt.Sprintf("GPU%d\t", i)
-	}
-	topo += "CPU Affinity\n"
-	for i := 0; i < n; i++ {
-		topo += fmt.Sprintf("GPU%d", i)
-		for j := 0; j < n; j++ {
-			if i == j {
-				topo += "\t X "
-			} else {
-				topo += "\tNV18"
-			}
-		}
-		topo += "\t0-47\n"
-	}
-	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n*--query-gpu=*) printf '%%s' '%s' ;;\n"+
-		"*--query-compute-apps=*) printf '%%s' '%s' ;;\n*topo*) printf '%%s' '%s' ;;\nesac\n", inventory, apps, topo)
-	name := filepath.Join(t.TempDir(), "nvidia-smi")
-	if err := os.WriteFile(name, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	old := host.SMI
-	host.SMI = name
-	t.Cleanup(func() { host.SMI = old })
+	old := host.Open
+	host.Open = func() (host.Session, error) { return f, nil }
+	t.Cleanup(func() { host.Open = old })
 }
 
 // CheckHost picks the first free GPUs of the snapshot's model and names
 // what is missing when the host cannot restore it.
 func TestCheckHost(t *testing.T) {
-	inv := "0, GPU-r0, NVIDIA H100 80GB HBM3, 00000000:18:00.0, 81559, 580.173.02\n" +
-		"1, GPU-r1, NVIDIA H100 80GB HBM3, 00000000:2a:00.0, 81559, 580.173.02\n" +
-		"2, GPU-r2, NVIDIA H100 80GB HBM3, 00000000:3a:00.0, 81559, 580.173.02\n"
-	fakeSMI(t, inv, "GPU-r0, 4242\n", 3)
+	useNVML(t, fakeNVML{uuids: []string{"GPU-r0", "GPU-r1", "GPU-r2"}, busy: map[int]int{0: 1}})
 	h := donor()
 	h.Topology, h.CPUFlags = "nvlink", nil
 	gpus, err := CheckHost(context.Background(), h, "", t.TempDir())
