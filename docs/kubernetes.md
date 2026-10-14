@@ -158,8 +158,9 @@ Optional, each a few lines:
 ### GPUs
 
 The NVIDIA device plugin allocates `nvidia.com/gpu: N`; the NVIDIA
-container toolkit puts the driver libraries and `nvidia-smi` in the
-container. A privileged container sees every GPU of the node, so
+container toolkit puts the driver libraries in the container; warmctl
+reads the GPUs through `libnvidia-ml.so.1`, which comes with the `utility`
+capability (`NVIDIA_DRIVER_CAPABILITIES`). A privileged container sees every GPU of the node, so
 an in-place restore takes the GPUs the device plugin named in
 `NVIDIA_VISIBLE_DEVICES` (UUIDs or indices, or the volume-mounts strategy's
 directory) and otherwise, as on a host, on the first free GPUs of the

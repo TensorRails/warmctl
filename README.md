@@ -117,7 +117,7 @@ vllm: {max-model-len: 8192, kv-cache-memory-bytes: 21474836480}
 
 ## Requirements
 
-Linux x86-64, Docker with the NVIDIA runtime, root, driver 580+,
+Linux x86-64 with glibc, Docker with the NVIDIA runtime, root, driver 580+,
 `kernel.io_uring_disabled=2`. A snapshot restores under any release of the
 driver branch it was built on (580.x, 610.x). Proven on H100 SXM, H200, B200
 and L40S.

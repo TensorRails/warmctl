@@ -21,7 +21,7 @@
 
 | Step | Who | What |
 |---|---|---|
-| preflight | host | GPUs (nvidia-smi), hardware row, idle, io_uring off, GPU leases |
+| preflight | host | GPUs (NVML), hardware row, idle, io_uring off, GPU leases |
 | start | host, agent | donor container; the agent picks the engine's ipc mode (cuInterpose or native), moves the PID allocator to 32768 and starts `vllm serve` |
 | warm up | host | the profile's warmup grid through `/v1/completions`, prefix cache reset before each case |
 | canary | host | one prompt twice: the miss and the hit are the baseline a restore must reproduce |

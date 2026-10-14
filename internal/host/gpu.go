@@ -1,27 +1,21 @@
 // Package host reads the facts a snapshot depends on from the machine: the
-// GPUs (nvidia-smi), their topology, the driver and kernel, and holds an
+// GPUs (NVML), their topology, the driver and kernel, and holds an
 // exclusive lease on the GPUs a run uses.
 package host
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
-
-	"github.com/TensorRails/warmctl/v2/internal/process"
 )
 
-// GPU is one device as nvidia-smi reports it.
+// GPU is one device as NVML reports it.
 type GPU struct {
 	Index     int    `json:"index"`
 	UUID      string `json:"uuid"`
@@ -31,48 +25,12 @@ type GPU struct {
 	Driver    string `json:"driver"`
 }
 
-// SMI is the nvidia-smi executable.
-var SMI = "nvidia-smi"
-
 // Inventory lists every GPU of the host.
 func Inventory(ctx context.Context) ([]GPU, error) {
-	out, err := process.Capture(ctx, 30*time.Second, SMI,
-		"--query-gpu=index,uuid,name,pci.bus_id,memory.total,driver_version", "--format=csv,noheader,nounits")
-	if err != nil {
-		return nil, fmt.Errorf("nvidia-smi: %w %s", err, out.Stderr)
-	}
-	return ParseInventory(out.Stdout)
+	return query(ctx, inventory)
 }
 
-// ParseInventory reads nvidia-smi's CSV.
-func ParseInventory(text string) ([]GPU, error) {
-	var gpus []GPU
-	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		f := strings.Split(line, ",")
-		if len(f) != 6 {
-			return nil, fmt.Errorf("nvidia-smi: unexpected line %q", line)
-		}
-		for i := range f {
-			f[i] = strings.TrimSpace(f[i])
-		}
-		index, err1 := strconv.Atoi(f[0])
-		memory, err2 := strconv.ParseInt(f[4], 10, 64)
-		if err1 != nil || err2 != nil || !strings.HasPrefix(f[1], "GPU-") {
-			return nil, fmt.Errorf("nvidia-smi: unexpected line %q", line)
-		}
-		gpus = append(gpus, GPU{Index: index, UUID: f[1], Name: f[2], PCIBusID: normalizeBus(f[3]),
-			MemoryMiB: memory, Driver: f[5]})
-	}
-	if len(gpus) == 0 {
-		return nil, errors.New("nvidia-smi: no GPUs")
-	}
-	return gpus, nil
-}
-
-// normalizeBus turns nvidia-smi's 00000000:18:00.0 into sysfs's 0000:18:00.0.
+// normalizeBus turns NVML's 00000000:18:00.0 into sysfs's 0000:18:00.0.
 func normalizeBus(bus string) string {
 	bus = strings.ToLower(bus)
 	if domain, rest, ok := strings.Cut(bus, ":"); ok && len(domain) == 8 {
@@ -145,17 +103,7 @@ func Busy(ctx context.Context, gpus []GPU) (int, error) {
 
 // Processes counts the compute processes on each GPU, by UUID.
 func Processes(ctx context.Context) (map[string]int, error) {
-	out, err := process.Capture(ctx, 30*time.Second, SMI, "--query-compute-apps=gpu_uuid,pid", "--format=csv,noheader")
-	if err != nil {
-		return nil, fmt.Errorf("nvidia-smi: %w", err)
-	}
-	procs := map[string]int{}
-	for _, line := range strings.Split(out.Stdout, "\n") {
-		if uuid, _, _ := strings.Cut(line, ","); strings.TrimSpace(uuid) != "" {
-			procs[strings.TrimSpace(uuid)]++
-		}
-	}
-	return procs, nil
+	return query(ctx, processes)
 }
 
 // Pick chooses n GPUs named name, in PCI order, that run no compute process
@@ -193,50 +141,14 @@ func Describe(gpus []GPU) string {
 	return strings.Join(parts, ", ")
 }
 
-var (
-	nvlinkCell = regexp.MustCompile(`^NV\d+$`)
-	// nvidia-smi underlines the topology header with SGR escapes (P129).
-	ansi = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
-)
-
-// Topology is the class of the links between the GPUs (nvlink or pcie) and
-// a digest of nvidia-smi's matrix for the record.
+// Topology is the class of the links between the GPUs (nvlink, pcie or
+// single) and, for the record, a digest of the host's link matrix.
 func Topology(ctx context.Context, gpus []GPU) (string, string, error) {
-	out, err := process.Capture(ctx, 30*time.Second, SMI, "topo", "-m")
+	m, err := query(ctx, links)
 	if err != nil {
-		return "", "", fmt.Errorf("nvidia-smi topo: %w", err)
+		return "", "", err
 	}
-	sum := sha256.Sum256([]byte(out.Stdout))
-	return TopologyClass(out.Stdout, gpus), hex.EncodeToString(sum[:]), nil
-}
-
-// TopologyClass is nvlink when every pair of the selected GPUs is joined by
-// NVLink, pcie otherwise; a single GPU is "single".
-func TopologyClass(matrix string, gpus []GPU) string {
-	if len(gpus) < 2 {
-		return "single"
-	}
-	want := map[string]bool{}
-	for _, g := range gpus {
-		want[fmt.Sprintf("GPU%d", g.Index)] = true
-	}
-	var header []string
-	for _, line := range strings.Split(ansi.ReplaceAllString(matrix, ""), "\n") {
-		f := strings.Fields(line)
-		if len(f) > 0 && f[0] == "GPU0" && header == nil {
-			header = f
-			continue
-		}
-		if header == nil || len(f) == 0 || !want[f[0]] {
-			continue
-		}
-		for i, cell := range f[1:] {
-			if i < len(header) && want[header[i]] && header[i] != f[0] && !nvlinkCell.MatchString(cell) {
-				return "pcie"
-			}
-		}
-	}
-	return "nvlink"
+	return TopologyClass(m, gpus), digest(m), nil
 }
 
 // Kernel is uname -r.
