@@ -46,8 +46,9 @@ func query[T any](ctx context.Context, fn func(Session) (T, error)) (T, error) {
 		err   error
 	}
 	done := make(chan result, 1)
+	open := Open // a call left behind must not read Open while a test swaps it
 	go func() {
-		s, err := Open()
+		s, err := open()
 		if err != nil {
 			done <- result{err: err}
 			return
