@@ -1,0 +1,39 @@
+# NVIDIA Nemotron 3.5 Super VL 120B-A12B in NVFP4 (about 75 GB of weights) on one
+# B200, following NVIDIA's single-GPU Blackwell recipe from the model card: FlashInfer
+# Mamba kernels with an FP16 SSM cache and stochastic rounding, shared-prefix Mamba
+# checkpoints, async scheduling, MTP with 5 draft tokens, 128K context. The rest of
+# the 180 GB goes to 48 GiB of KV and up to 128 concurrent requests.
+schema: warmctl.profile/v1
+id: nemotron35-super-vl-nvfp4-b200-tp1
+model: {id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4, revision: 2e5cc3953bb1ea66b2fb7c831fee3aa317427e69, served_names: [nemotron35-super-nvfp4]}
+parallel: {tp: 1}
+hardware: [b200-180gb]
+image: vllm/vllm-openai:cu134-nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2@sha256:e92a9f2aff488040651403e8902a9f9b1be918fafbea588fc10672c6dc828bdb
+vllm:
+  trust-remote-code: true
+  max-model-len: 131072
+  max-num-seqs: 128
+  max-num-batched-tokens: 16384
+  kv-cache-memory-bytes: 51539607552
+  enable-prefix-caching: true
+  async-scheduling: true
+  mamba-backend: flashinfer
+  mamba-ssm-cache-dtype: float16
+  enable-mamba-cache-stochastic-rounding: true
+  mamba-cache-philox-rounds: 5
+  enable-mamba-shared-prefix-checkpoint: true
+  mamba-cache-mode: align
+  enable-chunked-prefill: true
+  enable-auto-tool-choice: true
+  tool-call-parser: qwen3_coder
+  reasoning-parser: nemotron_v3
+  speculative-config: {method: mtp, num_speculative_tokens: 5}
+  limit-mm-per-prompt: {image: 1, video: 1}
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192, 16384]
+canary: {mode: bitwise, prefix_tokens: 1280}
+resources: {memory: 256GiB}
