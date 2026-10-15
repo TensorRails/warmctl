@@ -9,6 +9,8 @@ Profiles
   card, MTP with 3 draft tokens, 128K context. A vLLM cold start takes 208 s
   to engine ready; `warmctl up` from a warm page cache serves in 23.6 s with a
   bitwise canary. Published as `nemotron35-super` and added to the catalog.
+- `nemotron35-super-vl-b200-tp2`: the same model on 2×B200, TP2 as in the
+  model card, with 16 GiB of KV cache per GPU.
 - `ling31-flash-b200-tp8`: inclusionAI Ling-3.1-flash (572B MoE, FP8) on
   8×B200 with expert parallelism and MTP. FlashInfer's TRT-LLM MoE router
   accepts at most 32 experts per group and Ling has 64, so the profile sets
