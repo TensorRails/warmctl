@@ -29,14 +29,14 @@ func TestFreezeThaw(t *testing.T) {
 	if len(f.Tree.Processes) != 3 || f.Tree.Root != cmd.Process.Pid || f.Tree.MaxID() < cmd.Process.Pid {
 		t.Fatalf("tree %+v", f.Tree)
 	}
-	if err := f.Stopped(); err != nil {
-		t.Fatal(err)
+	if n, err := runnable(f.Tree); err != nil || n != 0 {
+		t.Fatalf("%d tasks running after freeze, %v", n, err)
 	}
 	if err := f.Thaw(ctx); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	if err := f.Stopped(); err == nil {
-		t.Fatal("tree still stopped after thaw")
+	if n, err := runnable(f.Tree); err != nil || n == 0 {
+		t.Fatalf("tree still stopped after thaw: %d running, %v", n, err)
 	}
 }

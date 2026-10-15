@@ -77,10 +77,6 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			choices = append(choices, fmt.Sprintf(`{"index":%d,"logprobs":{"tokens":[%s],"token_logprobs":[%s]}}`, i, strings.Join(tokens, ","), strings.Join(logprobs, ",")))
 		}
 		fmt.Fprintf(w, `{"choices":[%s],"usage":{"prompt_tokens":%d,"prompt_tokens_details":{"cached_tokens":%d}}}`, strings.Join(choices, ","), prompt, cached)
-	case "/v1/models":
-		w.Write([]byte(`{"data":[{"id":"qwen3-8b"}]}`))
-	case "/metrics":
-		w.Write([]byte("# HELP x\nvllm:prefix_cache_hits_total{engine=\"0\"} 3\nvllm:prefix_cache_hits_total{engine=\"1\"} 4\n"))
 	default:
 		w.WriteHeader(404)
 	}
@@ -129,12 +125,6 @@ func TestLifecycleAndRPC(t *testing.T) {
 	e.Ranks = 3
 	if err := e.RPC(ctx, "warmctl_describe", nil, time.Minute, nil); err == nil {
 		t.Fatal("short RPC answer accepted")
-	}
-	if names, err := e.Models(ctx); err != nil || names[0] != "qwen3-8b" {
-		t.Fatalf("%v %v", names, err)
-	}
-	if v, err := e.Metric(ctx, "vllm:prefix_cache_hits_total"); err != nil || v != 7 {
-		t.Fatalf("metric %v %v", v, err)
 	}
 	if !strings.Contains(strings.Join(f.calls, " "), "POST /sleep?level=2&mode=wait") || !strings.Contains(strings.Join(f.calls, " "), "POST /wake_up?tags=weights") {
 		t.Fatalf("calls %v", f.calls)

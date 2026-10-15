@@ -34,11 +34,5 @@ func PrepareRestorePIDs(int) error { return ErrUnsupported }
 // Thaw is unsupported here.
 func (f *Frozen) Thaw(context.Context) error { return ErrUnsupported }
 
-// Stopped is unsupported here.
-func (f *Frozen) Stopped() error { return ErrUnsupported }
-
-// Kill does nothing here.
-func (f *Frozen) Kill() {}
-
 // Close does nothing here.
 func (f *Frozen) Close() error { return nil }
