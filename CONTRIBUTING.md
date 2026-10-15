@@ -29,5 +29,6 @@ the pull request carries their restore times.
 
 ## Style
 
-Go: gofmt, golangci-lint (`.golangci.yml`). Python: ruff, no runtime
-dependencies outside vLLM's image. Comments say why, not what.
+Go: gofmt, golangci-lint v2.14.0 (`.golangci.yml`), the version CI runs.
+Python: ruff, no runtime dependencies outside vLLM's image. Comments say
+why, not what.

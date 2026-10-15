@@ -41,10 +41,9 @@ func main() {
 	if len(os.Args) > 2 {
 		role = os.Args[2]
 	}
-	if err := run(dir, role); err != nil {
-		fmt.Fprintln(os.Stderr, "witness:", err)
-		os.Exit(1)
-	}
+	// run answers requests until the test kills it; it returns only on failure.
+	fmt.Fprintln(os.Stderr, "witness:", run(dir, role))
+	os.Exit(1)
 }
 
 func run(dir, role string) error {
