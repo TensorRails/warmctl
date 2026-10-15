@@ -1,0 +1,32 @@
+# NVIDIA Nemotron 3.5 Super VL 120B-A12B (BF16, hybrid Mamba + attention MoE,
+# text/image/video) on 2xB200: TP2 as in NVIDIA's model card, MTP with 3 draft
+# tokens, 128K context. 116 GiB of weights per GPU leave room for 16 GiB of KV
+# and Mamba state.
+schema: warmctl.profile/v1
+id: nemotron35-super-vl-b200-tp2
+model: {id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16, revision: fc067b34f6b514014d2f8bddba855d2e4bfdfba6, served_names: [nemotron35-super]}
+parallel: {tp: 2}
+hardware: [b200-180gb]
+image: vllm/vllm-openai:cu134-nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2@sha256:e92a9f2aff488040651403e8902a9f9b1be918fafbea588fc10672c6dc828bdb
+vllm:
+  trust-remote-code: true
+  max-model-len: 131072
+  max-num-seqs: 32
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 17179869184
+  mamba-cache-mode: align
+  enable-chunked-prefill: true
+  enable-auto-tool-choice: true
+  tool-call-parser: qwen3_coder
+  reasoning-parser: nemotron_v3
+  speculative-config: {method: mtp, num_speculative_tokens: 3}
+  limit-mm-per-prompt: {image: 1, video: 1}
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+canary: {mode: bitwise, prefix_tokens: 1280}
+resources: {memory: 512GiB}
