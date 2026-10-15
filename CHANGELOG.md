@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.6 — 2026-10-15
 
 GPUs
 
