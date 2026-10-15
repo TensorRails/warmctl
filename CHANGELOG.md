@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Profiles
+
+- `nemotron35-super-vl-h100-tp4`: NVIDIA Nemotron 3.5 Super VL 120B-A12B
+  (BF16, hybrid Mamba MoE with vision) on 4×H100, TP4 as in NVIDIA's model
+  card, MTP with 3 draft tokens, 128K context. A vLLM cold start takes 208 s
+  to engine ready; `warmctl up` from a warm page cache serves in 23.6 s with a
+  bitwise canary. Published as `nemotron35-super` and added to the catalog.
+- `ling31-flash-b200-tp8`: inclusionAI Ling-3.1-flash (572B MoE, FP8) on
+  8×B200 with expert parallelism and MTP. FlashInfer's TRT-LLM MoE router
+  accepts at most 32 experts per group and Ling has 64, so the profile sets
+  `moe-backend: deep_gemm`. Both profiles pin a vLLM nightly with the
+  BailingMoeV3 TP fix (vllm-project/vllm#61642) and Nemotron 3.5 Omni support.
+
 ## v2.0.0-beta.6 — 2026-10-15
 
 GPUs

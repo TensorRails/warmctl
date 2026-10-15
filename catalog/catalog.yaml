@@ -53,6 +53,10 @@ models:
     title: gpt-oss-20b
     license: Apache-2.0
     description: MXFP4 MoE, one GPU.
+  - name: nemotron35-super
+    title: Nemotron 3.5 Super VL 120B-A12B
+    license: OpenMDW-1.1
+    description: Hybrid Mamba MoE with vision and MTP, BF16; 4×H100, 128K context.
   - name: nemotron35-30b-a3b
     title: Nemotron 3.5 Lightning 30B-A3B FP8
     license: OpenMDW-1.1

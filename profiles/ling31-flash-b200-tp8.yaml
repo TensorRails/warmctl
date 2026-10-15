@@ -1,0 +1,37 @@
+# Ling-3.1-flash (inclusionAI, 572B MoE, FP8) on 8xB200: TP8 with expert
+# parallelism, MTP with 3 draft tokens, 128K context, 64 GiB of KV per GPU.
+# Needs a vLLM nightly with the BailingMoeV3 TP fix (vllm-project/vllm#61642).
+# First build: conservative graphs and warmup; tuning comes after benchmarks.
+schema: warmctl.profile/v1
+id: ling31-flash-b200-tp8
+model: {id: inclusionAI/Ling-3.1-flash, revision: a4ccd6b45c002ddb236f9cb77d52cc427482bf19, served_names: [ling31-flash]}
+parallel: {tp: 8}
+hardware: [b200-180gb]
+image: vllm/vllm-openai:cu134-nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2@sha256:e92a9f2aff488040651403e8902a9f9b1be918fafbea588fc10672c6dc828bdb
+vllm:
+  trust-remote-code: true
+  max-model-len: 131072
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 68719476736
+  enable-expert-parallel: true
+  # FlashInfer's TRT-LLM MoE router allows at most 32 experts per group; Ling
+  # has 512 experts in 8 groups (64 each), so FP8 MoE runs on DeepGEMM.
+  moe-backend: deep_gemm
+  mamba-cache-mode: align
+  enable-chunked-prefill: true
+  enable-auto-tool-choice: true
+  tool-call-parser: ling3
+  reasoning-parser: ling3
+  speculative-config: {method: mtp, num_speculative_tokens: 3}
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+env:
+  DG_JIT_CACHE_DIR: /workspace/deep_gemm
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+canary: {mode: bitwise, prefix_tokens: 1280}
+resources: {memory: 1TiB}
