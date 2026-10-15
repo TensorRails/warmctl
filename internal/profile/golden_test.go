@@ -251,7 +251,4 @@ func TestSizes(t *testing.T) {
 			t.Errorf("%q accepted", bad)
 		}
 	}
-	if profile.FormatSize(1<<40) != "1TiB" || profile.FormatSize(1536) != "1536" {
-		t.Error("format")
-	}
 }

@@ -114,18 +114,6 @@ func runnable(tree Tree) (int, error) {
 	return n, nil
 }
 
-// Stopped reports the tasks of the tree that are not stopped.
-func (f *Frozen) Stopped() error {
-	n, err := runnable(f.Tree)
-	if err != nil {
-		return err
-	}
-	if n != 0 {
-		return fmt.Errorf("%d tasks are running", n)
-	}
-	return nil
-}
-
 // Thaw sends SIGCONT to every process. A process whose PID is gone is skipped.
 func (f *Frozen) Thaw(ctx context.Context) error {
 	for _, p := range f.Tree.Processes {
@@ -150,13 +138,6 @@ func (f *Frozen) RootFD() int { return f.fds[f.Tree.Root] }
 // Signal sends sig to the root.
 func (f *Frozen) Signal(sig unix.Signal) error {
 	return unix.PidfdSendSignal(f.fds[f.Tree.Root], sig, nil, 0)
-}
-
-// Kill sends SIGKILL to every process of the tree.
-func (f *Frozen) Kill() {
-	for _, fd := range f.fds {
-		_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
-	}
 }
 
 // Close releases the pidfds. It never resumes or kills anything.

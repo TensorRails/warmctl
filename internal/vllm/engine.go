@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -227,45 +226,4 @@ func (e *Engine) RPC(ctx context.Context, method string, kwargs any, timeout tim
 		return fmt.Errorf("rpc %s: %w", method, err)
 	}
 	return nil
-}
-
-// Models lists the served model names.
-func (e *Engine) Models(ctx context.Context) ([]string, error) {
-	var out struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := e.call(ctx, http.MethodGet, "/v1/models", nil, &out); err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(out.Data))
-	for _, m := range out.Data {
-		names = append(names, m.ID)
-	}
-	return names, nil
-}
-
-// Metric is the sum of every sample of a Prometheus counter in /metrics.
-func (e *Engine) Metric(ctx context.Context, name string) (float64, error) {
-	data, err := e.raw(ctx, http.MethodGet, "/metrics", nil)
-	if err != nil {
-		return 0, err
-	}
-	total, found := 0.0, false
-	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.HasPrefix(line, name+"{") && !strings.HasPrefix(line, name+" ") {
-			continue
-		}
-		fields := strings.Fields(line)
-		v, err := strconv.ParseFloat(fields[len(fields)-1], 64)
-		if err != nil {
-			return 0, fmt.Errorf("metric %s: %w", name, err)
-		}
-		total, found = total+v, true
-	}
-	if !found {
-		return 0, fmt.Errorf("metric %s missing", name)
-	}
-	return total, nil
 }

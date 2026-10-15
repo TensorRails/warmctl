@@ -36,16 +36,3 @@ func ParseSize(s string) (int64, error) {
 	}
 	return n, nil
 }
-
-// FormatSize renders bytes in the largest exact binary unit.
-func FormatSize(n int64) string {
-	for _, u := range []struct {
-		suffix string
-		mult   int64
-	}{{"TiB", 1 << 40}, {"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10}} {
-		if n >= u.mult && n%u.mult == 0 {
-			return strconv.FormatInt(n/u.mult, 10) + u.suffix
-		}
-	}
-	return strconv.FormatInt(n, 10)
-}
