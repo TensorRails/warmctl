@@ -1,14 +1,20 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.7 — 2026-10-17
+
+Three models join the catalog: Ling-3.1-flash on 8×B200, DeepSeek-V4.1-Flash-1017
+on 4×B200 and Nemotron 3.5 Super VL on 4×H100 and 2×B200. The profiles ship in
+the binary, so `warmctl up NAME` and `warmctl build --profile ID` know them.
 
 Profiles
 
 - `deepseek-v41-flash-1017-b200-tp4`: DeepSeek-V4.1-Flash-1017, the 2026-10-17
   update of V4.1-Flash, on 4×B200. Its config is byte-identical to V4.1-Flash,
   so the profile is `deepseek-v41-flash-b200-tp4` with the new revision and the
-  model card's sampling (top_p 1.0). Published as `deepseek-v41-flash-1017`, a
-  repository of its own next to `deepseek-v41-flash`, and added to the catalog.
+  model card's sampling (top_p 1.0). A vLLM cold start takes 1,196 s to engine
+  ready; `warmctl up` from a warm page cache serves in 78 s. Published as
+  `deepseek-v41-flash-1017`, a repository of its own next to
+  `deepseek-v41-flash`, and added to the catalog.
 - `nemotron35-super-vl-h100-tp4`: NVIDIA Nemotron 3.5 Super VL 120B-A12B
   (BF16, hybrid Mamba MoE with vision) on 4×H100, TP4 as in NVIDIA's model
   card, MTP with 3 draft tokens, 128K context. A vLLM cold start takes 208 s
@@ -21,8 +27,14 @@ Profiles
   accepts at most 32 experts per group and Ling has 64, so the profile sets
   `moe-backend: deep_gemm`. Both profiles pin a vLLM nightly with the
   BailingMoeV3 TP fix (vllm-project/vllm#61642) and Nemotron 3.5 Omni support.
-  A vLLM cold start of Ling takes 854 s to engine ready. Published as
-  `ling31-flash` (647 GiB) and added to the catalog.
+  A vLLM cold start of Ling takes 854 s to engine ready; `warmctl up` from a
+  warm page cache serves in 47 s. Published as `ling31-flash` (647 GiB) and
+  added to the catalog. Benchmarks: [Benchmarking Ling-3.1-flash on 8×B200](https://warmctl.io/blog/benchmarking-ling-3-1-flash/).
+
+Internal
+
+- CI lints on Go 1.26 with golangci-lint v2.14.0.
+- Five functions no command reaches are removed.
 
 ## v2.0.0-beta.6 — 2026-10-15
 
