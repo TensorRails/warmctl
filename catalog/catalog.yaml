@@ -9,6 +9,10 @@ models:
     title: GLM-5.3-Flash
     license: MIT
     description: Frontier MoE with MTP; 8×H100, 8×B200 and 4×B200 prod profiles, 200K context.
+  - name: deepseek-v41-flash-1017
+    title: DeepSeek-V4.1-Flash-1017
+    license: MIT
+    description: The 2026-10-17 update of DeepSeek-V4.1-Flash (new weights, same architecture); 4×B200 prod profile, 192K context.
   - name: deepseek-v41-flash
     title: DeepSeek-V4.1-Flash
     license: MIT

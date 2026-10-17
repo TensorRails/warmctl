@@ -1,0 +1,54 @@
+# DeepSeek-V4.1-Flash-1017 serving release on 4xB200 (half the node, two
+# replicas per 8xB200): deepseek-v41-flash-b200-tp4 with the 1017 weights. The
+# checkpoint's config is byte-identical to V4.1-Flash, so the engine settings
+# carry over: TP4 with expert parallelism, 32 GiB of FP8 KV per GPU, DSpark
+# with 5 draft tokens, vLLM's SM100 kernels for the FP4 experts.
+schema: warmctl.profile/v1
+id: deepseek-v41-flash-1017-b200-tp4
+model:
+  id: deepseek-ai/DeepSeek-V4.1-Flash-1017
+  revision: 1bae0e1088993b9b82de08f59de5be5a34e42170
+  served_names: [deepseek-v41-flash-1017, deepseek-ai/DeepSeek-V4.1-Flash-1017]
+parallel: {tp: 4, ep: true}
+hardware: [b200-180gb]
+vllm:
+  max-model-len: 196608
+  max-num-batched-tokens: 8192
+  # ~111 GiB of weights per rank leaves room for 32 GiB of FP8 KV.
+  kv-cache-memory-bytes: 34359738368
+  kv-cache-dtype: fp8
+  enable-chunked-prefill: true
+  async-scheduling: true
+  limit-mm-per-prompt: {image: 0, video: 0}
+  # Engram tables in pinned host memory, carried by the CRIU dump (the
+  # host_tables hook that would export them is not ported).
+  engram-config: {cpu_offload: true, dp_shared_memory: false, use_thp: false}
+  speculative-config: {method: dspark, num_speculative_tokens: 5, draft_sample_method: probabilistic, enable_adaptive_verification: true}
+  tokenizer-mode: deepseek_v41
+  tool-call-parser: deepseek_v41
+  reasoning-parser: deepseek_v41
+  enable-auto-tool-choice: true
+  # The checkpoint ships no generation_config.json (nor a Jinja chat template:
+  # tokenizer-mode deepseek_v41 encodes prompts); the 1017 model card's sampling.
+  override-generation-config: {temperature: 1.0, top_p: 1.0}
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 80, 96, 112, 128]
+  fuse_allreduce_rms: true
+env:
+  NCCL_NVLS_ENABLE: null
+  VLLM_ALLREDUCE_USE_FLASHINFER: null
+  VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC: null
+  VLLM_ALLREDUCE_USE_SYMM_MEM: null
+  VLLM_USE_NCCL_SYMM_MEM: null
+warmup:
+  # One 32-token decode batch per graph, then single prefills up to one 8K
+  # chunk and one that continues into a second chunk.
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192, 12288]
+# The FP4 experts are not bitwise repeatable: the canary compares within a
+# tolerance and only warns.
+canary: {mode: warn, tolerance: 1.0e-3}
+hooks: {host_tables: auto, plugins: [deterministic_topk, checkpoint_cache]}
+resources: {memory: 1TiB}

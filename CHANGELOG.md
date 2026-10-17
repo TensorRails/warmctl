@@ -4,6 +4,11 @@
 
 Profiles
 
+- `deepseek-v41-flash-1017-b200-tp4`: DeepSeek-V4.1-Flash-1017, the 2026-10-17
+  update of V4.1-Flash, on 4×B200. Its config is byte-identical to V4.1-Flash,
+  so the profile is `deepseek-v41-flash-b200-tp4` with the new revision and the
+  model card's sampling (top_p 1.0). Published as `deepseek-v41-flash-1017`, a
+  repository of its own next to `deepseek-v41-flash`, and added to the catalog.
 - `nemotron35-super-vl-h100-tp4`: NVIDIA Nemotron 3.5 Super VL 120B-A12B
   (BF16, hybrid Mamba MoE with vision) on 4×H100, TP4 as in NVIDIA's model
   card, MTP with 3 draft tokens, 128K context. A vLLM cold start takes 208 s
