@@ -16,6 +16,8 @@ Profiles
   accepts at most 32 experts per group and Ling has 64, so the profile sets
   `moe-backend: deep_gemm`. Both profiles pin a vLLM nightly with the
   BailingMoeV3 TP fix (vllm-project/vllm#61642) and Nemotron 3.5 Omni support.
+  A vLLM cold start of Ling takes 854 s to engine ready. Published as
+  `ling31-flash` (647 GiB) and added to the catalog.
 
 ## v2.0.0-beta.6 — 2026-10-15
 
