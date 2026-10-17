@@ -17,6 +17,10 @@ models:
     title: MiMo-V2.6-Flash
     license: MIT
     description: Xiaomi's 310B-A15B MoE, FP8; 8×H100.
+  - name: ling31-flash
+    title: Ling-3.1-flash
+    license: MIT
+    description: inclusionAI's 560B-A25B hybrid-linear MoE, FP8 with MTP; 8×B200, 128K context.
   - name: qwen3-vl-8b
     title: Qwen3-VL-8B-Instruct
     license: Apache-2.0
