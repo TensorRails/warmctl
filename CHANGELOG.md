@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.8 — 2026-10-19
 
 The NVIDIA RTX PRO 6000 Blackwell Server Edition joins the hardware table, and
 Qwen3.8-27B gets a production profile and a catalog image for it.
