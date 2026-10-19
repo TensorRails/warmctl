@@ -25,7 +25,7 @@ Linux GPU host, Docker with the NVIDIA runtime, root:
 ```bash
 curl -fsSL https://warmctl.io/install.sh | sh  # newest release in /opt/warmctl
 sysctl -w kernel.io_uring_disabled=2           # CRIU cannot dump io_uring
-warmctl doctor                                 # check the host
+warmctl doctor                                 # check the host and its GPUs
 warmctl catalog                                # models this host can restore
 warmctl up qwen3-8b --listen 0.0.0.0:8000      # pull, restore, serve
 ```
@@ -120,7 +120,9 @@ vllm: {max-model-len: 8192, kv-cache-memory-bytes: 21474836480}
 Linux x86-64 with glibc, Docker with the NVIDIA runtime, root, driver 580+,
 `kernel.io_uring_disabled=2`. A snapshot restores under any release of the
 driver branch it was built on (580.x, 610.x). Proven on H100 SXM, H200, B200
-and L40S.
+and L40S. `warmctl hardware` lists the GPU models warmctl knows and marks this
+host's; another model is a row in a `hardware.yaml` next to your profiles
+(`--profile-dir`).
 Keep `warmctl` and `cuinterpose/` from the linux-amd64 archive side by side,
 or build both with `make build cuinterpose`. Releases also ship linux-arm64
 (no cuInterpose yet, not proven on a GPU) and macOS builds, which run the

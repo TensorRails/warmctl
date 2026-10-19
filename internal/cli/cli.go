@@ -29,6 +29,7 @@ const usage = `usage: warmctl <command> [flags]
   verify        check a snapshot directory against its manifest
   gc            remove blobs no recorded snapshot uses
   doctor        check this host
+  hardware      list the GPU models snapshots support and mark this host's
   profile       inspect profiles: list, check, show ID, argv ID
   agent         container side of build and up (internal)
   version
@@ -72,6 +73,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, version s
 		err = runImages(ctx, args[1:], stdout, stderr)
 	case "doctor":
 		err = runDoctor(ctx, args[1:], stdout, stderr)
+	case "hardware":
+		err = runHardware(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 	default:

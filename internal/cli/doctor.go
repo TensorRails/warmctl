@@ -19,18 +19,23 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	sock := fs.String("docker", docker.DefaultSocket, "Docker socket")
+	var dirs list
+	fs.Var(&dirs, "profile-dir", "extra directory of profile YAML files and a hardware.yaml (repeatable)")
 	if _, err := positionals(fs, args); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	failed := 0
+	line := func(mark, name, detail string) {
+		fmt.Fprintf(stdout, "%s %-16s %s\n", mark, name, detail)
+	}
 	check := func(name string, ok bool, detail string) {
 		mark := "ok  "
 		if !ok {
 			mark, failed = "FAIL", failed+1
 		}
-		fmt.Fprintf(stdout, "%s %-16s %s\n", mark, name, detail)
+		line(mark, name, detail)
 	}
 	dk, err := docker.New(ctx, *sock)
 	if err == nil {
@@ -41,6 +46,7 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	gpus, err := host.Inventory(ctx)
 	if err == nil {
 		check("gpus", true, fmt.Sprintf("%d x %s, driver %s", len(gpus), gpus[0].Name, gpus[0].Driver))
+		checkHardware(dirs, gpus, check, line)
 	} else {
 		check("gpus", false, err.Error())
 	}
@@ -53,4 +59,24 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return fmt.Errorf("%d checks failed: %s", failed, strings.TrimSpace("see above"))
 	}
 	return nil
+}
+
+// checkHardware finds the hardware row of each GPU model of the host, as
+// build does. A model without one only warns: a hardware.yaml next to the
+// profile adds it.
+func checkHardware(dirs []string, gpus []host.GPU, check func(string, bool, string),
+	line func(string, string, string)) {
+	table, err := profileLoader(dirs).Hardware()
+	if err != nil {
+		check("hardware", false, err.Error())
+		return
+	}
+	for _, m := range hostModels(table, gpus) {
+		if m.err != nil {
+			line("warn", "hardware", m.err.Error()+"; add a row to a hardware.yaml next to the profile and pass "+
+				"its directory with --profile-dir")
+			continue
+		}
+		check("hardware", true, fmt.Sprintf("%s (%d x %s)", m.row.ID, m.count, m.name))
+	}
 }
