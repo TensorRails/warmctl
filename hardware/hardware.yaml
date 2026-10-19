@@ -32,3 +32,11 @@ rows:
     topology_class: nvswitch
     device_config_name: NVIDIA_B200
     driver_min: "580"
+  - id: rtx-pro-6000-96gb
+    nvidia_smi_name: "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+    memory_mib: 97887
+    arch: sm_120
+    nvlink: false
+    topology_class: pcie
+    device_config_name: NVIDIA_RTX_PRO_6000_Blackwell_Server_Edition
+    driver_min: "580"

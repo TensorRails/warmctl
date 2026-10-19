@@ -50,7 +50,14 @@ func (l Loader) Hardware() (HardwareTable, error) {
 		if err != nil || extra.Schema != HardwareSchema {
 			return t, fmt.Errorf("%s/hardware.yaml: %v (schema %q)", dir, err, extra.Schema)
 		}
-		t.Rows = append(t.Rows, extra.Rows...)
+		for _, r := range extra.Rows {
+			// A row written for an older release that later shipped it
+			// verbatim is not a conflict.
+			if known, ok := t.ByID(r.ID); ok && known == r {
+				continue
+			}
+			t.Rows = append(t.Rows, r)
+		}
 	}
 	seen := map[string]bool{}
 	for _, r := range t.Rows {
