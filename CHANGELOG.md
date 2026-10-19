@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+The NVIDIA RTX PRO 6000 Blackwell Server Edition joins the hardware table, and
+Qwen3.8-27B gets a production profile and a catalog image for it.
+
+Hardware
+
+- `rtx-pro-6000-96gb`: RTX PRO 6000 Blackwell Server Edition, 96 GB, sm_120,
+  PCIe. A `hardware.yaml` in a profile directory may now repeat a shipped row
+  word for word, so a row written for an older release keeps working after a
+  release ships it; a different row under a shipped id is still an error.
+
+Profiles
+
+- `qwen38-27b-rtx6000`: Qwen3.8-27B FP8 on one RTX PRO 6000 with 128K context,
+  64 sequences, 48 GiB of KV cache and CUDA graphs up to batch 64. A vLLM cold
+  start takes 215 s to engine ready; `warmctl up` from a warm page cache serves
+  in 11 s. Published under `qwen38-27b` next to the B200 and H200 images.
+
 ## v2.0.0-beta.7 — 2026-10-17
 
 Three models join the catalog: Ling-3.1-flash on 8×B200, DeepSeek-V4.1-Flash-1017
