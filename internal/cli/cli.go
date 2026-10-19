@@ -29,10 +29,31 @@ const usage = `usage: warmctl <command> [flags]
   verify        check a snapshot directory against its manifest
   gc            remove blobs no recorded snapshot uses
   doctor        check this host
+  hardware      list the GPU models snapshots support and mark this host's
   profile       inspect profiles: list, check, show ID, argv ID
   agent         container side of build and up (internal)
   version
 `
+
+// commands are the commands that take the context, their arguments and both
+// streams, by name and alias.
+var commands = map[string]func(context.Context, []string, io.Writer, io.Writer) error{
+	"up":       runUp,
+	"restore":  runUp,
+	"down":     runDown,
+	"stop":     runDown,
+	"ps":       runPs,
+	"verify":   runVerify,
+	"gc":       runGC,
+	"push":     runPush,
+	"pull":     runPull,
+	"mirror":   runMirror,
+	"catalog":  runCatalog,
+	"images":   runImages,
+	"ls":       runImages,
+	"doctor":   runDoctor,
+	"hardware": runHardware,
+}
 
 // Run executes args and returns the process exit code.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, version string) int {
@@ -50,33 +71,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, version s
 		err = runAgent(ctx, args[1:], stderr)
 	case "build", "snapshot", "bake":
 		err = runBuild(ctx, args[1:], stdout, stderr, version)
-	case "up", "restore":
-		err = runUp(ctx, args[1:], stdout, stderr)
-	case "down", "stop":
-		err = runDown(ctx, args[1:], stdout, stderr)
-	case "ps":
-		err = runPs(ctx, args[1:], stdout, stderr)
-	case "verify":
-		err = runVerify(ctx, args[1:], stdout, stderr)
-	case "gc":
-		err = runGC(ctx, args[1:], stdout, stderr)
-	case "push":
-		err = runPush(ctx, args[1:], stdout, stderr)
-	case "pull":
-		err = runPull(ctx, args[1:], stdout, stderr)
-	case "mirror":
-		err = runMirror(ctx, args[1:], stdout, stderr)
-	case "catalog":
-		err = runCatalog(ctx, args[1:], stdout, stderr)
-	case "images", "ls":
-		err = runImages(ctx, args[1:], stdout, stderr)
-	case "doctor":
-		err = runDoctor(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 	default:
-		fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
-		return 2
+		cmd, ok := commands[args[0]]
+		if !ok {
+			fmt.Fprintf(stderr, "unknown command %q\n%s", args[0], usage)
+			return 2
+		}
+		err = cmd(ctx, args[1:], stdout, stderr)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)

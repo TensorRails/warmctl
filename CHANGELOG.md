@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+CLI
+
+- `warmctl hardware [--dir DIR]` lists the GPU models snapshots support: the
+  shipped hardware table plus a `hardware.yaml` in each `--dir`, with id,
+  nvidia-smi name, memory, arch, NVLink and topology, and marks the row of
+  this host's GPUs.
+- `warmctl doctor` has a `hardware` check: it names the host's hardware row,
+  or warns with the GPU's nvidia-smi name when the table has none, before a
+  `build` fails on it. `--profile-dir` adds the rows of a `hardware.yaml`
+  there, as it does for `build`.
+
 ## v2.0.0-beta.8 — 2026-10-19
 
 The NVIDIA RTX PRO 6000 Blackwell Server Edition joins the hardware table, and
