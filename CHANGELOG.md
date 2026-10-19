@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.9 — 2026-10-19
+
+`warmctl hardware` shows which GPUs snapshots support, and `warmctl doctor`
+checks that the host's GPU is one of them before a build fails on it.
 
 CLI
 
