@@ -238,6 +238,9 @@ func chooseMode(ctx context.Context, fs *flag.FlagSet, o *restore.Options, mode,
 			return nil, err
 		}
 	}
+	// The restored engine is told paths under it (RPC replies): absolute,
+	// whatever its working directory.
+	o.RunDir, _ = filepath.Abs(o.RunDir)
 	o.Gate, err = restore.OpenGate(o.Listen, o.RunDir, o.Progress)
 	return o.Gate, err
 }

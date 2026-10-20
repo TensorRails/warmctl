@@ -28,6 +28,7 @@ class ReplyTest(unittest.TestCase):
                 self.assertEqual(Rank(rank).warmctl_rpc('echo', {'value': 7}, reply), {'rank': rank, 'value': 7})
             self.assertEqual(Rank(3).warmctl_rpc('checkpoint_prepare', {}, reply), None)
             self.assertEqual(sorted(os.listdir(reply)), ['0.json', '1.json', '2.json', '3.json'])
+            self.assertEqual(os.stat(os.path.join(reply, '0.json')).st_mode & 0o777, 0o644)
             with open(os.path.join(reply, '2.json')) as stream:
                 self.assertEqual(json.load(stream), {'result': {'rank': 2, 'value': 7}})
             with open(os.path.join(reply, '3.json')) as stream:
