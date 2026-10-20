@@ -181,6 +181,9 @@ func (b *bake) start(ctx context.Context) error {
 	if b.c, err = run.Launch(ctx, b.dk, b.spec(), filepath.Join(b.dir, "io"), ranks); err != nil {
 		return err
 	}
+	if b.launch.Profile.Parallel.DP > 1 {
+		b.c.ReplyThrough(guestState)
+	}
 	b.p.Printf("donor %s started; loading the model", b.c.Name)
 	timeout := b.o.ReadyTimeout
 	if err := b.c.Engine.WaitReady(ctx, timeout, func() error { return b.c.EngineAlive(ctx) }); err != nil {

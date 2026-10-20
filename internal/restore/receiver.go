@@ -163,6 +163,16 @@ func (r *restore) driverMounts() ([]docker.Mount, error) {
 }
 
 func (r *restore) start(ctx context.Context) error {
+	if err := r.launch(ctx); err != nil {
+		return err
+	}
+	if r.m.Profile.Parallel.DP > 1 {
+		r.c.ReplyThrough(r.guest().state)
+	}
+	return nil
+}
+
+func (r *restore) launch(ctx context.Context) error {
 	if r.o.InPlace {
 		return r.startPod(ctx)
 	}

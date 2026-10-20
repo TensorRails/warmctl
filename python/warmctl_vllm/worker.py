@@ -14,6 +14,18 @@ from .primitives import require
 
 
 class Extension:
+    def warmctl_rpc(self, method, kwargs, reply):
+        """Run method, warmctl's or vLLM's own worker method, and publish its
+        result as <reply>/<rank>.json. With data parallelism /collective_rpc
+        runs on every engine but answers with the first engine's workers only;
+        the host reads every rank's file instead."""
+        protocol.operation(method)
+        protocol.absolute(reply)
+        result = protocol.plain(getattr(self, method)(**kwargs))
+        os.makedirs(reply, exist_ok=True)
+        protocol.publish('%s/%d.json' % (reply, self._warmctl_rank()), {'result': result})
+        return result
+
     def warmctl_describe(self):
         import torch
         import vllm

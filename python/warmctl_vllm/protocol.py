@@ -69,6 +69,8 @@ def publish(filename, value):
     raw = encode(value)
     fd, name = tempfile.mkstemp(prefix='.warmctl-', dir=target.parent)
     try:
+        # Readable by the host like the weight parts, not mkstemp's 0600.
+        os.fchmod(fd, 0o644)
         with os.fdopen(fd, 'wb') as stream:
             stream.write(raw)
             stream.flush()

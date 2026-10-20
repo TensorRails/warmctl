@@ -148,8 +148,8 @@ def serve_worker(rank, seed, conn):
 
 
 class Engine:
-    def __init__(self, ranks, names, seed):
-        self.lock, self.names, self.seen = threading.Lock(), names, set()
+    def __init__(self, ranks, names, seed, tp):
+        self.lock, self.names, self.seen, self.tp = threading.Lock(), names, set(), tp
         self.conns = []
         for rank in range(ranks):
             parent, child = multiprocessing.Pipe()
@@ -226,7 +226,9 @@ def handler(engine):
                     engine.seen.clear()
                     return self.reply(200, {})
                 if url.path == '/collective_rpc':
-                    return self.reply(200, {'results': engine.rpc(body['method'], body.get('kwargs'))})
+                    # Every replica runs it; vLLM's DP frontend answers with the first one's workers.
+                    results = engine.rpc(body['method'], body.get('kwargs'))
+                    return self.reply(200, {'results': results[:engine.tp]})
                 if url.path == '/v1/completions':
                     if any(engine.rpc('asleep')):
                         return self.reply(400, {'error': 'engine is sleeping'})
@@ -263,9 +265,10 @@ def main(argv):
     if os.environ.get('FAKE_VLLM_HOLD_MODEL') == '1':
         # Keep a model file open, as a loader that mmaps weights would.
         HELD.append(open(os.path.join(model, 'config.json')))
-    ranks = int(option(argv, '--tensor-parallel-size', '1')) * int(option(argv, '--data-parallel-size', '1'))
+    tp = int(option(argv, '--tensor-parallel-size', '1'))
+    ranks = tp * int(option(argv, '--data-parallel-size', '1'))
     names = option(argv, '--served-model-name', [model], many=True)
-    engine = Engine(ranks, names, seed)
+    engine = Engine(ranks, names, seed, tp)
     server = http.server.ThreadingHTTPServer((option(argv, '--host', '127.0.0.1'), int(option(argv, '--port', '8000'))),
                                             handler(engine))
     print('fake vllm: %d ranks serving %s' % (ranks, names), flush=True)

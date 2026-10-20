@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+Engine
+
+- Data-parallel profiles build and restore on vLLM's DP frontend, which runs a
+  `/collective_rpc` call on every engine replica but answers with the first
+  replica's workers only. With `dp > 1` warmctl calls its worker methods
+  through the adapter's `warmctl_rpc`, which publishes each rank's result as a
+  file in the agent's IO directory, and requires one file for each rank
+  (#23). TP-only profiles and their snapshots keep the plain RPC.
+
 Profiles
 
 - `deepseek-v41-flash-1017-b300-tp8`: DeepSeek-V4.1-Flash-1017 on 8×B300, one

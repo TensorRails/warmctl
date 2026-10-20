@@ -17,9 +17,6 @@ hardware: [b300-275gb]
 vllm:
   max-model-len: 196608
   max-num-batched-tokens: 8192
-  # One API server for all eight DP ranks (vLLM 0.31 starts one per rank),
-  # so warmctl's collective RPCs reach every rank.
-  api-server-count: 1
   # ~46 GiB of weights per rank (EP weight filter); a fixed 160 GiB of packed
   # FP8 cache per rank (~7.3M tokens) instead of the recipe's 0.95 utilization,
   # so every build lays the snapshot out the same way.
