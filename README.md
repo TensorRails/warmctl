@@ -7,7 +7,7 @@
   <a href="https://github.com/TensorRails/warmctl/actions/workflows/ci.yml"><img alt="ci" src="https://img.shields.io/github/actions/workflow/status/TensorRails/warmctl/ci.yml?branch=main&label=ci&style=flat-square&labelColor=0a0a0a"></a>
   <a href="LICENSE"><img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-ededed?style=flat-square&labelColor=0a0a0a"></a>
   <img alt="engine vLLM" src="https://img.shields.io/badge/engine-vLLM-7aa7d9?style=flat-square&labelColor=0a0a0a">
-  <img alt="GPUs H100, H200, B200, L40S" src="https://img.shields.io/badge/GPUs-H100%20%C2%B7%20H200%20%C2%B7%20B200%20%C2%B7%20L40S-6dbb9a?style=flat-square&labelColor=0a0a0a">
+  <img alt="GPUs H100, H200, B200, B300, L40S" src="https://img.shields.io/badge/GPUs-H100%20%C2%B7%20H200%20%C2%B7%20B200%20%C2%B7%20B300%20%C2%B7%20L40S-6dbb9a?style=flat-square&labelColor=0a0a0a">
 </p>
 
 warmctl snapshots a warmed-up vLLM engine and restores it in seconds on any
@@ -30,7 +30,7 @@ warmctl catalog                                # models this host can restore
 warmctl up qwen3-8b --listen 0.0.0.0:8000      # pull, restore, serve
 ```
 
-The public catalog has 17 models on H100, H200, B200 and L40S. Any other
+The public catalog has 17 models on H100, H200, B200, B300 and L40S. Any other
 model vLLM serves with sleep mode, build yourself:
 
 ```bash
@@ -48,6 +48,7 @@ warmctl up ghcr.io/you/qwen3-8b
 |---|---|---|---|---|
 | GLM-5.3-Flash | 8×H100 | 404 GiB | **37 s** | 650 s |
 | DeepSeek-V4.1-Flash | 8×H100 | 678 GiB | **78 s** | 357 s |
+| DeepSeek-V4.1-Flash-1017 | 8×B300 | 729 GiB | **76 s** | ~1026 s |
 | gpt-oss-120b | 1×B200 | 78 GiB | **13 s** | 351 s |
 | Gemma 4 26B-A4B | 1×B200 | 60 GiB | **12 s** | ~330 s |
 | Qwen3-32B | 1×B200 | 72 GiB | **13 s** | ~300 s |

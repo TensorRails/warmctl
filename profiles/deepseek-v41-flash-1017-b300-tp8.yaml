@@ -1,0 +1,58 @@
+# DeepSeek-V4.1-Flash-1017 serving release on 8xB300: one TP8 engine with
+# expert parallelism over the whole node, the B200 release's engine settings
+# (deepseek-v41-flash-1017-b200-tp4) sized for B300's 275 GB: 256 sequences,
+# 16K prefill chunks, 128 GiB of FP8 KV per GPU, DSpark with 5 draft tokens and
+# adaptive verification, vLLM's fast collectives.
+schema: warmctl.profile/v1
+id: deepseek-v41-flash-1017-b300-tp8
+model:
+  id: deepseek-ai/DeepSeek-V4.1-Flash-1017
+  revision: 1bae0e1088993b9b82de08f59de5be5a34e42170
+  served_names: [deepseek-v41-flash-1017, deepseek-ai/DeepSeek-V4.1-Flash-1017]
+parallel: {tp: 8, ep: true}
+hardware: [b300-275gb]
+vllm:
+  max-model-len: 196608
+  # One chunk per step for long prompts; the 8xB300 vLLM matrix ran 16K.
+  max-num-batched-tokens: 16384
+  # ~60 GiB of weights per rank; a fixed 128 GiB of packed FP8 cache (the MLA
+  # latent is whole on every rank) leaves room for the drafter, Engram and the
+  # graphs, and keeps the snapshot's memory layout the same on every build.
+  kv-cache-memory-bytes: 137438953472
+  kv-cache-dtype: fp8
+  enable-chunked-prefill: true
+  async-scheduling: true
+  limit-mm-per-prompt: {image: 0, video: 0}
+  # Engram tables in pinned host memory, carried by the CRIU dump (the
+  # host_tables hook that would export them is not ported).
+  engram-config: {cpu_offload: true, dp_shared_memory: false, use_thp: false}
+  speculative-config: {method: dspark, num_speculative_tokens: 5, draft_sample_method: probabilistic, enable_adaptive_verification: true}
+  tokenizer-mode: deepseek_v41
+  tool-call-parser: deepseek_v41
+  reasoning-parser: deepseek_v41
+  enable-auto-tool-choice: true
+  # The checkpoint ships no generation_config.json (nor a Jinja chat template:
+  # tokenizer-mode deepseek_v41 encodes prompts); the 1017 model card's sampling.
+  override-generation-config: {temperature: 1.0, top_p: 1.0}
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  # The largest batch is also max-num-seqs.
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 160, 192, 224, 256]
+  fuse_allreduce_rms: true
+env:
+  NCCL_NVLS_ENABLE: null
+  VLLM_ALLREDUCE_USE_FLASHINFER: null
+  VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC: null
+  VLLM_ALLREDUCE_USE_SYMM_MEM: null
+  VLLM_USE_NCCL_SYMM_MEM: null
+warmup:
+  # One 32-token decode batch per graph, then single prefills up to one 16K
+  # chunk and one that continues into a second chunk.
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192, 16384, 24576]
+# The FP4 experts are not bitwise repeatable: the canary compares within a
+# tolerance and only warns.
+canary: {mode: warn, tolerance: 1.0e-3}
+hooks: {host_tables: auto, plugins: [deterministic_topk, checkpoint_cache]}
+resources: {memory: 1TiB}
