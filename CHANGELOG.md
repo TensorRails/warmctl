@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+Profiles
+
+- `deepseek-v41-flash-1017-b300-tp8`: DeepSeek-V4.1-Flash-1017 on 8×B300, one
+  TP8 engine with expert parallelism, 256 sequences, 16K prefill chunks, 128 GiB
+  of FP8 KV per GPU and DSpark with 5 draft tokens.
+- The hardware table has a `b300-275gb` row (NVIDIA B300 SXM6, sm_103).
+
 ## v2.0.0-beta.9 — 2026-10-19
 
 `warmctl hardware` shows which GPUs snapshots support, and `warmctl doctor`
