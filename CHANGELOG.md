@@ -19,8 +19,15 @@ Profiles
 - `deepseek-v41-flash-1017-b300-dep8`: the same model for throughput, after
   vLLM's B300 recipe: DEP8 (eight data-parallel attention replicas, EP with
   weight filtering), FlashMLA mega-attention with an MXFP4 sparse indexer,
-  DeepGEMM mega-MoE, DSpark with block rejection sampling, the recipe's
-  nightly image.
+  DeepGEMM mega-MoE, DSpark with block rejection sampling, on vLLM's CUDA 13.4
+  nightly (vLLM 0.32): its libcuda 615 restores the mega-MoE multicast buffers,
+  which the recipe's CUDA 13.0 image (libcuda 580) cannot after cuda-checkpoint.
+
+Docs
+
+- `docs/interpose.md`: multicast objects restore only on a user-mode driver
+  of r595 or newer (ai-dynamo/snapshot#510); the image's forward-compatible
+  `libcuda` counts, the host kernel driver may stay on 580.
 - The hardware table has a `b300-275gb` row (NVIDIA B300 SXM6, sm_103).
 
 ## v2.0.0-beta.9 — 2026-10-19

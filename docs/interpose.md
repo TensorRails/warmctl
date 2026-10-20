@@ -61,6 +61,22 @@ The libraries are mounted read-only and with the store's file mode in donor
 and receiver: CRIU maps a library back only onto a file of the same path,
 size and mode.
 
+## Driver requirement for multicast
+
+A restored process re-creates its multicast objects (NVLS, symmetric memory,
+DeepGEMM mega-MoE buffers) with `cuMulticastAddDevice`. On the r580
+user-mode driver that call returns `CUDA_ERROR_INVALID_DEVICE` in any process
+restored by cuda-checkpoint, and the restore stops at
+`RestoreMulticastDevices` (ai-dynamo/snapshot#510). r595 and newer do not
+have the bug; the kernel driver may stay on 580.
+
+The user-mode driver is the `libcuda` the engine loads: the host's, or a
+forward-compatible one the image ships (`/usr/local/cuda*/compat`), which the
+NVIDIA container runtime prefers when it is newer than the host's. vLLM's
+CUDA 13.4 images carry libcuda 615 and restore multicast; its CUDA 13.0
+images carry 580 and on a 580 host do not. cuda-checkpoint runs inside the
+container, so it loads the same `libcuda` as the engine.
+
 ## Cost
 
 The interposer only sees allocation and mapping calls, never kernel
