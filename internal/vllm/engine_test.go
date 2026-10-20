@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -223,5 +224,123 @@ func TestErrorCarriesBody(t *testing.T) {
 	var he *HTTPError
 	if !errors.As(err, &he) || he.Status != 400 || !strings.Contains(err.Error(), "not JSON compliant: nan") {
 		t.Fatalf("error lost the body: %v", err)
+	}
+}
+
+// dataParallel is vLLM's data-parallel frontend: every engine core runs a
+// /collective_rpc call, but the answer holds the first engine's workers
+// only. Each worker of warmctl_rpc publishes <reply>/<rank>.json; skip
+// ranks never answer.
+func dataParallel(t *testing.T, ranks int, skip ...int) (*Engine, string, *[]string) {
+	var methods []string
+	var mu sync.Mutex
+	e := serveHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Method string `json:"method"`
+			Kwargs struct {
+				Method string          `json:"method"`
+				Kwargs json.RawMessage `json:"kwargs"`
+				Reply  string          `json:"reply"`
+			} `json:"kwargs"`
+		}
+		if r.URL.Path != "/collective_rpc" || json.NewDecoder(r.Body).Decode(&body) != nil {
+			w.WriteHeader(400)
+			return
+		}
+		mu.Lock()
+		methods = append(methods, body.Method+"/"+body.Kwargs.Method)
+		mu.Unlock()
+		if body.Method != "warmctl_rpc" {
+			fmt.Fprintf(w, `{"results":[{"rank":0,"method":%q}]}`, body.Method)
+			return
+		}
+		if err := os.MkdirAll(body.Kwargs.Reply, 0o755); err != nil {
+			t.Error(err)
+		}
+		for rank := 0; rank < ranks; rank++ {
+			if slices.Contains(skip, rank) {
+				continue
+			}
+			row := fmt.Sprintf(`{"result":{"rank":%d,"method":%q,"kwargs":%s}}`, rank, body.Kwargs.Method, body.Kwargs.Kwargs)
+			if body.Kwargs.Method == "checkpoint_prepare" {
+				row = `{"result":null}`
+			}
+			if err := os.WriteFile(filepath.Join(body.Kwargs.Reply, fmt.Sprintf("%d.json", rank)), []byte(row), 0o644); err != nil {
+				t.Error(err)
+			}
+		}
+		fmt.Fprintf(w, `{"results":[{"rank":0,"method":%q}]}`, body.Kwargs.Method)
+	})
+	e.Ranks = ranks
+	dir := t.TempDir()
+	return e, dir, &methods
+}
+
+// The 8xB300 DEP8 build: one result for eight ranks over HTTP.
+func TestDataParallelRPC(t *testing.T) {
+	ctx := context.Background()
+	e, dir, methods := dataParallel(t, 8)
+	if _, err := e.Describe(ctx); err == nil || !strings.Contains(err.Error(), "1 results for 8 ranks") {
+		t.Fatalf("plain RPC on a DP engine: %v", err)
+	}
+	e.ReplyThrough(dir, dir)
+	workers, err := e.Describe(ctx)
+	if err != nil || len(workers) != 8 || workers[7].Rank != 7 {
+		t.Fatalf("%+v %v", workers, err)
+	}
+	var rows []struct {
+		Rank   int `json:"rank"`
+		Kwargs struct {
+			Threads int `json:"threads"`
+		} `json:"kwargs"`
+	}
+	if err := e.RPC(ctx, "warmctl_export_pool", map[string]any{"threads": 4}, time.Minute, &rows); err != nil ||
+		len(rows) != 8 || rows[5].Kwargs.Threads != 4 {
+		t.Fatalf("%+v %v", rows, err)
+	}
+	if _, err := e.PrepareCheckpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := "warmctl_describe/ warmctl_rpc/warmctl_describe warmctl_rpc/warmctl_export_pool " +
+		"warmctl_rpc/checkpoint_prepare warmctl_rpc/warmctl_sleep_prepare"
+	if got := strings.Join(*methods, " "); got != want {
+		t.Fatalf("calls %s", got)
+	}
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Fatalf("replies left behind: %v", left)
+	}
+}
+
+func TestDataParallelMissingRank(t *testing.T) {
+	e, dir, _ := dataParallel(t, 8, 3, 5)
+	e.ReplyThrough(dir, dir)
+	if _, err := e.Describe(context.Background()); err == nil || !strings.Contains(err.Error(), "2 of 8 ranks did not answer: 3,5") {
+		t.Fatalf("missing ranks: %v", err)
+	}
+	e, dir, _ = dataParallel(t, 4)
+	e.Ranks = 2
+	e.ReplyThrough(dir, dir)
+	if _, err := e.Describe(context.Background()); err == nil || !strings.Contains(err.Error(), "reply 2.json is not one of ranks 0..1") {
+		t.Fatalf("extra rank: %v", err)
+	}
+}
+
+func TestReadReplies(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "0.json"), []byte(`{"result":{"rank":0}}`), 0o644)
+	os.WriteFile(filepath.Join(dir, "1.json"), []byte(`{"error":"x"}`), 0o644)
+	if _, err := readReplies(dir, 2); err == nil || !strings.Contains(err.Error(), "rank 1 reply has no result") {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "1.json"), []byte(`{"result":null}`), 0o644)
+	if rows, err := readReplies(dir, 2); err != nil || string(rows[1]) != "null" {
+		t.Fatal(rows, err)
+	}
+	os.WriteFile(filepath.Join(dir, "01.json"), []byte(`{"result":null}`), 0o644)
+	if _, err := readReplies(dir, 2); err == nil {
+		t.Fatal("01.json accepted")
+	}
+	if _, err := readReplies(filepath.Join(dir, "none"), 1); err == nil || !strings.Contains(err.Error(), "1 of 1 ranks did not answer: 0") {
+		t.Fatal(err)
 	}
 }

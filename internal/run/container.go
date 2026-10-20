@@ -73,6 +73,13 @@ func (c *Container) connect(ctx context.Context, ranks int) (*Container, error) 
 	return c, nil
 }
 
+// ReplyThrough has the engine's RPC results come back as files under the
+// IO directory, which the engine sees at guest: a data-parallel engine
+// answers /collective_rpc for its first replica only.
+func (c *Container) ReplyThrough(guest string) {
+	c.Engine.ReplyThrough(filepath.Join(c.IO, "rpc"), guest+"/rpc")
+}
+
 func (c *Container) dial(ctx context.Context, sock string) (net.Conn, error) {
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
