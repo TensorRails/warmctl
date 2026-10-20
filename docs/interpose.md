@@ -74,8 +74,9 @@ The user-mode driver is the `libcuda` the engine loads: the host's, or a
 forward-compatible one the image ships (`/usr/local/cuda*/compat`), which the
 NVIDIA container runtime prefers when it is newer than the host's. vLLM's
 CUDA 13.4 images carry libcuda 615 and restore multicast; its CUDA 13.0
-images carry 580 and on a 580 host do not. cuda-checkpoint runs inside the
-container, so it loads the same `libcuda` as the engine.
+images carry 580 and on a 580 host do not; `deploy/images/vllm-cu13compat615`
+puts 615 into one of the latter. cuda-checkpoint runs inside the container,
+so it loads the same `libcuda` as the engine.
 
 ## Cost
 

@@ -4,13 +4,13 @@
 # weight filtering), FlashMLA mega-attention with an MXFP4 sparse indexer,
 # DeepGEMM mega-MoE, DeepSelect top-k, DSpark with 5 draft tokens and block
 # rejection sampling, Engram embeddings split across DP ranks in pinned host
-# memory; 256 sequences and 8K chunks per rank. The image is vLLM's CUDA 13.4
-# nightly rather than the recipe's CUDA 13.0 one: its forward-compatible
-# libcuda 615 restores the mega-MoE multicast buffers, which the r580 user-mode
-# driver cannot after cuda-checkpoint (ai-dynamo/snapshot#510).
+# memory; 256 sequences and 8K chunks per rank. The image is the recipe's
+# (vLLM 0.31) with the CUDA 13.4 forward-compatible libcuda 615 in its compat
+# directory (deploy/images/vllm-cu13compat615): an r580 libcuda cannot restore
+# the mega-MoE multicast buffers after cuda-checkpoint (ai-dynamo/snapshot#510).
 schema: warmctl.profile/v1
 id: deepseek-v41-flash-1017-b300-dep8
-image: vllm/vllm-openai:cu134-nightly-x86_64-dev-20261019-mk@sha256:2b9fc4b18d0aaabe4d5cad020d9270106472ebe65f5d3bc02c50526b8d9fd280
+image: registry.warmctl.io/warmctl/vllm-openai:0.31-dsv41-b300-cu13compat615@sha256:64ed59eefab298ecf4a403d5d6ff73ebac7cb70a5c0efde0cc8c5937fcf831cb
 model:
   id: deepseek-ai/DeepSeek-V4.1-Flash-1017
   revision: 1bae0e1088993b9b82de08f59de5be5a34e42170

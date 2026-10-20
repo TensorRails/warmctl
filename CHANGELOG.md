@@ -19,9 +19,11 @@ Profiles
 - `deepseek-v41-flash-1017-b300-dep8`: the same model for throughput, after
   vLLM's B300 recipe: DEP8 (eight data-parallel attention replicas, EP with
   weight filtering), FlashMLA mega-attention with an MXFP4 sparse indexer,
-  DeepGEMM mega-MoE, DSpark with block rejection sampling, on vLLM's CUDA 13.4
-  nightly (vLLM 0.32): its libcuda 615 restores the mega-MoE multicast buffers,
-  which the recipe's CUDA 13.0 image (libcuda 580) cannot after cuda-checkpoint.
+  DeepGEMM mega-MoE, DSpark with block rejection sampling. Its image is the
+  recipe's (vLLM 0.31) with libcuda 615 in place of 580
+  (`registry.warmctl.io/warmctl/vllm-openai:0.31-dsv41-b300-cu13compat615`,
+  `deploy/images/vllm-cu13compat615`): an r580 libcuda cannot restore the
+  mega-MoE multicast buffers after cuda-checkpoint.
 
 Docs
 
