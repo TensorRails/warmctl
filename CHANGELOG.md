@@ -21,8 +21,8 @@ Profiles
 
 - `deepseek-v41-flash-1017-b200-dep8`: the DEP8 recipe on 8×B200 (100 GiB of
   FP8 KV per GPU; 46 GiB of weights per rank). In the catalog for driver
-  615: 809 GiB, restores in 226 s from a 3.6 GiB/s disk, 39K output tokens/s
-  at 1K/1K once restored.
+  615: 809 GiB, restores in 84 s from the page cache, 38K output tokens/s at
+  1K/1K once restored.
 - `deepseek-v41-flash-1017-b300-tp8`: DeepSeek-V4.1-Flash-1017 on 8×B300, one
   TP8 engine with expert parallelism, 256 sequences, 16K prefill chunks, 128 GiB
   of FP8 KV per GPU and DSpark with 5 draft tokens.
