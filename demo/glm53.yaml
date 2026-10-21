@@ -1,0 +1,69 @@
+# The demo's model: GLM-5.3-Flash, one replica per 8xH100 node, restored from
+# the shared file system (demo/README.md). Replace /mnt/share if your share is
+# mounted elsewhere on the nodes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: warmctl-demo
+  labels:
+    # CRIU and cuda-checkpoint need privileged pods.
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glm53-flash
+  namespace: warmctl-demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels: {app: glm53-flash}
+  template:
+    metadata:
+      labels: {app: glm53-flash}
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      # One replica per node (each takes all eight GPUs anyway).
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {app: glm53-flash}
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: warmctl
+          image: registry.warmctl.io/warmctl/runtime:latest
+          imagePullPolicy: IfNotPresent
+          args: [up, glm53-flash]
+          env:
+            # Look for the snapshot on the share first; the registry only for what is missing.
+            - {name: WARMCTL_CACHE, value: /mnt/share/warmctl}
+          securityContext: {privileged: true}
+          resources:
+            limits: {nvidia.com/gpu: 8}
+          # 503 while copying and restoring, 200 once the canary passed.
+          readinessProbe:
+            httpGet: {path: /health, port: 8080}
+            periodSeconds: 1
+          volumeMounts:
+            - {name: share, mountPath: /mnt/share}
+            - {name: snapshots, mountPath: /var/lib/warmctl}
+      volumes:
+        # The shared file system, mounted on every GPU node (or a ReadWriteMany PVC).
+        - name: share
+          hostPath: {path: /mnt/share, type: Directory}
+        # Node-local copy: a pod that comes back on the same node skips the copy.
+        - name: snapshots
+          hostPath: {path: /var/lib/warmctl, type: DirectoryOrCreate}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: glm53-flash
+  namespace: warmctl-demo
+spec:
+  selector: {app: glm53-flash}
+  ports:
+    - {port: 80, targetPort: 8080}

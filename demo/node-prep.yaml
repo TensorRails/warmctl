@@ -1,0 +1,39 @@
+# Before the demo: put the runtime image (vLLM + warmctl, ~20 GB) on every GPU
+# node and turn io_uring off, so the demo's pods start without an image pull.
+# The snapshot itself is not pulled here: the demo restores it from the share.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: warmctl-demo
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: warmctl-node-prep
+  namespace: warmctl-demo
+spec:
+  selector:
+    matchLabels: {app: warmctl-node-prep}
+  template:
+    metadata:
+      labels: {app: warmctl-node-prep}
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      initContainers:
+        - name: io-uring
+          image: registry.warmctl.io/warmctl/runtime:latest
+          command: [/bin/sh, -c, "echo 2 > /proc/sys/kernel/io_uring_disabled"]
+          securityContext: {privileged: true}
+        - name: version
+          image: registry.warmctl.io/warmctl/runtime:latest
+          args: [version]
+      containers:
+        # Keeps the pod, and so the image, on the node.
+        - name: hold
+          image: registry.warmctl.io/warmctl/runtime:latest
+          command: [/usr/local/bin/tini, --, /bin/sleep, infinity]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}

@@ -1,0 +1,38 @@
+# Load test through the Service: 192 concurrent chats (64 per replica), 1K-token
+# prompts, 512-token answers. Runs on a GPU node, where the runtime image already
+# is, without taking GPUs. Needs access to the Hugging Face Hub for the tokenizer.
+#   kubectl apply -f demo/bench.yaml && kubectl -n warmctl-demo logs -f job/glm53-bench
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: glm53-bench
+  namespace: warmctl-demo
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      containers:
+        - name: bench
+          image: registry.warmctl.io/warmctl/runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: [vllm, bench, serve]
+          args:
+            - --backend=openai
+            - --base-url=http://glm53-flash
+            - --model=glm53-flash
+            - --tokenizer=zai-org/GLM-5.3-Flash
+            - --trust-remote-code
+            - --dataset-name=random
+            - --random-input-len=1024
+            - --random-output-len=512
+            - --ignore-eos
+            - --num-prompts=576
+            - --max-concurrency=192
+            - --percentile-metrics=ttft,tpot,itl
+          env:
+            - {name: NVIDIA_VISIBLE_DEVICES, value: void}
+          resources:
+            requests: {cpu: "4", memory: 8Gi}
