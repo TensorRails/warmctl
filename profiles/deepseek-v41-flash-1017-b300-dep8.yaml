@@ -16,7 +16,7 @@ model:
   revision: 1bae0e1088993b9b82de08f59de5be5a34e42170
   served_names: [deepseek-v41-flash-1017, deepseek-ai/DeepSeek-V4.1-Flash-1017]
 parallel: {tp: 1, dp: 8, ep: true}
-hardware: [b300-275gb]
+hardware: [b300-275gb, b300ac-275gb]
 vllm:
   max-model-len: 196608
   max-num-batched-tokens: 8192
@@ -46,6 +46,10 @@ graphs:
   mode: FULL_AND_PIECEWISE
   # The largest batch is also max-num-seqs (the recipe's B300 value).
   decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 160, 192, 224, 256]
+  # Mixed steps (decode plus a prefill chunk, up to max-num-batched-tokens)
+  # replay graphs too, as in the recipe's max-cudagraph-capture-size 8190;
+  # without them every other step under load runs eagerly.
+  extra_capture_sizes: [1664, 1792, 1920, 2048, 2176, 2304, 2432, 2560, 2688, 2816, 2944, 3072, 3200, 3328, 3456, 3584, 3712, 3840, 3968, 4096, 4224, 4352, 4480, 4608, 4736, 4864, 4992, 5120, 5248, 5376, 5504, 5632, 5760, 5888, 6016, 6144, 6272, 6400, 6528, 6656, 6784, 6912, 7040, 7168, 7296, 7424, 7552, 7680, 7808, 7936, 8064, 8192]
 env:
   VLLM_ENGINE_READY_TIMEOUT_S: "7200"
   VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
@@ -54,6 +58,7 @@ warmup:
   # chunk and one that continues into a second chunk.
   decode_prompt_tokens: 32
   prefill_tokens: [512, 2048, 8192, 12288]
+  prefill_capture_sizes: true
 # The FP4 experts are not bitwise repeatable: the canary compares within a
 # tolerance and only warns.
 canary: {mode: warn, tolerance: 1.0e-3}

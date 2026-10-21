@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Profiles
+
+- `deepseek-v41-flash-1017-b300-dep8` captures graphs up to 8192 tokens
+  (`extra_capture_sizes` from 1664 in steps of 128, warmed by
+  `prefill_capture_sizes`), as the recipe's `max-cudagraph-capture-size 8190`
+  does. Under load most steps mix decode with a prefill chunk; in DP every rank
+  runs the size of the largest one, so with graphs only up to 1536 tokens
+  those steps ran eagerly. Restored on 8×B300 at 1K/1K, 2048 concurrent:
+  55K output tokens/s (was 37K), TPOT 29 ms (was 43 ms). The snapshot grows to
+  851 GiB and restores in 88 s from the page cache.
+- The hardware table has a `b300ac-275gb` row (NVIDIA B300 SXM6 AC); the
+  B300 DEP8 profile accepts both B300 rows.
+
 ## v2.0.0-beta.10 — 2026-10-21
 
 Engine

@@ -50,6 +50,7 @@ warmctl up ghcr.io/you/qwen3-8b
 | DeepSeek-V4.1-Flash | 8×H100 | 678 GiB | **78 s** | 357 s |
 | DeepSeek-V4.1-Flash-1017 | 8×B300 | 729 GiB | **76 s** | ~1026 s |
 | DeepSeek-V4.1-Flash-1017, DEP8 | 8×B200 | 809 GiB | **84 s** | 1077 s |
+| DeepSeek-V4.1-Flash-1017, DEP8 | 8×B300 | 851 GiB | **88 s** | 930 s |
 | gpt-oss-120b | 1×B200 | 78 GiB | **13 s** | 351 s |
 | Gemma 4 26B-A4B | 1×B200 | 60 GiB | **12 s** | ~330 s |
 | Qwen3-32B | 1×B200 | 72 GiB | **13 s** | ~300 s |
