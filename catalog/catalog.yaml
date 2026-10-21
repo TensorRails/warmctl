@@ -12,7 +12,7 @@ models:
   - name: deepseek-v41-flash-1017
     title: DeepSeek-V4.1-Flash-1017
     license: MIT
-    description: The 2026-10-17 update of DeepSeek-V4.1-Flash (new weights, same architecture); 4×B200 and 8×B300 prod profiles, 192K context.
+    description: The 2026-10-17 update of DeepSeek-V4.1-Flash (new weights, same architecture); 4×B200, 8×B200 DEP8 and 8×B300 prod profiles, 192K context.
   - name: deepseek-v41-flash
     title: DeepSeek-V4.1-Flash
     license: MIT
