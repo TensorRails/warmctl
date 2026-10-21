@@ -36,6 +36,12 @@ env:
   NCCL_RAS_ENABLE: "0"
   NCCL_IB_DISABLE: "1"
   NCCL_CUMEM_HOST_ENABLE: "0"
+  # NCCL registers the user buffers of collectives it captures into CUDA
+  # graphs (zero-copy peer access). Under cuInterpose the registration goes
+  # through its memory adapter and the first replay of a larger decode graph
+  # spins forever on the r615 user-mode driver (docs/interpose.md). The
+  # registration only pays off for large buffers; decode collectives are small.
+  NCCL_GRAPH_REGISTER: "0"
   # NVLS multicast and the symmetric-memory collectives are off unless a
   # profile turns them back on (and then the adapter's comm_checkpoint
   # detaches and rebuilds them around the checkpoint).

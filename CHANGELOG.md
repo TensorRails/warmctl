@@ -10,9 +10,17 @@ Engine
   through the adapter's `warmctl_rpc`, which publishes each rank's result as a
   file in the agent's IO directory, and requires one file for each rank
   (#23). TP-only profiles and their snapshots keep the plain RPC.
+- Engines run with `NCCL_GRAPH_REGISTER=0`: NCCL's registration of the user
+  buffers of graph-captured collectives goes through cuInterpose's memory
+  adapter, and on the r615 user-mode driver the first replay of a larger
+  decode graph hung every rank (#27). Without the registration the DEP8
+  engine runs, checkpoints and restores; the registration only matters for
+  large buffers.
 
 Profiles
 
+- `deepseek-v41-flash-1017-b200-dep8`: the DEP8 recipe on 8×B200 (100 GiB of
+  FP8 KV per GPU; 46 GiB of weights per rank).
 - `deepseek-v41-flash-1017-b300-tp8`: DeepSeek-V4.1-Flash-1017 on 8×B300, one
   TP8 engine with expert parallelism, 256 sequences, 16K prefill chunks, 128 GiB
   of FP8 KV per GPU and DSpark with 5 draft tokens.
