@@ -61,6 +61,39 @@ The libraries are mounted read-only and with the store's file mode in donor
 and receiver: CRIU maps a library back only onto a file of the same path,
 size and mode.
 
+## Driver requirement for multicast
+
+A restored process re-creates its multicast objects (NVLS, symmetric memory,
+DeepGEMM mega-MoE buffers) with `cuMulticastAddDevice`. On the r580
+user-mode driver that call returns `CUDA_ERROR_INVALID_DEVICE` in any process
+restored by cuda-checkpoint, and the restore stops at
+`RestoreMulticastDevices` (ai-dynamo/snapshot#510). r595 and newer do not
+have the bug; the kernel driver may stay on 580. A DEP8 DeepSeek-V4.1-Flash
+engine with mega-MoE multicast buffers restores on 615.71.10 in 83 s.
+
+The user-mode driver is the `libcuda` the engine loads: the host's, or a
+forward-compatible one the image ships (`/usr/local/cuda*/compat`), which the
+NVIDIA container runtime prefers when it is newer than the host's. vLLM's
+CUDA 13.4 images carry libcuda 615; its CUDA 13.0 images carry 580 and on a
+580 host do not restore multicast; `deploy/images/vllm-cu13compat615` puts
+615 into one of the latter. cuda-checkpoint runs inside the container, so it
+loads the same `libcuda` as the engine. For multi-GPU engines on a 595+ host
+warmctl puts the host's `libcuda` first (`LD_LIBRARY_PATH`), so the engine and
+the host tools agree.
+
+## NCCL buffer registration in CUDA graphs
+
+NCCL registers the user buffers of the collectives it captures into CUDA
+graphs so the kernels can read peers' buffers directly. The registration
+retains and exports the buffers' allocations, which under cuInterpose are the
+adapter's VMM mappings of the engine's `cudaMalloc`. On the r615 user-mode
+driver the first replay of a decode graph of 96 tokens or more then spins
+forever in every rank at idle power, with nothing waiting on the host; the
+same engine without CUDA graphs, and with graphs but without the registration,
+runs and restores. `profiles/_defaults.yaml` sets `NCCL_GRAPH_REGISTER=0`;
+the registration only matters for large buffers, and the collectives in a
+decode step are small. The 580 user-mode driver does not show the hang.
+
 ## Cost
 
 The interposer only sees allocation and mapping calls, never kernel

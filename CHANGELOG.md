@@ -10,17 +10,34 @@ Engine
   through the adapter's `warmctl_rpc`, which publishes each rank's result as a
   file in the agent's IO directory, and requires one file for each rank
   (#23). TP-only profiles and their snapshots keep the plain RPC.
+- Engines run with `NCCL_GRAPH_REGISTER=0`: NCCL's registration of the user
+  buffers of graph-captured collectives goes through cuInterpose's memory
+  adapter, and on the r615 user-mode driver the first replay of a larger
+  decode graph hung every rank (#27). Without the registration the DEP8
+  engine runs, checkpoints and restores; the registration only matters for
+  large buffers.
 
 Profiles
 
+- `deepseek-v41-flash-1017-b200-dep8`: the DEP8 recipe on 8×B200 (100 GiB of
+  FP8 KV per GPU; 46 GiB of weights per rank).
 - `deepseek-v41-flash-1017-b300-tp8`: DeepSeek-V4.1-Flash-1017 on 8×B300, one
   TP8 engine with expert parallelism, 256 sequences, 16K prefill chunks, 128 GiB
   of FP8 KV per GPU and DSpark with 5 draft tokens.
 - `deepseek-v41-flash-1017-b300-dep8`: the same model for throughput, after
   vLLM's B300 recipe: DEP8 (eight data-parallel attention replicas, EP with
   weight filtering), FlashMLA mega-attention with an MXFP4 sparse indexer,
-  DeepGEMM mega-MoE, DSpark with block rejection sampling, the recipe's
-  nightly image.
+  DeepGEMM mega-MoE, DSpark with block rejection sampling. Its image is the
+  recipe's (vLLM 0.31) with libcuda 615 in place of 580
+  (`registry.warmctl.io/warmctl/vllm-openai:0.31-dsv41-b300-cu13compat615`,
+  `deploy/images/vllm-cu13compat615`): an r580 libcuda cannot restore the
+  mega-MoE multicast buffers after cuda-checkpoint.
+
+Docs
+
+- `docs/interpose.md`: multicast objects restore only on a user-mode driver
+  of r595 or newer (ai-dynamo/snapshot#510); the image's forward-compatible
+  `libcuda` counts, the host kernel driver may stay on 580.
 - The hardware table has a `b300-275gb` row (NVIDIA B300 SXM6, sm_103).
 
 ## v2.0.0-beta.9 — 2026-10-19

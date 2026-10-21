@@ -1,0 +1,62 @@
+# DeepSeek-V4.1-Flash-1017 on 8xB200 for throughput: vLLM's B200/B300 DEP8 recipe
+# (recipes.vllm.ai/deepseek-ai/DeepSeek-V4.1-Flash) on one node. Eight
+# data-parallel attention replicas, the experts sharded across them (EP with
+# weight filtering), FlashMLA mega-attention with an MXFP4 sparse indexer,
+# DeepGEMM mega-MoE, DeepSelect top-k, DSpark with 5 draft tokens and block
+# rejection sampling, Engram embeddings split across DP ranks in pinned host
+# memory; 256 sequences and 8K chunks per rank, 100 GiB of KV cache per rank
+# (46 GiB of weights, 163 GiB in use of 180). The image is the recipe's (vLLM
+# 0.31) with the CUDA 13.4 forward-compatible libcuda 615 in its compat
+# directory (deploy/images/vllm-cu13compat615): an r580 libcuda cannot restore
+# the mega-MoE multicast buffers after cuda-checkpoint (ai-dynamo/snapshot#510).
+schema: warmctl.profile/v1
+id: deepseek-v41-flash-1017-b200-dep8
+image: registry.warmctl.io/warmctl/vllm-openai:0.31-dsv41-b300-cu13compat615@sha256:64ed59eefab298ecf4a403d5d6ff73ebac7cb70a5c0efde0cc8c5937fcf831cb
+model:
+  id: deepseek-ai/DeepSeek-V4.1-Flash-1017
+  revision: 1bae0e1088993b9b82de08f59de5be5a34e42170
+  served_names: [deepseek-v41-flash-1017, deepseek-ai/DeepSeek-V4.1-Flash-1017]
+parallel: {tp: 1, dp: 8, ep: true}
+hardware: [b200-180gb]
+vllm:
+  max-model-len: 196608
+  max-num-batched-tokens: 8192
+  # ~46 GiB of weights per rank (EP weight filter); a fixed 100 GiB of packed
+  # FP8 cache per rank (~4.5M tokens) instead of the recipe's utilization
+  # fraction, so every build lays the snapshot out the same way.
+  kv-cache-memory-bytes: 107374182400
+  kv-cache-dtype: fp8
+  enable-chunked-prefill: true
+  async-scheduling: true
+  enable-ep-weight-filter: true
+  prefill-schedule-interval: 2
+  attention-config: {backend: FLASHMLA_MEGA_ATTN_DSV41, indexer_kv_dtype: mxfp4, indexer_sparse_logits: true}
+  kernel-config: {enable_flashinfer_autotune: true, moe_backend: deep_gemm_mega_moe, sparse_indexer_topk_backend: deep_select}
+  limit-mm-per-prompt: {image: 0, video: 0}
+  # Per-rank Engram shards in pinned host memory, carried by the CRIU dump; a
+  # /dev/shm copy shared across ranks would be an unlinked tmpfs file.
+  engram-config: {cpu_offload: true, embedding_across_dp: true, dp_shared_memory: false, use_thp: false}
+  speculative-config: {method: dspark, num_speculative_tokens: 5, draft_sample_method: probabilistic, rejection_sample_method: block, enable_adaptive_verification: false}
+  tokenizer-mode: deepseek_v41
+  tool-call-parser: deepseek_v41
+  reasoning-parser: deepseek_v41
+  enable-auto-tool-choice: true
+  # The checkpoint ships no generation_config.json; the 1017 model card's sampling.
+  override-generation-config: {temperature: 1.0, top_p: 1.0}
+graphs:
+  mode: FULL_AND_PIECEWISE
+  # The largest batch is also max-num-seqs (the recipe's B300 value).
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 160, 192, 224, 256]
+env:
+  VLLM_ENGINE_READY_TIMEOUT_S: "7200"
+  VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
+warmup:
+  # One 32-token decode batch per graph, then single prefills up to one 8K
+  # chunk and one that continues into a second chunk.
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192, 12288]
+# The FP4 experts are not bitwise repeatable: the canary compares within a
+# tolerance and only warns.
+canary: {mode: warn, tolerance: 1.0e-3}
+hooks: {host_tables: auto, plugins: [deterministic_topk, checkpoint_cache]}
+resources: {memory: 2TiB}
