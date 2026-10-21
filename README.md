@@ -49,6 +49,7 @@ warmctl up ghcr.io/you/qwen3-8b
 | GLM-5.3-Flash | 8×H100 | 404 GiB | **37 s** | 650 s |
 | DeepSeek-V4.1-Flash | 8×H100 | 678 GiB | **78 s** | 357 s |
 | DeepSeek-V4.1-Flash-1017 | 8×B300 | 729 GiB | **76 s** | ~1026 s |
+| DeepSeek-V4.1-Flash-1017, DEP8 | 8×B200 | 809 GiB | **84 s** | 1077 s |
 | gpt-oss-120b | 1×B200 | 78 GiB | **13 s** | 351 s |
 | Gemma 4 26B-A4B | 1×B200 | 60 GiB | **12 s** | ~330 s |
 | Qwen3-32B | 1×B200 | 72 GiB | **13 s** | ~300 s |
@@ -58,10 +59,7 @@ warmctl up ghcr.io/you/qwen3-8b
 ~ is the time to a ready engine while building the snapshot; where we
 measured both, a plain cold start was 1–24% shorter. On B200, GLM-5.3-Flash
 restores in 44 s (8×B200) and DeepSeek-V4.1-Flash in 73 s (4×B200).
-DeepSeek-V4.1-Flash-1017 in vLLM's DEP8 recipe on 8×B200 (809 GiB, driver
-615) restores in 226 s from a 3.6 GiB/s disk, with no page cache or local
-NVMe; once restored it serves 39K output tokens/s at 1K/1K. Every platform is
-in the [catalog](https://warmctl.io/catalog/).
+Every platform is in the [catalog](https://warmctl.io/catalog/).
 
 GLM-5.3-Flash on 8×H100 by phase, from page cache and from a cold network
 file share (about 10 GB/s):
