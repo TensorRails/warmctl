@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.13 — 2026-10-25
 
 Distribution
 
@@ -11,6 +11,12 @@ Distribution
   is pulled at the same time on a host that lacks it. Every file is still
   checked against its SHA-256 before the restore reads it, and a pull that
   fails leaves no snapshot behind (#34).
+- A pull syncs the disk once, after every blob is written, instead of after
+  each blob: on ext4 every sync waited for all the others. From an empty
+  store on a network disk, `up` reached its first token 17–21% sooner for
+  Qwen3-8B (1×H200, 1×L40S), 12% for Qwen3-32B TP2 (2×L40S) and 7% for
+  gpt-oss-120b (1×H200); on storage faster than the network the process
+  restore runs inside the download (#36).
 
 ## v2.0.0-beta.12 — 2026-10-24
 
