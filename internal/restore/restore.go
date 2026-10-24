@@ -47,13 +47,28 @@ type Options struct {
 	// RunDir, in place, holds the agent's config, sockets and CRIU work.
 	RunDir string
 	// Gate, in place, is the gateway, opened before the pull.
-	Gate     *Gate
+	Gate *Gate
+	// Arrival, when set, is the pull still filling Snapshot: the restore
+	// starts on the files it reads first and waits for the weights before
+	// the engine wakes, not for the pull to end.
+	Arrival  Arrival
 	Progress *run.Progress
 	// TLSCert and TLSKey are --tls-cert and --tls-key; TLS is the pair
 	// loaded from them, nil for plain HTTP.
 	TLSCert string
 	TLSKey  string
 	TLS     *gateway.TLS
+}
+
+// Arrival is a snapshot still being pulled: its manifest is known, and its
+// files appear in its directory as they are checked, manifest.json last.
+type Arrival interface {
+	Manifest() manifest.Manifest
+	// ManifestJSON is the bytes manifest.json will hold.
+	ManifestJSON() []byte
+	// Wait returns once every file of paths is in place, or with the error
+	// that ended the pull.
+	Wait(ctx context.Context, paths []string) error
 }
 
 type restore struct {
@@ -71,6 +86,9 @@ type restore struct {
 	gw       *gateway.Gateway
 	prefetch context.CancelFunc
 	pf       *prefetchStats
+	// pulling is the engine image's pull that runs while the snapshot
+	// still arrives.
+	pulling chan imagePull
 	// mounts are a pod restore's bind mounts.
 	mounts []string
 }
@@ -97,8 +115,10 @@ func Run(ctx context.Context, o Options) error {
 		name string
 		fn   func(context.Context) error
 	}{
-		{"read snapshot", r.read}, {"preflight", r.preflight}, {"prepare", r.prepare}, {"start receiver", r.start},
-		{"restore processes", r.processes}, {"wake engine", r.wake}, {"verify", r.verify}, {"admit", r.admit},
+		{"read snapshot", r.read}, {"preflight", r.preflight}, {"wait for launch files", r.launching},
+		{"prepare", r.prepare}, {"start receiver", r.start}, {"wait for files", r.arrive},
+		{"restore processes", r.processes}, {"wait for weights", r.arrived},
+		{"wake engine", r.wake}, {"verify", r.verify}, {"admit", r.admit},
 	}
 	for _, s := range steps {
 		if err := s.fn(ctx); err != nil {
@@ -115,6 +135,12 @@ func Run(ctx context.Context, o Options) error {
 
 func (r *restore) read(context.Context) error {
 	r.snapshot = r.o.Snapshot
+	if r.o.Arrival != nil {
+		r.m = r.o.Arrival.Manifest()
+		r.p.Printf("snapshot %s: profile %s, %d ranks, %.2f GiB, restoring while it is pulled", r.m.ID,
+			r.m.Profile.ID, r.m.Launch.Ranks, float64(r.m.Bytes())/(1<<30))
+		return nil
+	}
 	var err error
 	r.m, err = manifest.Read(filepath.Join(r.snapshot, "manifest.json"))
 	if err != nil {

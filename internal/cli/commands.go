@@ -152,14 +152,11 @@ func runUp(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if ref := reference(snap, cfg); ref != "" {
-		if err := acceptLicense(ctx, ref, cfg, c.state, *accept, of.options(o.Progress)); err != nil {
-			return err
-		}
-		if snap, err = pullForUp(ctx, ref, &o, c.state, of.options(o.Progress), cfg); err != nil {
-			return err
-		}
+	snap, stopPull, err := upFrom(ctx, snap, &o, c.state, *accept, of, cfg)
+	if err != nil {
+		return err
 	}
+	defer stopPull()
 	o.Snapshot, _ = filepath.Abs(snap)
 	if o.ID == "" {
 		o.ID = filepath.Base(o.Snapshot)
@@ -172,6 +169,64 @@ func runUp(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	o.Progress.Printf("up completed")
 	return nil
+}
+
+// upFrom is the snapshot directory up restores from: snap itself, or, for a
+// reference, the directory a pull fills (startPull). The engine may serve
+// before the pull has synced every blob; stop, once up ends, ends a pull
+// still running and waits for it to clean up.
+func upFrom(ctx context.Context, snap string, o *restore.Options, state string, accept bool, of ociFlags,
+	cfg config.Config) (dir string, stop func(), err error) {
+	ref := reference(snap, cfg)
+	if ref == "" {
+		return snap, func() {}, nil
+	}
+	if err := acceptLicense(ctx, ref, cfg, state, accept, of.options(o.Progress)); err != nil {
+		return "", nil, err
+	}
+	pctx, cancel := context.WithCancel(ctx)
+	dir, pulling, err := startPull(pctx, ref, o, state, of.options(o.Progress), cfg)
+	if err != nil || pulling == nil {
+		cancel()
+		return dir, func() {}, err
+	}
+	return dir, func() {
+		cancel()
+		switch p := <-pulling; {
+		case p.err == nil:
+		case errors.Is(p.err, context.Canceled):
+			o.Progress.Printf("the pull stopped before it finished; the next up resumes it")
+		default:
+			o.Progress.Printf("the pull failed: %v; the snapshot is not kept", p.err)
+		}
+	}, nil
+}
+
+type pulled struct {
+	dir string
+	err error
+}
+
+// startPull pulls ref for up and returns as soon as the restore can start.
+// That is when the pull has the snapshot's manifest and its directory, with
+// o.Arrival set and pulling open until the pull ends; or when the pull has
+// ended, or found the snapshot pulled before, with pulling nil.
+func startPull(ctx context.Context, ref string, o *restore.Options, state string, po oci.Options,
+	cfg config.Config) (string, <-chan pulled, error) {
+	arrivals := oci.NewArrivals()
+	po.Arrivals = arrivals
+	done := make(chan pulled, 1)
+	go func() {
+		dir, err := pullForUp(ctx, ref, o, state, po, cfg)
+		done <- pulled{dir, err}
+	}()
+	select {
+	case <-arrivals.Begun():
+		o.Arrival = arrivals
+		return arrivals.Dir(), done, nil
+	case p := <-done:
+		return p.dir, nil, p.err
+	}
 }
 
 func runDown(ctx context.Context, args []string, stdout, stderr io.Writer) error {

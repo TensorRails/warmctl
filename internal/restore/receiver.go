@@ -88,6 +88,11 @@ func (r *restore) prepare(ctx context.Context) error {
 	if err := cfg.Write(filepath.Join(r.dir, "work", "agent.json")); err != nil {
 		return err
 	}
+	if r.o.Arrival != nil {
+		if err := os.WriteFile(filepath.Join(r.dir, "work", "manifest.json"), r.o.Arrival.ManifestJSON(), 0o644); err != nil {
+			return err
+		}
+	}
 	inst := Instance{ID: r.o.ID, Container: run.ContainerName(r.o.ID), PID: os.Getpid(), Snapshot: r.snapshot,
 		Listen: r.o.Listen, Started: time.Now().UTC()}
 	raw, _ := json.MarshalIndent(inst, "", "  ")
@@ -97,7 +102,7 @@ func (r *restore) prepare(ctx context.Context) error {
 	if r.o.InPlace {
 		return nil
 	}
-	r.image, err = r.dk.EnsureImage(ctx, r.m.Launch.Image, nil)
+	r.image, err = r.ensureImage(ctx)
 	return err
 }
 
@@ -195,10 +200,13 @@ func (r *restore) processes(ctx context.Context) error {
 	}
 	// The CRIU images and then the weights are read ahead in parallel while
 	// the restore steps run; CRIU and the weights reload then read memory.
-	pctx, cancel := context.WithCancel(context.Background())
-	r.prefetch = cancel
-	r.pf = &prefetchStats{start: time.Now()}
-	go Prefetch(pctx, r.snapshot, r.m, r.pf)
+	// A pull in progress leaves what it writes in memory itself.
+	if r.o.Arrival == nil {
+		pctx, cancel := context.WithCancel(context.Background())
+		r.prefetch = cancel
+		r.pf = &prefetchStats{start: time.Now()}
+		go Prefetch(pctx, r.snapshot, r.m, r.pf)
+	}
 	if err := r.c.Step(ctx, "install-fs", nil, &installed); err != nil {
 		return err
 	}

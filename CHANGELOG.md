@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Distribution
+
+- `warmctl up NAME` restores while it pulls. The CRIU images and the runtime
+  trees come first, and CRIU and the CUDA restore run on them while the
+  weights still download; the engine wakes once the weights have arrived,
+  reading them from memory while the disk still syncs them. The engine image
+  is pulled at the same time on a host that lacks it. Every file is still
+  checked against its SHA-256 before the restore reads it, and a pull that
+  fails leaves no snapshot behind (#34).
+
 ## v2.0.0-beta.12 — 2026-10-24
 
 Kubernetes

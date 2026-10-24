@@ -40,8 +40,7 @@ func (r *restore) wake(ctx context.Context) error {
 	if threads == 0 {
 		threads = 4
 	}
-	capture := r.guest().capture
-	reloaded, err := e.ReloadPool(ctx, capture+"/manifest.json", capture, threads, r.o.VerifyWeights)
+	reloaded, err := e.ReloadPool(ctx, r.manifestPath(), r.guest().capture, threads, r.o.VerifyWeights)
 	if err != nil {
 		return err
 	}

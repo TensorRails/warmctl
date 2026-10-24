@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -267,7 +268,8 @@ func TestBundleCorruptionCaught(t *testing.T) {
 	}
 	s := store.Store{Root: filepath.Join(root, "state")}
 	want := map[string]bool{m.Files[0].SHA256: true, m.Files[1].SHA256: true}
-	if err := fetchBundle(ctx, reg, s, d, m.Files, want); err == nil {
+	write := func(sha string, r io.Reader, size int64) error { return s.Ingest(ctx, r, sha, size) }
+	if err := fetchBundle(ctx, reg, d, m.Files, want, s.Has, write); err == nil {
 		t.Fatal("a corrupted bundle was accepted")
 	}
 	if !s.Has(m.Files[0].SHA256) || s.Has(m.Files[1].SHA256) {
