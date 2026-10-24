@@ -587,6 +587,11 @@ func (dl *downloader) schedulePieces(fl fileLayers) error {
 		dl.mu.Lock()
 		dl.finished = append(dl.finished, a)
 		dl.mu.Unlock()
+		// Read-only, as the blob will be: CRIU checks the mode of a file
+		// a restored process maps.
+		if err := a.tmp.Chmod(0o444); err != nil {
+			return err
+		}
 		return dl.checked(f.SHA256, a.tmp.Name())
 	}
 	a.left.Store(1)

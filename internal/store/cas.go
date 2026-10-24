@@ -260,8 +260,10 @@ func (s Store) Ingest(ctx context.Context, r io.Reader, digest string, size int6
 }
 
 // Write streams r into a new file next to the blobs, checking that its
-// bytes hash to digest and number size, and returns its name. It is not a
-// blob yet, nor synced: Claim makes it one once it is on disk.
+// bytes hash to digest and number size, and returns its name. The file is
+// read-only already, as a blob is (CRIU checks the mode of a file a restored
+// process maps), but not a blob yet, nor synced: Claim makes it one once it
+// is on disk.
 func (s Store) Write(ctx context.Context, r io.Reader, digest string, size int64) (string, error) {
 	if _, err := s.BlobPath(digest); err != nil {
 		return "", err
@@ -282,6 +284,9 @@ func (s Store) Write(ctx context.Context, r io.Reader, digest string, size int64
 		if got := hex.EncodeToString(h.Sum(nil)); got != digest || n != size {
 			err = fmt.Errorf("store: blob %s arrived as %s (%d of %d bytes)", digest, got, n, size)
 		}
+	}
+	if err == nil {
+		err = os.Chmod(tmp.Name(), 0o444)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())

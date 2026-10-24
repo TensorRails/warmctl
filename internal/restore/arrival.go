@@ -14,9 +14,11 @@ type imagePull struct {
 
 // launching, while the snapshot is pulled, waits for the few files the
 // receiver starts with, which the pull fetches first, and pulls a
-// receiver's engine image meanwhile, if this host lacks it. The receiver
-// then starts before the pull has filled the page cache: `docker create`
-// syncs, and a sync waits for the dirty pages the pull leaves (v1 P138).
+// receiver's engine image meanwhile, if this host lacks it. On a fast disk
+// the receiver is up in a second. On a disk slower than the network,
+// `docker create` syncs and so returns once the pull's writeback is done
+// (v1 P138): the process restore then reads the engine image from an idle
+// disk, which measured faster than reading it behind the writeback.
 func (r *restore) launching(ctx context.Context) error {
 	if r.o.Arrival == nil {
 		return nil

@@ -119,6 +119,13 @@ func TestPullArrives(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkFiles(t, out, m.FirstLane())
+	// Read-only before the store claims them, as blobs are: CRIU checks
+	// the mode of a file a restored process maps.
+	for _, f := range m.FirstLane() {
+		if info, err := os.Stat(filepath.Join(out, f.Path)); err != nil || info.Mode().Perm() != 0o444 {
+			t.Fatalf("%s arrived as %v: %v", f.Path, info.Mode(), err)
+		}
+	}
 	for _, name := range []string{"manifest.json", "weights/rank-000/part-00000.bin"} {
 		if _, err := os.Stat(filepath.Join(out, name)); err == nil {
 			t.Fatalf("%s is there before the weights arrived", name)

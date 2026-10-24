@@ -429,6 +429,8 @@ func newAssembly(ctx context.Context, s store.Store, f manifest.File, pieces []o
 		return nil, err
 	}
 	name := filepath.Join(s.Blobs(), ".assemble-"+f.SHA256)
+	// A pull that failed after the file was whole left it read-only.
+	_ = os.Chmod(name, 0o600)
 	tmp, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, err
