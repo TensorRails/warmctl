@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.12 — 2026-10-24
 
 Kubernetes
 
@@ -8,7 +8,7 @@ Kubernetes
   from the first probe of an in-place restore on. The pair is read again
   when a file changes, so a rotated Kubernetes secret is picked up without a
   restart. KServe with `enableLLMInferenceServiceTLS` probes, scrapes and
-  routes over HTTPS; the preset passes its certificate (#32).
+  routes over HTTPS; the preset passes its certificate (#32, #33).
 - `deploy/kubernetes/kserve.yaml`: warmctl as a KServe
   `LLMInferenceServiceConfig` preset.
 
