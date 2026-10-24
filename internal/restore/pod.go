@@ -169,15 +169,20 @@ func checkUTS(link string) error {
 	return nil
 }
 
-// checkListen refuses the restored engine's own port for the gateway.
+// checkListen refuses an address that takes the restored engine's own
+// socket, its port on loopback or on every address. The engine's port on
+// the pod's IP is free: KServe sends probes and traffic there.
 func checkListen(listen string) error {
-	_, port, err := net.SplitHostPort(listen)
+	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
 		return fmt.Errorf("--listen %q: %w", listen, err)
 	}
 	if _, engine, _ := net.SplitHostPort(snapshot.EngineAddr); port == engine {
-		return fmt.Errorf("--listen %s: port %s is the restored engine's on the pod's loopback; use %s",
-			listen, port, DefaultPodListen)
+		ip := net.ParseIP(host)
+		if host == "" || host == "localhost" || ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+			return fmt.Errorf("--listen %s: port %s is the restored engine's on the pod's loopback; use %s, "+
+				"or the pod's IP with port %s", listen, port, DefaultPodListen, port)
+		}
 	}
 	return nil
 }

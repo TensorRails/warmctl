@@ -178,6 +178,14 @@ passed and 200 after; a `readinessProbe` on it keeps the Service from
 routing to a pod that is still restoring. Only `/v1/completions`,
 `/v1/chat/completions`, `/v1/models` and `/metrics` pass.
 
+A platform that expects the model server on port 8000, such as KServe's
+LLMInferenceService (probes, InferencePool and workload Service all target
+it), gets it on the pod's own address: `--listen $(POD_IP):8000`, with
+`POD_IP` from the downward API (`status.podIP`). The engine keeps
+`127.0.0.1:8000`; the pod's IP on the same port is another address. Port
+8000 on every address (`:8000`, `0.0.0.0`, `[::]`) or on loopback is
+refused: it would take the engine's socket.
+
 [deploy/kubernetes/keda.yaml](../deploy/kubernetes/keda.yaml) scales the
 Deployment on `vllm:num_requests_waiting` scraped from the pods' `/metrics`
 (Prometheus and KEDA installed). A new replica costs a restore, not a cold

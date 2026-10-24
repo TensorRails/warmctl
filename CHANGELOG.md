@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+Kubernetes
+
+- In place, `--listen` accepts the pod's own IP on port 8000, the restored
+  engine's port: KServe's LLMInferenceService sends its probes, InferencePool
+  and workload Service there, so its pod runs `warmctl up --listen
+  "${POD_IP}:8000"`. Port 8000 on every address or on loopback is still
+  refused: it would take the engine's socket (#29).
+
 Profiles
 
 - `deepseek-v41-flash-1017-b300-dep8` captures graphs up to 8192 tokens

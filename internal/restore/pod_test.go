@@ -103,12 +103,13 @@ func TestCheckImage(t *testing.T) {
 }
 
 func TestCheckListen(t *testing.T) {
-	for _, ok := range []string{":8080", "0.0.0.0:9000", "127.0.0.1:18000"} {
+	for _, ok := range []string{":8080", "0.0.0.0:9000", "127.0.0.1:18000", "10.244.0.12:8000", "[fd00::12]:8000"} {
 		if err := checkListen(ok); err != nil {
 			t.Errorf("%s: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{":8000", "0.0.0.0:8000", "127.0.0.1:8000", "8080"} {
+	for _, bad := range []string{":8000", "0.0.0.0:8000", "127.0.0.1:8000", "[::]:8000", "[::1]:8000",
+		"localhost:8000", "pod.example:8000", "8080"} {
 		if err := checkListen(bad); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
