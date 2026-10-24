@@ -193,6 +193,7 @@ func (a *fakeArrival) Wait(_ context.Context, paths []string) error {
 // and the engine wakes once the weights lane has arrived.
 func TestArrival(t *testing.T) {
 	a := &fakeArrival{m: manifest.Manifest{ID: "s", Files: []manifest.File{
+		{Path: "adapter/warmctl_vllm/worker.py", Role: manifest.RoleAdapter},
 		{Path: "criu/core-1.img", Role: manifest.RoleCRIU},
 		{Path: "fs/workspace.tar", Role: manifest.RoleRuntimeFS},
 		{Path: "weights/rank-000/part-00000.bin", Role: manifest.RoleWeights},
@@ -203,10 +204,19 @@ func TestArrival(t *testing.T) {
 	if err := r.read(ctx); err != nil || r.m.ID != "s" || r.snapshot != "/snap" {
 		t.Fatalf("read %v: %+v", err, r.m)
 	}
+	r.o.InPlace = true // no image to pull
+	if err := r.launching(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(a.waited, " "); got != "adapter/warmctl_vllm/worker.py" {
+		t.Fatalf("waited for %s", got)
+	}
+	r.o.InPlace = false
+	a.waited = nil
 	if err := r.arrive(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(a.waited, " "); got != "criu/core-1.img fs/workspace.tar" {
+	if got := strings.Join(a.waited, " "); got != "adapter/warmctl_vllm/worker.py criu/core-1.img fs/workspace.tar" {
 		t.Fatalf("waited for %s", got)
 	}
 	a.waited = nil
@@ -225,7 +235,8 @@ func TestArrival(t *testing.T) {
 	}
 	// Without a pull in progress neither step waits.
 	r.o.Arrival = nil
-	if r.arrive(ctx) != nil || r.arrived(ctx) != nil || r.manifestPath() != "/capture/manifest.json" {
+	if r.launching(ctx) != nil || r.arrive(ctx) != nil || r.arrived(ctx) != nil ||
+		r.manifestPath() != "/capture/manifest.json" {
 		t.Fatal("a pulled snapshot waited")
 	}
 }

@@ -12,10 +12,12 @@ type imagePull struct {
 	err   error
 }
 
-// arrive, while the snapshot is pulled, waits for the files the process
-// restore reads: all but the weights lane. A receiver's engine image is
-// pulled meanwhile, if this host lacks it.
-func (r *restore) arrive(ctx context.Context) error {
+// launching, while the snapshot is pulled, waits for the few files the
+// receiver starts with, which the pull fetches first, and pulls a
+// receiver's engine image meanwhile, if this host lacks it. The receiver
+// then starts before the pull has filled the page cache: `docker create`
+// syncs, and a sync waits for the dirty pages the pull leaves (v1 P138).
+func (r *restore) launching(ctx context.Context) error {
 	if r.o.Arrival == nil {
 		return nil
 	}
@@ -25,6 +27,19 @@ func (r *restore) arrive(ctx context.Context) error {
 			img, err := r.dk.EnsureImage(ctx, r.m.Launch.Image, nil)
 			r.pulling <- imagePull{img, err}
 		}()
+	}
+	var paths []string
+	for _, f := range r.m.LaunchLane() {
+		paths = append(paths, f.Path)
+	}
+	return r.o.Arrival.Wait(ctx, paths)
+}
+
+// arrive, while the snapshot is pulled, waits for the files the process
+// restore reads: all but the weights lane.
+func (r *restore) arrive(ctx context.Context) error {
+	if r.o.Arrival == nil {
+		return nil
 	}
 	start := time.Now()
 	var paths []string

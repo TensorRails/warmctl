@@ -117,24 +117,34 @@ func (a *Arrivals) update(fn func()) {
 	a.changed = make(chan struct{})
 }
 
-// arrivalOrder puts the files a restore needs first ahead of the weight
-// lane, and the weight lane round-robin across ranks, so that the restore
-// steps start early and every rank's reload finds its first parts.
+// arrivalOrder puts the files a restore reads to start its receiver first,
+// then the rest it needs before the weights, then the weights lane
+// round-robin across ranks: the receiver starts before the disk is busy,
+// the restore steps start early, and every rank's reload finds its first
+// parts. A layer goes as early as the earliest file it holds.
 func arrivalOrder(m manifest.Manifest, files []fileLayers) []fileLayers {
-	lane := map[string]bool{}
-	for _, f := range m.WeightLane() {
-		lane[f.Path] = true
+	const launch, first, weights = 0, 1, 2
+	lane := map[string]int{}
+	for _, f := range m.LaunchLane() {
+		lane[f.Path] = launch
 	}
-	var out []fileLayers
+	for _, f := range m.WeightLane() {
+		lane[f.Path] = weights
+	}
+	var head [weights][]fileLayers
 	var ranks []string
 	byRank := map[string][]fileLayers{}
 	for _, fl := range files {
-		weights := false
+		tier := weights
 		for _, f := range fl.files {
-			weights = weights || lane[f.Path]
+			t, ok := lane[f.Path]
+			if !ok {
+				t = first
+			}
+			tier = min(tier, t)
 		}
-		if !weights {
-			out = append(out, fl)
+		if tier < weights {
+			head[tier] = append(head[tier], fl)
 			continue
 		}
 		d := path.Dir(fl.files[0].Path)
@@ -143,6 +153,7 @@ func arrivalOrder(m manifest.Manifest, files []fileLayers) []fileLayers {
 		}
 		byRank[d] = append(byRank[d], fl)
 	}
+	out := append(append([]fileLayers(nil), head[launch]...), head[first]...)
 	for i := 0; len(out) < len(files); i++ {
 		for _, d := range ranks {
 			if i < len(byRank[d]) {

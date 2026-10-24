@@ -115,8 +115,9 @@ func Run(ctx context.Context, o Options) error {
 		name string
 		fn   func(context.Context) error
 	}{
-		{"read snapshot", r.read}, {"preflight", r.preflight}, {"wait for files", r.arrive}, {"prepare", r.prepare},
-		{"start receiver", r.start}, {"restore processes", r.processes}, {"wait for weights", r.arrived},
+		{"read snapshot", r.read}, {"preflight", r.preflight}, {"wait for launch files", r.launching},
+		{"prepare", r.prepare}, {"start receiver", r.start}, {"wait for files", r.arrive},
+		{"restore processes", r.processes}, {"wait for weights", r.arrived},
 		{"wake engine", r.wake}, {"verify", r.verify}, {"admit", r.admit},
 	}
 	for _, s := range steps {

@@ -39,8 +39,9 @@
 | Step | Who | What |
 |---|---|---|
 | preflight | host | same GPU model, memory, driver and topology class; every CPU flag the donor had |
-| arrive | host | while `up` still pulls the snapshot: wait until every file but the weights lane is in place and checked; the engine image is pulled meanwhile |
-| start | host | receiver container: the snapshot read-only at `/capture`, its Python package at `/opt/warmctl/adapter`, its cuInterpose build at `/opt/warmctl/ipc` |
+| launching | host | while `up` still pulls the snapshot: wait for the files the receiver starts with (adapter, cuInterpose build, driver libraries), which the pull fetches first; the engine image is pulled meanwhile |
+| start | host | receiver container: the snapshot read-only at `/capture`, its Python package at `/opt/warmctl/adapter`, its cuInterpose build at `/opt/warmctl/ipc`; during a pull it starts before the page cache fills, since `docker create` waits for dirty pages to be written |
+| arrive | host | while `up` still pulls the snapshot: wait until every file but the weights lane is in place and checked |
 | install-fs | agent | the three trees, checked against their manifests |
 | criu, thaw | agent | `criu restore --leave-stopped`, then SIGCONT through pidfds |
 | cuda | agent | cuda-checkpoint restore with the donor-to-receiver device map, workers in parallel when no collective links them, then unlock |

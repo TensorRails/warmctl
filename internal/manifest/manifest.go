@@ -386,6 +386,18 @@ func (m Manifest) WeightBytes() int64 {
 	return n
 }
 
+// LaunchLane are the files a restore reads before its receiver starts: the
+// adapter and the cuInterpose build it mounts, the donor's driver libraries.
+func (m Manifest) LaunchLane() []File {
+	var out []File
+	for _, f := range m.Files {
+		if f.Role == RoleAdapter || f.Role == RoleIPC || f.Role == RoleDriver {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // FirstLane are the files a restore needs before the weights: everything
 // but the exported parts.
 func (m Manifest) FirstLane() []File {

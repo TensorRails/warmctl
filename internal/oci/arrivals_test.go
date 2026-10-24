@@ -220,12 +220,15 @@ func TestArrivalOrder(t *testing.T) {
 	m := manifest.Manifest{}
 	var files []fileLayers
 	for _, f := range []manifest.File{
+		{Path: "adapter/warmctl_vllm/worker.py", Role: manifest.RoleAdapter},
 		{Path: "criu/core-1.img", Role: manifest.RoleCRIU},
+		{Path: "driver/libcuda.so.1", Role: manifest.RoleDriver},
 		{Path: "fs/workspace.tar", Role: manifest.RoleRuntimeFS},
 		{Path: "weights/rank-000/part-00000.bin", Role: manifest.RoleWeights},
 		{Path: "weights/rank-000/part-00001.bin", Role: manifest.RoleWeights},
 		{Path: "weights/rank-000/table-emb.bin", Role: manifest.RoleHostTable},
 		{Path: "weights/rank-001/part-00000.bin", Role: manifest.RoleWeights},
+		{Path: "ipc/coordinator", Role: manifest.RoleIPC},
 		{Path: "z/late-small-file", Role: manifest.RoleCRIU},
 	} {
 		m.Files = append(m.Files, f)
@@ -235,7 +238,8 @@ func TestArrivalOrder(t *testing.T) {
 	for _, fl := range arrivalOrder(m, files) {
 		got = append(got, fl.files[0].Path)
 	}
-	want := "criu/core-1.img fs/workspace.tar z/late-small-file weights/rank-000/part-00000.bin " +
+	want := "adapter/warmctl_vllm/worker.py driver/libcuda.so.1 ipc/coordinator " +
+		"criu/core-1.img fs/workspace.tar z/late-small-file weights/rank-000/part-00000.bin " +
 		"weights/rank-001/part-00000.bin weights/rank-000/part-00001.bin weights/rank-000/table-emb.bin"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("order %v", got)
