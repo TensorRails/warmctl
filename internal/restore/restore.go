@@ -49,6 +49,11 @@ type Options struct {
 	// Gate, in place, is the gateway, opened before the pull.
 	Gate     *Gate
 	Progress *run.Progress
+	// TLSCert and TLSKey are --tls-cert and --tls-key; TLS is the pair
+	// loaded from them, nil for plain HTTP.
+	TLSCert string
+	TLSKey  string
+	TLS     *gateway.TLS
 }
 
 type restore struct {

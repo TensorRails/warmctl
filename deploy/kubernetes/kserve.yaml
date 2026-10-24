@@ -1,0 +1,45 @@
+# warmctl as a KServe LLMInferenceService preset (docs/kubernetes.md).
+# A service opts in with `baseRefs: [{name: warmctl}]` and a model URI
+# `warmctl://NAME[:TAG]`, the name `warmctl up` takes. KServe merges this
+# over its default vLLM template; the Deployment, workload Service,
+# InferencePool, scheduler and HTTPRoute stay KServe's.
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceServiceConfig
+metadata:
+  name: warmctl
+  namespace: kserve
+spec:
+  # The weights are in the snapshot: nothing to download.
+  storageInitializer: {enabled: false}
+  router: {gateway: {}, route: {}, scheduler: {}}
+  template:
+    containers:
+      - name: main
+        image: registry.warmctl.io/warmctl/runtime:latest
+        # Port 8000 on the pod's IP: KServe's probes, InferencePool and
+        # workload Service target it, and the restored engine keeps
+        # 127.0.0.1:8000. With enableLLMInferenceServiceTLS the gateway
+        # serves HTTPS with KServe's certificate, reloaded when it rotates.
+        command: [/usr/local/bin/tini, --, /bin/sh, -c,
+          "exec warmctl up --listen ${POD_IP}:8000{{ if .GlobalConfig.EnableTLS }} --tls-cert /var/run/kserve/tls/tls.crt --tls-key /var/run/kserve/tls/tls.key{{ end }} ${WARMCTL_SNAPSHOT#warmctl://}"]
+        env:
+          - name: POD_IP
+            valueFrom: {fieldRef: {fieldPath: status.podIP}}
+          - name: WARMCTL_SNAPSHOT
+            value: "{{ .Spec.Model.URI }}"
+        # CRIU and cuda-checkpoint restore processes. Each field KServe's
+        # template restricts is set back: presets merge as a patch.
+        securityContext:
+          privileged: true
+          allowPrivilegeEscalation: true
+          runAsNonRoot: false
+          runAsUser: 0
+          seccompProfile: {type: Unconfined}
+        # A restore is ready in seconds: probe every second, for up to an
+        # hour while a snapshot is pulled.
+        startupProbe: {periodSeconds: 1, failureThreshold: 3600}
+        volumeMounts: [{name: snapshots, mountPath: /var/lib/warmctl}]
+    volumes:
+      # Snapshots stay on the node for the next pod there.
+      - name: snapshots
+        hostPath: {path: /var/lib/warmctl, type: DirectoryOrCreate}
