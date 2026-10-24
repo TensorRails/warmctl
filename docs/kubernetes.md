@@ -196,7 +196,10 @@ restart; a pair that does not load keeps the last good one. The engine
 behind the gateway stays plain HTTP on the pod's loopback. With KServe's
 `enableLLMInferenceServiceTLS`, probes, the scheduler's `/metrics` scrape
 and traffic all use HTTPS, and the preset passes KServe's certificate,
-`/var/run/kserve/tls/tls.crt` and `tls.key`.
+`/var/run/kserve/tls/tls.crt` and `tls.key`. Upstream KServe leaves TLS
+from its gateway to the pods to the distribution (Istio DestinationRules,
+for one): a gateway that connects in plain HTTP gets 400 from the pod,
+whatever serves behind it.
 
 [deploy/kubernetes/keda.yaml](../deploy/kubernetes/keda.yaml) scales the
 Deployment on `vllm:num_requests_waiting` scraped from the pods' `/metrics`
