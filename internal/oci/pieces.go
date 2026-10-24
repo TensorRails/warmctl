@@ -381,8 +381,8 @@ func planPieces(f manifest.File, layers []ocispec.Descriptor, i int) (fileLayers
 
 // fetchBundle splits a bundle into its files and stores those in want, each
 // checked against its SHA-256 in manifest.json; the others are skipped.
-func fetchBundle(ctx context.Context, target oras.ReadOnlyTarget, s store.Store, d ocispec.Descriptor,
-	files []manifest.File, want map[string]bool, checked func(sha, name string) error) error {
+func fetchBundle(ctx context.Context, target oras.ReadOnlyTarget, d ocispec.Descriptor, files []manifest.File,
+	want map[string]bool, has func(sha string) bool, write func(sha string, r io.Reader, size int64) error) error {
 	rc, err := target.Fetch(ctx, d)
 	if err != nil {
 		return err
@@ -394,11 +394,9 @@ func fetchBundle(ctx context.Context, target oras.ReadOnlyTarget, s store.Store,
 		part := io.LimitReader(r, f.Size)
 		// Read past a file stored already: by an earlier attempt of this
 		// bundle, or as a second copy within it.
-		if want[f.SHA256] && !stored[f.SHA256] && !s.Has(f.SHA256) {
+		if want[f.SHA256] && !stored[f.SHA256] && !has(f.SHA256) {
 			stored[f.SHA256] = true
-			sha := f.SHA256
-			hand := func(name string) error { return checked(sha, name) }
-			if err := s.IngestChecked(ctx, part, sha, f.Size, hand); err != nil {
+			if err := write(f.SHA256, part, f.Size); err != nil {
 				return err
 			}
 			continue
@@ -512,8 +510,9 @@ func (a *assembly) fetchPiece(ctx context.Context, target oras.ReadOnlyTarget, d
 	return err
 }
 
-// finish makes the assembled file the blob of its SHA-256: every byte was
-// checked against a piece digest, and the pieces cover the file exactly.
+// finish makes the assembled file the blob of its SHA-256 once the pull has
+// synced it: every byte was checked against a piece digest, and the pieces
+// cover the file exactly.
 //
 // The file stays open, and so locked, until it is linked into the store
 // and its name removed.
@@ -521,9 +520,6 @@ func (a *assembly) finish(ctx context.Context, s store.Store) error {
 	name := a.tmp.Name()
 	defer a.tmp.Close()
 	a.journal.Close()
-	if err := a.tmp.Sync(); err != nil {
-		return err
-	}
 	if err := s.AddHashed(ctx, name, a.file.SHA256); err != nil {
 		return err
 	}

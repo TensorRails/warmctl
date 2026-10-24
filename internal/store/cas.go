@@ -245,52 +245,75 @@ func copyChecked(ctx context.Context, w io.Writer, r io.Reader) (int64, error) {
 // Ingest streams r into the store as digest, checking the bytes hash to it
 // and number size. A blob already present is not read again.
 func (s Store) Ingest(ctx context.Context, r io.Reader, digest string, size int64) error {
-	return s.IngestChecked(ctx, r, digest, size, nil)
+	if s.Has(digest) {
+		return nil
+	}
+	name, err := s.Write(ctx, r, digest, size)
+	if err != nil {
+		return err
+	}
+	if err := syncFile(name); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return s.Claim(name, digest)
 }
 
-// IngestChecked is Ingest that hands the bytes, once checked, to checked
-// before they are synced and become the blob: name holds them while checked
-// runs, and a hard link it makes to name keeps them. A blob already present
-// is not read again, and checked is not called.
-func (s Store) IngestChecked(ctx context.Context, r io.Reader, digest string, size int64,
-	checked func(name string) error) error {
+// Write streams r into a new file next to the blobs, checking that its
+// bytes hash to digest and number size, and returns its name. It is not a
+// blob yet, nor synced: Claim makes it one once it is on disk.
+func (s Store) Write(ctx context.Context, r io.Reader, digest string, size int64) (string, error) {
+	if _, err := s.BlobPath(digest); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(s.Blobs(), 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(s.Blobs(), ".ingest-*")
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	n, err := copyChecked(ctx, io.MultiWriter(tmp, h), r)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		if got := hex.EncodeToString(h.Sum(nil)); got != digest || n != size {
+			err = fmt.Errorf("store: blob %s arrived as %s (%d of %d bytes)", digest, got, n, size)
+		}
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	return tmp.Name(), nil
+}
+
+// Claim makes name, which Write returned and which is on disk now (synced,
+// or written before Sync), the read-only blob of digest. Its name goes;
+// hard links to it stay.
+func (s Store) Claim(name, digest string) error {
 	blob, err := s.BlobPath(digest)
 	if err != nil {
 		return err
 	}
-	if s.Has(digest) {
-		return nil
-	}
-	if err := os.MkdirAll(s.Blobs(), 0o700); err != nil {
+	if err := os.Chmod(name, 0o444); err != nil {
+		os.Remove(name)
 		return err
 	}
-	tmp, err := os.CreateTemp(s.Blobs(), ".ingest-*")
+	return claim(name, blob)
+}
+
+// Sync writes everything on the store's filesystem to disk, the files
+// Write left among it.
+func (s Store) Sync() error { return syncFS(s.Blobs()) }
+
+func syncFile(name string) error {
+	f, err := os.Open(name)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-	h := sha256.New()
-	n, err := copyChecked(ctx, io.MultiWriter(tmp, h), r)
-	if err != nil {
-		return err
-	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != digest || n != size {
-		return fmt.Errorf("store: blob %s arrived as %s (%d of %d bytes)", digest, got, n, size)
-	}
-	if checked != nil {
-		if err := checked(tmp.Name()); err != nil {
-			return err
-		}
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), 0o444); err != nil {
-		return err
-	}
-	return claim(tmp.Name(), blob)
+	defer f.Close()
+	return f.Sync()
 }

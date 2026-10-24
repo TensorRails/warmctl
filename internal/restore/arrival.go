@@ -28,11 +28,16 @@ func (r *restore) launching(ctx context.Context) error {
 			r.pulling <- imagePull{img, err}
 		}()
 	}
+	start := time.Now()
 	var paths []string
 	for _, f := range r.m.LaunchLane() {
 		paths = append(paths, f.Path)
 	}
-	return r.o.Arrival.Wait(ctx, paths)
+	if err := r.o.Arrival.Wait(ctx, paths); err != nil {
+		return err
+	}
+	r.p.Printf("%d files the receiver starts with arrived after %.1fs", len(paths), time.Since(start).Seconds())
+	return nil
 }
 
 // arrive, while the snapshot is pulled, waits for the files the process

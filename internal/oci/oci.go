@@ -310,7 +310,7 @@ func Pull(ctx context.Context, target oras.Target, ref, output string, s store.S
 func download(ctx context.Context, target oras.Target, s store.Store, files []fileLayers, dir string, got *tally,
 	o Options) error {
 	dl := &downloader{ctx: ctx, target: stallGuard{target, stallAfter}, s: s, dir: dir, arrivals: o.Arrivals,
-		got: got, seen: map[string]bool{}, waiting: map[string][]manifest.File{}}
+		got: got, seen: map[string]bool{}, waiting: map[string][]manifest.File{}, written: map[string]string{}}
 	defer dl.abort()
 	for _, fl := range files {
 		if err := dl.schedule(fl); err != nil {
@@ -326,9 +326,11 @@ func download(ctx context.Context, target oras.Target, s store.Store, files []fi
 	if err != nil {
 		return err
 	}
-	for sha, fs := range dl.waiting {
-		return fmt.Errorf("oci: %s (%s) was never stored", fs[0].Path, sha)
+	start := time.Now()
+	if err := dl.commit(); err != nil {
+		return err
 	}
+	o.logf("synced %.2f GiB to disk in %.1fs", gib(got.bytes), time.Since(start).Seconds())
 	return nil
 }
 
@@ -361,6 +363,71 @@ type downloader struct {
 	resumed  int64
 	mu       sync.Mutex
 	waiting  map[string][]manifest.File // by SHA-256: files to link once their bytes are checked
+	written  map[string]string          // by SHA-256: files written and checked, for the store to claim
+	finished []*assembly                // assembled and checked, for the store to claim
+}
+
+// A pull syncs nothing until every blob is written, then the filesystem
+// once: a sync per blob would make each wait for the writeback of all the
+// others (ext4 commits in order), and with them any other process's, such
+// as `docker create` for a receiver that starts during the pull. The store
+// claims a blob only after that sync, so it never holds a blob that is not
+// on disk.
+
+// write streams a blob's bytes next to the store, checked, and links the
+// files waiting for them. A second copy, from a retried bundle, is dropped.
+func (dl *downloader) write(sha string, r io.Reader, size int64) error {
+	name, err := dl.s.Write(dl.ctx, r, sha, size)
+	if err != nil {
+		return err
+	}
+	dl.mu.Lock()
+	_, dup := dl.written[sha]
+	if !dup {
+		dl.written[sha] = name
+	}
+	dl.mu.Unlock()
+	if dup {
+		return os.Remove(name)
+	}
+	return dl.checked(sha, name)
+}
+
+// has reports a blob this pull wrote or the store holds.
+func (dl *downloader) has(sha string) bool {
+	dl.mu.Lock()
+	_, ok := dl.written[sha]
+	dl.mu.Unlock()
+	return ok || dl.s.Has(sha)
+}
+
+// commit syncs what the pull wrote, makes it blobs of the store, and links
+// the files that waited for the store.
+func (dl *downloader) commit() error {
+	if err := dl.s.Sync(); err != nil {
+		return err
+	}
+	for sha, name := range dl.written {
+		if err := dl.s.Claim(name, sha); err != nil {
+			return err
+		}
+		delete(dl.written, sha)
+	}
+	for len(dl.finished) > 0 {
+		if err := dl.finished[0].finish(dl.ctx, dl.s); err != nil {
+			return err
+		}
+		dl.finished = dl.finished[1:]
+	}
+	for sha := range dl.waiting {
+		if err := dl.stored(sha); err != nil {
+			return err
+		}
+	}
+	for sha, fs := range dl.waiting {
+		return fmt.Errorf("oci: %s (%s) was never stored", fs[0].Path, sha)
+	}
+	return nil
 }
 
 // need claims a file the store lacks, once per SHA-256. A file the store
@@ -378,9 +445,10 @@ func (dl *downloader) need(f manifest.File) (bool, error) {
 }
 
 // checked links the files waiting for sha to name, which holds their bytes,
-// checked, before the store syncs them and makes them a blob: a restore that
-// follows the pull reads them from memory while the disk catches up. A file
-// it cannot link there waits for the blob (stored).
+// checked, before the pull syncs them and the store claims them: a restore
+// that follows the pull reads them from memory while the disk catches up. A
+// file it cannot link there, on another filesystem, waits for the blob
+// (stored).
 func (dl *downloader) checked(sha, name string) error {
 	dl.mu.Lock()
 	files := dl.waiting[sha]
@@ -409,7 +477,7 @@ func (dl *downloader) checked(sha, name string) error {
 	return nil
 }
 
-// stored links the files still waiting for the blob of sha.
+// stored links the files still waiting for the blob of sha, once it is one.
 func (dl *downloader) stored(sha string) error {
 	dl.mu.Lock()
 	files := dl.waiting[sha]
@@ -476,8 +544,7 @@ func (dl *downloader) schedule(fl fileLayers) error {
 	if need, err := dl.need(f); err != nil || !need {
 		return err
 	}
-	dl.add(d.Size, func() error { return fetch(dl.ctx, dl.target, dl.s, d, dl.checked) },
-		func() error { return dl.stored(f.SHA256) })
+	dl.add(d.Size, func() error { return fetch(dl.ctx, dl.target, d, dl.write) }, func() error { return nil })
 	return nil
 }
 
@@ -496,15 +563,8 @@ func (dl *downloader) scheduleBundle(fl fileLayers) error {
 		return nil
 	}
 	d := fl.layers[0]
-	dl.add(d.Size, func() error { return fetchBundle(dl.ctx, dl.target, dl.s, d, fl.files, want, dl.checked) },
-		func() error {
-			for sha := range want {
-				if err := dl.stored(sha); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+	dl.add(d.Size, func() error { return fetchBundle(dl.ctx, dl.target, d, fl.files, want, dl.has, dl.write) },
+		func() error { return nil })
 	return nil
 }
 
@@ -518,19 +578,16 @@ func (dl *downloader) schedulePieces(fl fileLayers) error {
 		return err
 	}
 	dl.asms = append(dl.asms, a)
-	// The job that writes the file's last piece makes it a blob; a file
-	// an earlier pull left whole becomes one now.
+	// The job that writes the file's last piece hands it on, checked; a
+	// file an earlier pull left whole is handed on now.
 	finish := func() error {
 		if a.left.Add(-1) > 0 {
 			return nil
 		}
-		if err := dl.checked(f.SHA256, a.tmp.Name()); err != nil {
-			return err
-		}
-		if err := a.finish(dl.ctx, dl.s); err != nil {
-			return err
-		}
-		return dl.stored(f.SHA256)
+		dl.mu.Lock()
+		dl.finished = append(dl.finished, a)
+		dl.mu.Unlock()
+		return dl.checked(f.SHA256, a.tmp.Name())
 	}
 	a.left.Store(1)
 	for _, d := range fl.layers {
@@ -544,7 +601,15 @@ func (dl *downloader) schedulePieces(fl fileLayers) error {
 	return finish()
 }
 
+// abort keeps what a failed pull got for the next one: the blobs written,
+// once synced, become the store's, and each assembly stays to resume.
 func (dl *downloader) abort() {
+	synced := len(dl.written) > 0 && dl.s.Sync() == nil
+	for sha, name := range dl.written {
+		if !synced || dl.s.Claim(name, sha) != nil {
+			os.Remove(name)
+		}
+	}
 	for _, a := range dl.asms {
 		a.abort()
 	}
@@ -585,17 +650,15 @@ func resolve(ctx context.Context, target oras.ReadOnlyTarget, ref string) (ocisp
 }
 
 // fetch streams a blob into the store.
-// fetch stores a whole-file blob, handing its bytes to checked
-// (store.IngestChecked) before they are synced.
-func fetch(ctx context.Context, target oras.ReadOnlyTarget, s store.Store, d ocispec.Descriptor,
-	checked func(sha, name string) error) error {
+// fetch hands a whole-file blob to write.
+func fetch(ctx context.Context, target oras.ReadOnlyTarget, d ocispec.Descriptor,
+	write func(sha string, r io.Reader, size int64) error) error {
 	rc, err := target.Fetch(ctx, d)
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	sha := d.Digest.Encoded()
-	return s.IngestChecked(ctx, rc, sha, d.Size, func(name string) error { return checked(sha, name) })
+	return write(d.Digest.Encoded(), rc, d.Size)
 }
 
 // link places a stored file at its path under dir.
