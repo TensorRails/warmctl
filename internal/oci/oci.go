@@ -60,7 +60,10 @@ type Options struct {
 	// it and before any blob is downloaded: a host that cannot restore it
 	// should not fetch hundreds of GiB first.
 	Check func(manifest.Manifest) error
-	Log   func(format string, args ...any)
+	// Arrivals, when set, makes a pull write the output directory in place,
+	// file by file, so that a restore can start before the pull ends.
+	Arrivals *Arrivals
+	Log      func(format string, args ...any)
 }
 
 func (o Options) logf(format string, args ...any) {
@@ -241,7 +244,8 @@ func pushIfMissing(ctx context.Context, p *pusher, d ocispec.Descriptor,
 // Pull fetches the snapshot ref names into the store and links it into
 // output, which must not exist. It returns the snapshot's manifest.
 func Pull(ctx context.Context, target oras.Target, ref, output string, s store.Store,
-	o Options) (manifest.Manifest, error) {
+	o Options) (m manifest.Manifest, err error) {
+	defer func() { o.Arrivals.end(err) }()
 	desc, am, m, config, err := resolve(ctx, target, ref)
 	if err != nil {
 		return m, err
@@ -261,42 +265,52 @@ func Pull(ctx context.Context, target oras.Target, ref, output string, s store.S
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return m, err
 	}
-	tmp, err := os.MkdirTemp(filepath.Dir(output), ".pull-")
+	release, err := claimOutput(output)
 	if err != nil {
 		return m, err
 	}
-	defer os.RemoveAll(tmp)
-	got := &tally{}
-	if err := download(ctx, target, s, files, got, o); err != nil {
+	defer release()
+	// A pull that a restore follows writes the snapshot's directory in
+	// place; any other writes a temporary one and renames it at the end.
+	dir := output
+	if o.Arrivals == nil {
+		dir, err = os.MkdirTemp(filepath.Dir(output), ".pull-")
+	} else {
+		err = os.Mkdir(output, 0o755)
+	}
+	if err != nil {
 		return m, err
 	}
-	for _, f := range m.Files {
-		if err := link(ctx, s, f, tmp); err != nil {
-			return m, err
+	pulled := false
+	defer func() {
+		if !pulled {
+			os.RemoveAll(dir)
 		}
-	}
-	saveDigests(tmp, m.Files, am.Layers)
-	if err := os.WriteFile(filepath.Join(tmp, "manifest.json"), config, 0o644); err != nil {
+	}()
+	o.Arrivals.begin(output, m, config)
+	got := &tally{}
+	if err := download(ctx, target, s, arrivalOrder(m, files), dir, got, o); err != nil {
 		return m, err
 	}
-	if err := os.Chmod(tmp, 0o755); err != nil {
+	saveDigests(dir, m.Files, am.Layers)
+	if err := complete(dir, output, config); err != nil {
 		return m, err
 	}
-	if err := os.Rename(tmp, output); err != nil {
-		return m, err
-	}
+	pulled = true
 	o.logf("pulled %s into %s: %d files in %d blobs, %d downloaded, %.2f GiB", desc.Digest, output,
 		len(m.Files), len(distinct(am.Layers)), got.blobs,
 		float64(got.bytes)/(1<<30))
 	return m, nil
 }
 
-// download brings every file the store lacks: whole-file blobs stream into
-// the store, bundles split into it, pieces go into their file's assembly,
-// all at once.
-func download(ctx context.Context, target oras.Target, s store.Store, files []fileLayers, got *tally,
+// download brings every file the store lacks into it, all at once: whole-file
+// blobs stream into the store, bundles split into it, pieces go into their
+// file's assembly. Each file is linked into dir as soon as its blob is
+// stored, in the order of files.
+func download(ctx context.Context, target oras.Target, s store.Store, files []fileLayers, dir string, got *tally,
 	o Options) error {
-	dl := &downloader{ctx: ctx, target: stallGuard{target, stallAfter}, s: s, got: got, seen: map[string]bool{}}
+	dl := &downloader{ctx: ctx, target: stallGuard{target, stallAfter}, s: s, dir: dir, arrivals: o.Arrivals,
+		got: got, seen: map[string]bool{}, waiting: map[string][]manifest.File{}}
 	defer dl.abort()
 	for _, fl := range files {
 		if err := dl.schedule(fl); err != nil {
@@ -312,43 +326,121 @@ func download(ctx context.Context, target oras.Target, s store.Store, files []fi
 	if err != nil {
 		return err
 	}
-	for len(dl.asms) > 0 {
-		if err := dl.asms[0].finish(ctx, s); err != nil {
-			return err
-		}
-		dl.asms = dl.asms[1:]
+	for sha, fs := range dl.waiting {
+		return fmt.Errorf("oci: %s (%s) was never stored", fs[0].Path, sha)
 	}
 	return nil
 }
 
-type downloader struct {
-	ctx     context.Context
-	target  oras.ReadOnlyTarget
-	s       store.Store
-	got     *tally
-	seen    map[string]bool
-	jobs    []func() error
-	asms    []*assembly
-	total   int64
-	resumed int64
+// complete writes manifest.json, which makes dir a snapshot, and moves a
+// temporary dir into place as output.
+func complete(dir, output string, config []byte) error {
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), config, 0o644); err != nil {
+		return err
+	}
+	if dir == output {
+		return nil
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return err
+	}
+	return os.Rename(dir, output)
 }
 
-// need claims a file the store lacks, once per SHA-256.
-func (dl *downloader) need(f manifest.File) bool {
-	if dl.seen[f.SHA256] || dl.s.Has(f.SHA256) {
-		return false
+type downloader struct {
+	ctx      context.Context
+	target   oras.ReadOnlyTarget
+	s        store.Store
+	dir      string
+	arrivals *Arrivals
+	got      *tally
+	seen     map[string]bool
+	jobs     []func() error
+	asms     []*assembly
+	total    int64
+	resumed  int64
+	mu       sync.Mutex
+	waiting  map[string][]manifest.File // by SHA-256: files to link once their bytes are checked
+}
+
+// need claims a file the store lacks, once per SHA-256. A file the store
+// has is linked at once; any other waits for its blob.
+func (dl *downloader) need(f manifest.File) (bool, error) {
+	if !dl.seen[f.SHA256] && dl.s.Has(f.SHA256) {
+		return false, dl.place(f)
+	}
+	dl.waiting[f.SHA256] = append(dl.waiting[f.SHA256], f)
+	if dl.seen[f.SHA256] {
+		return false, nil
 	}
 	dl.seen[f.SHA256] = true
-	return true
+	return true, nil
 }
 
-// add queues a transfer of a blob of size, counted once it is done.
-func (dl *downloader) add(size int64, fn func() error) {
+// checked links the files waiting for sha to name, which holds their bytes,
+// checked, before the store syncs them and makes them a blob: a restore that
+// follows the pull reads them from memory while the disk catches up. A file
+// it cannot link there waits for the blob (stored).
+func (dl *downloader) checked(sha, name string) error {
+	dl.mu.Lock()
+	files := dl.waiting[sha]
+	delete(dl.waiting, sha)
+	dl.mu.Unlock()
+	var left []manifest.File
+	for _, f := range files {
+		dst, err := under(dl.dir, f.Path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		if os.Link(name, dst) != nil {
+			left = append(left, f)
+			continue
+		}
+		dl.arrivals.arrived(f.Path)
+	}
+	if len(left) > 0 {
+		dl.mu.Lock()
+		dl.waiting[sha] = append(dl.waiting[sha], left...)
+		dl.mu.Unlock()
+	}
+	return nil
+}
+
+// stored links the files still waiting for the blob of sha.
+func (dl *downloader) stored(sha string) error {
+	dl.mu.Lock()
+	files := dl.waiting[sha]
+	delete(dl.waiting, sha)
+	dl.mu.Unlock()
+	for _, f := range files {
+		if err := dl.place(f); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// place links a stored file into the snapshot directory.
+func (dl *downloader) place(f manifest.File) error {
+	if err := link(dl.ctx, dl.s, f, dl.dir); err != nil {
+		return err
+	}
+	dl.arrivals.arrived(f.Path)
+	return nil
+}
+
+// add queues a transfer of a blob of size, counted once it is done, and
+// then done after it.
+func (dl *downloader) add(size int64, fn, then func() error) {
 	dl.total += size
 	dl.jobs = append(dl.jobs, func() error {
 		err := retryBlob(dl.ctx, fn)
 		if err == nil {
 			dl.got.add(size)
+			err = then()
 		}
 		return err
 	})
@@ -374,40 +466,82 @@ func retryBlob(ctx context.Context, fn func() error) error {
 }
 
 func (dl *downloader) schedule(fl fileLayers) error {
-	d := fl.layers[0]
-	switch d.MediaType {
+	switch fl.layers[0].MediaType {
 	case BundleType:
-		want := map[string]bool{}
-		for _, f := range fl.files {
-			if dl.need(f) {
-				want[f.SHA256] = true
-			}
-		}
-		if len(want) > 0 {
-			dl.add(d.Size, func() error { return fetchBundle(dl.ctx, dl.target, dl.s, d, fl.files, want) })
-		}
+		return dl.scheduleBundle(fl)
 	case PieceType:
-		if !dl.need(fl.files[0]) {
-			return nil
-		}
-		a, err := newAssembly(dl.ctx, dl.s, fl.files[0], fl.layers)
+		return dl.schedulePieces(fl)
+	}
+	d, f := fl.layers[0], fl.files[0]
+	if need, err := dl.need(f); err != nil || !need {
+		return err
+	}
+	dl.add(d.Size, func() error { return fetch(dl.ctx, dl.target, dl.s, d, dl.checked) },
+		func() error { return dl.stored(f.SHA256) })
+	return nil
+}
+
+func (dl *downloader) scheduleBundle(fl fileLayers) error {
+	want := map[string]bool{}
+	for _, f := range fl.files {
+		need, err := dl.need(f)
 		if err != nil {
 			return err
 		}
-		dl.asms = append(dl.asms, a)
-		for _, d := range fl.layers {
-			if a.done[pieceOffset(d)] {
-				dl.resumed += d.Size
-				continue
-			}
-			dl.add(d.Size, func() error { return a.fetchPiece(dl.ctx, dl.target, d) })
-		}
-	default:
-		if dl.need(fl.files[0]) {
-			dl.add(d.Size, func() error { return fetch(dl.ctx, dl.target, dl.s, d) })
+		if need {
+			want[f.SHA256] = true
 		}
 	}
+	if len(want) == 0 {
+		return nil
+	}
+	d := fl.layers[0]
+	dl.add(d.Size, func() error { return fetchBundle(dl.ctx, dl.target, dl.s, d, fl.files, want, dl.checked) },
+		func() error {
+			for sha := range want {
+				if err := dl.stored(sha); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	return nil
+}
+
+func (dl *downloader) schedulePieces(fl fileLayers) error {
+	f := fl.files[0]
+	if need, err := dl.need(f); err != nil || !need {
+		return err
+	}
+	a, err := newAssembly(dl.ctx, dl.s, f, fl.layers)
+	if err != nil {
+		return err
+	}
+	dl.asms = append(dl.asms, a)
+	// The job that writes the file's last piece makes it a blob; a file
+	// an earlier pull left whole becomes one now.
+	finish := func() error {
+		if a.left.Add(-1) > 0 {
+			return nil
+		}
+		if err := dl.checked(f.SHA256, a.tmp.Name()); err != nil {
+			return err
+		}
+		if err := a.finish(dl.ctx, dl.s); err != nil {
+			return err
+		}
+		return dl.stored(f.SHA256)
+	}
+	a.left.Store(1)
+	for _, d := range fl.layers {
+		if a.done[pieceOffset(d)] {
+			dl.resumed += d.Size
+			continue
+		}
+		a.left.Add(1)
+		dl.add(d.Size, func() error { return a.fetchPiece(dl.ctx, dl.target, d) }, finish)
+	}
+	return finish()
 }
 
 func (dl *downloader) abort() {
@@ -451,21 +585,34 @@ func resolve(ctx context.Context, target oras.ReadOnlyTarget, ref string) (ocisp
 }
 
 // fetch streams a blob into the store.
-func fetch(ctx context.Context, target oras.ReadOnlyTarget, s store.Store, d ocispec.Descriptor) error {
+// fetch stores a whole-file blob, handing its bytes to checked
+// (store.IngestChecked) before they are synced.
+func fetch(ctx context.Context, target oras.ReadOnlyTarget, s store.Store, d ocispec.Descriptor,
+	checked func(sha, name string) error) error {
 	rc, err := target.Fetch(ctx, d)
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	return s.Ingest(ctx, rc, d.Digest.Encoded(), d.Size)
+	sha := d.Digest.Encoded()
+	return s.IngestChecked(ctx, rc, sha, d.Size, func(name string) error { return checked(sha, name) })
 }
 
 // link places a stored file at its path under dir.
 func link(ctx context.Context, s store.Store, f manifest.File, dir string) error {
-	if f.Path == "" || path.IsAbs(f.Path) || path.Clean(f.Path) != f.Path || strings.HasPrefix(f.Path, "../") {
-		return fmt.Errorf("oci: file path %q", f.Path)
+	dst, err := under(dir, f.Path)
+	if err != nil {
+		return err
 	}
-	return s.Link(ctx, f.SHA256, filepath.Join(dir, filepath.FromSlash(f.Path)))
+	return s.Link(ctx, f.SHA256, dst)
+}
+
+// under is where a snapshot file of path p lives in dir.
+func under(dir, p string) (string, error) {
+	if p == "" || path.IsAbs(p) || path.Clean(p) != p || strings.HasPrefix(p, "../") {
+		return "", fmt.Errorf("oci: file path %q", p)
+	}
+	return filepath.Join(dir, filepath.FromSlash(p)), nil
 }
 
 // Tags lists a repository's tags.

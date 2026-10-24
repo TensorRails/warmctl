@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -381,7 +382,7 @@ func planPieces(f manifest.File, layers []ocispec.Descriptor, i int) (fileLayers
 // fetchBundle splits a bundle into its files and stores those in want, each
 // checked against its SHA-256 in manifest.json; the others are skipped.
 func fetchBundle(ctx context.Context, target oras.ReadOnlyTarget, s store.Store, d ocispec.Descriptor,
-	files []manifest.File, want map[string]bool) error {
+	files []manifest.File, want map[string]bool, checked func(sha, name string) error) error {
 	rc, err := target.Fetch(ctx, d)
 	if err != nil {
 		return err
@@ -395,7 +396,9 @@ func fetchBundle(ctx context.Context, target oras.ReadOnlyTarget, s store.Store,
 		// bundle, or as a second copy within it.
 		if want[f.SHA256] && !stored[f.SHA256] && !s.Has(f.SHA256) {
 			stored[f.SHA256] = true
-			if err := s.Ingest(ctx, part, f.SHA256, f.Size); err != nil {
+			sha := f.SHA256
+			hand := func(name string) error { return checked(sha, name) }
+			if err := s.IngestChecked(ctx, part, sha, f.Size, hand); err != nil {
 				return err
 			}
 			continue
@@ -420,6 +423,7 @@ type assembly struct {
 	journal *os.File
 	mu      sync.Mutex
 	done    map[int64]bool // offsets an earlier pull left in tmp
+	left    atomic.Int64   // pieces still to write, and one while they are scheduled
 }
 
 func newAssembly(ctx context.Context, s store.Store, f manifest.File, pieces []ocispec.Descriptor) (*assembly, error) {

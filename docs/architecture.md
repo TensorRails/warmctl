@@ -39,11 +39,13 @@
 | Step | Who | What |
 |---|---|---|
 | preflight | host | same GPU model, memory, driver and topology class; every CPU flag the donor had |
+| arrive | host | while `up` still pulls the snapshot: wait until every file but the weights lane is in place and checked; the engine image is pulled meanwhile |
 | start | host | receiver container: the snapshot read-only at `/capture`, its Python package at `/opt/warmctl/adapter`, its cuInterpose build at `/opt/warmctl/ipc` |
 | install-fs | agent | the three trees, checked against their manifests |
 | criu, thaw | agent | `criu restore --leave-stopped`, then SIGCONT through pidfds |
 | cuda | agent | cuda-checkpoint restore with the donor-to-receiver device map, workers in parallel when no collective links them, then unlock |
 | ipc | agent | under cuInterpose: the coordinator re-creates the shared allocations and multicast objects at their addresses and loads their bytes |
+| arrived | host | while `up` still pulls the snapshot: wait for the weights lane; the reload reads the checked bytes from memory while the pull syncs them |
 | wake | host, extension | vLLM's `checkpoint_restore`, `wake_up(weights)`, the pool reloaded and every allocation's fingerprint compared, `wake_up(kv_cache)` |
 | canary | host | the donor's prompt twice; first must miss, second hit; compared under the profile's policy (bitwise, tolerance or warn) |
 | admit | host | the gateway opens: inference routes only, 503 until now |
@@ -87,4 +89,11 @@ any file is fetched. A namespace publishes its models in
 Pulls try the cache directory (OCI image layouts on a shared file system),
 the mirrors and the registry in that order, write through to the cache, and
 resume: a large file assembles in `.assemble-<sha256>` next to the store,
-locked by the pull, with a journal of the pieces checked.
+locked by the pull, with a journal of the pieces checked. A pull fetches the
+files the process restore reads first and the weights lane last, round-robin
+across ranks, and links every file into the snapshot directory once its
+SHA-256 is checked. `up` restores while it pulls: the restore starts once
+`manifest.json` passed the host check, CRIU and CUDA run on the files that
+have arrived, and the engine wakes once the weights have. A file is linked
+when its bytes are checked, before the store syncs it; `manifest.json` comes
+once every blob is synced.

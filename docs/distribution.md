@@ -57,6 +57,18 @@ A snapshot downloaded from a registry is copied into the cache, so the next
 node reads it at file system speed. The restore itself always runs from local
 disk: a snapshot read from a virtiofs share restored in 63 s instead of 14 s.
 
+`up` does not wait for the whole download. It pulls the CRIU images and the
+runtime trees first and the weights last, and restores the processes and the
+GPU state while the weights still arrive; the engine wakes and reloads them
+as soon as they are all there, so a fresh host spends the restore steps
+inside the download. Every file appears in the snapshot directory once its
+SHA-256 is checked, before the store syncs it to disk: on a disk slower than
+the network, the engine reloads from memory while the disk catches up.
+`manifest.json` comes last, once every blob is synced, so a pull that fails
+leaves no snapshot behind: the restore stops, or, after the engine started
+serving, the snapshot is not kept; the partial directory is removed, and the
+next `up` resumes from the pieces already checked.
+
 `warmctl mirror NAME DESTINATION` copies a model into a directory or another
 registry, and `warmctl mirror --catalog DESTINATION` copies the whole catalog.
 It goes blob by blob without touching the local disk and skips what the

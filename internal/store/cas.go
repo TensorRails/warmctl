@@ -245,6 +245,15 @@ func copyChecked(ctx context.Context, w io.Writer, r io.Reader) (int64, error) {
 // Ingest streams r into the store as digest, checking the bytes hash to it
 // and number size. A blob already present is not read again.
 func (s Store) Ingest(ctx context.Context, r io.Reader, digest string, size int64) error {
+	return s.IngestChecked(ctx, r, digest, size, nil)
+}
+
+// IngestChecked is Ingest that hands the bytes, once checked, to checked
+// before they are synced and become the blob: name holds them while checked
+// runs, and a hard link it makes to name keeps them. A blob already present
+// is not read again, and checked is not called.
+func (s Store) IngestChecked(ctx context.Context, r io.Reader, digest string, size int64,
+	checked func(name string) error) error {
 	blob, err := s.BlobPath(digest)
 	if err != nil {
 		return err
@@ -260,19 +269,25 @@ func (s Store) Ingest(ctx context.Context, r io.Reader, digest string, size int6
 		return err
 	}
 	defer os.Remove(tmp.Name())
+	defer tmp.Close()
 	h := sha256.New()
 	n, err := copyChecked(ctx, io.MultiWriter(tmp, h), r)
-	if err == nil {
-		err = tmp.Sync()
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
 	if err != nil {
 		return err
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != digest || n != size {
 		return fmt.Errorf("store: blob %s arrived as %s (%d of %d bytes)", digest, got, n, size)
+	}
+	if checked != nil {
+		if err := checked(tmp.Name()); err != nil {
+			return err
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
 	}
 	if err := os.Chmod(tmp.Name(), 0o444); err != nil {
 		return err

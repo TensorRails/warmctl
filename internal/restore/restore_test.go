@@ -3,6 +3,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/profile"
+	"github.com/TensorRails/warmctl/v2/internal/run"
 )
 
 func donor() manifest.Hardware {
@@ -171,5 +173,59 @@ func TestCheckHost(t *testing.T) {
 	if _, err := CheckHost(context.Background(), h, "", t.TempDir()); err == nil ||
 		!strings.Contains(err.Error(), "cuda-checkpoint needs the same driver") {
 		t.Fatalf("driver mismatch: %v", err)
+	}
+}
+
+type fakeArrival struct {
+	m      manifest.Manifest
+	waited []string
+	err    error
+}
+
+func (a *fakeArrival) Manifest() manifest.Manifest { return a.m }
+func (a *fakeArrival) ManifestJSON() []byte        { return []byte(`{"id":"s"}`) }
+func (a *fakeArrival) Wait(_ context.Context, paths []string) error {
+	a.waited = append(a.waited, paths...)
+	return a.err
+}
+
+// During a pull the process restore waits for all but the weights lane,
+// and the engine wakes once the weights lane has arrived.
+func TestArrival(t *testing.T) {
+	a := &fakeArrival{m: manifest.Manifest{ID: "s", Files: []manifest.File{
+		{Path: "criu/core-1.img", Role: manifest.RoleCRIU},
+		{Path: "fs/workspace.tar", Role: manifest.RoleRuntimeFS},
+		{Path: "weights/rank-000/part-00000.bin", Role: manifest.RoleWeights},
+		{Path: "weights/rank-000/table-emb.bin", Role: manifest.RoleHostTable},
+	}}}
+	r := &restore{o: Options{Arrival: a, Snapshot: "/snap"}, p: run.NewProgress(io.Discard, "plain")}
+	ctx := context.Background()
+	if err := r.read(ctx); err != nil || r.m.ID != "s" || r.snapshot != "/snap" {
+		t.Fatalf("read %v: %+v", err, r.m)
+	}
+	if err := r.arrive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(a.waited, " "); got != "criu/core-1.img fs/workspace.tar" {
+		t.Fatalf("waited for %s", got)
+	}
+	a.waited = nil
+	if err := r.arrived(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(a.waited, " "); got != "weights/rank-000/part-00000.bin weights/rank-000/table-emb.bin" {
+		t.Fatalf("waited for %s", got)
+	}
+	if r.manifestPath() != "/work/manifest.json" {
+		t.Fatalf("the reload reads %s", r.manifestPath())
+	}
+	a.err = fmt.Errorf("pull failed")
+	if err := r.arrived(ctx); err == nil {
+		t.Fatal("woke after a failed pull")
+	}
+	// Without a pull in progress neither step waits.
+	r.o.Arrival = nil
+	if r.arrive(ctx) != nil || r.arrived(ctx) != nil || r.manifestPath() != "/capture/manifest.json" {
+		t.Fatal("a pulled snapshot waited")
 	}
 }
