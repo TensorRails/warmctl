@@ -110,7 +110,7 @@ func (r *restore) admit(context.Context) error {
 		r.gw = g.gw
 		r.gw.SetReady(true)
 		r.p.Marker("serving started %.1fs", r.p.Elapsed())
-		r.p.Printf("serving %s on http://%s", r.m.Profile.ID, g.Addr())
+		r.p.Printf("serving %s on %s", r.m.Profile.ID, r.o.TLS.URL(g.Addr()))
 		return nil
 	}
 	listen := r.o.Listen
@@ -121,13 +121,13 @@ func (r *restore) admit(context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.listener = l
+	r.listener = r.o.TLS.Listen(l)
 	r.gw = gateway.New(filepath.Join(r.dir, "io", "inference.sock"), func() {
 		r.p.Marker("first host-gateway token %.1fs", r.p.Elapsed())
 	})
 	r.gw.SetReady(true)
 	r.p.Marker("serving started %.1fs", r.p.Elapsed())
-	r.p.Printf("serving %s on http://%s", r.m.Profile.ID, l.Addr())
+	r.p.Printf("serving %s on %s", r.m.Profile.ID, r.o.TLS.URL(l.Addr()))
 	return nil
 }
 

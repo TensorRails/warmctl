@@ -95,6 +95,22 @@ func TestUpInPlaceListen(t *testing.T) {
 	}
 }
 
+// A certificate without its key, or one that does not load, stops `up`
+// before the gateway opens.
+func TestUpTLS(t *testing.T) {
+	for args, want := range map[string]string{
+		"--tls-cert /nonexistent/tls.crt":                            "--tls-cert and --tls-key go together",
+		"--tls-cert /nonexistent/tls.crt --tls-key /nonexistent/key": "no such file",
+	} {
+		var stdout, stderr bytes.Buffer
+		argv := append([]string{"up", "--mode", "in-place", "--run-dir", t.TempDir()}, strings.Fields(args)...)
+		if code := Run(context.Background(), append(argv, t.TempDir()), &stdout, &stderr, "test"); code != 1 ||
+			!strings.Contains(stderr.String(), want) {
+			t.Errorf("%s: exit %d, %q", args, code, stderr.String())
+		}
+	}
+}
+
 // Flags count wherever they stand around the positional argument.
 func TestParse(t *testing.T) {
 	for _, args := range [][]string{

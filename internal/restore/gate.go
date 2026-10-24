@@ -21,9 +21,9 @@ type Gate struct {
 	err    error
 }
 
-// OpenGate listens on listen and will forward to the agent's inference
-// socket under runDir.
-func OpenGate(listen, runDir string, p *run.Progress) (*Gate, error) {
+// OpenGate listens on listen, with TLS from the first probe when t is set,
+// and will forward to the agent's inference socket under runDir.
+func OpenGate(listen string, t *gateway.TLS, runDir string, p *run.Progress) (*Gate, error) {
 	if err := checkListen(listen); err != nil {
 		return nil, err
 	}
@@ -31,6 +31,7 @@ func OpenGate(listen, runDir string, p *run.Progress) (*Gate, error) {
 	if err != nil {
 		return nil, err
 	}
+	l = t.Listen(l)
 	gw := gateway.New(filepath.Join(runDir, "io", "inference.sock"), func() {
 		p.Marker("first host-gateway token %.1fs", p.Elapsed())
 	})
@@ -40,7 +41,7 @@ func OpenGate(listen, runDir string, p *run.Progress) (*Gate, error) {
 		g.err = gateway.Serve(ctx, l, gw, 30*time.Second)
 		close(g.done)
 	}()
-	p.Printf("gateway on %s: not ready", g.addr)
+	p.Printf("gateway on %s: not ready", t.URL(g.addr))
 	return g, nil
 }
 

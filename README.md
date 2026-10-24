@@ -100,8 +100,8 @@ with readiness on `/health`:
 kubectl apply -f deploy/kubernetes/warmctl.yaml
 ```
 
-[deploy/kubernetes](deploy/kubernetes) also holds node preparation and a KEDA
-autoscaler; details in [docs/kubernetes.md](docs/kubernetes.md). Prototype:
+[deploy/kubernetes](deploy/kubernetes) also holds node preparation, a KEDA
+autoscaler and a KServe LLMInferenceService preset; details in [docs/kubernetes.md](docs/kubernetes.md). Prototype:
 tested in pod-like containers on CPU, not yet on a GPU cluster.
 
 ## Profiles

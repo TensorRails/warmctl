@@ -17,6 +17,7 @@ import (
 
 	"github.com/TensorRails/warmctl/v2/internal/config"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
+	"github.com/TensorRails/warmctl/v2/internal/gateway"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/oci"
@@ -135,6 +136,11 @@ func runUp(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("up needs a snapshot directory, a NAME[:TAG] or an oci:// reference")
 	}
 	o.Progress = run.NewProgress(stdout, c.progress)
+	if o.TLSCert != "" || o.TLSKey != "" {
+		if o.TLS, err = gateway.LoadTLS(o.TLSCert, o.TLSKey); err != nil {
+			return err
+		}
+	}
 	gate, err := chooseMode(ctx, fs, &o, *mode, c.dockerSock)
 	if err != nil {
 		return err
@@ -200,6 +206,8 @@ func registerUp(fs *flag.FlagSet, o *restore.Options) *string {
 	fs.StringVar(&o.ID, "id", "", "instance id (default: the snapshot's or the repository's name)")
 	fs.StringVar(&o.GPUs, "gpus", "", "GPU indices (default: the first free GPUs of the snapshot's model)")
 	fs.StringVar(&o.Listen, "listen", "127.0.0.1:8000", "gateway address")
+	fs.StringVar(&o.TLSCert, "tls-cert", "", "serve HTTPS with this PEM certificate, read again when it changes")
+	fs.StringVar(&o.TLSKey, "tls-key", "", "the PEM private key of --tls-cert")
 	fs.StringVar(&o.Canary, "canary", "", "override the canary policy: bitwise, tolerance, warn or off")
 	fs.StringVar(&o.ModelDir, "model-dir", "", "model directory, when the snapshot needs it")
 	fs.BoolVar(&o.VerifyWeights, "verify-weights", false, "check each weights part's SHA-256 while reloading")
@@ -241,7 +249,7 @@ func chooseMode(ctx context.Context, fs *flag.FlagSet, o *restore.Options, mode,
 	// The restored engine is told paths under it (RPC replies): absolute,
 	// whatever its working directory.
 	o.RunDir, _ = filepath.Abs(o.RunDir)
-	o.Gate, err = restore.OpenGate(o.Listen, o.RunDir, o.Progress)
+	o.Gate, err = restore.OpenGate(o.Listen, o.TLS, o.RunDir, o.Progress)
 	return o.Gate, err
 }
 
