@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.11 — 2026-10-24
 
 Kubernetes
 
