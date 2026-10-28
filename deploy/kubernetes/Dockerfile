@@ -14,7 +14,7 @@
 # restore refuses a snapshot taken in another one. BASE_REF is what the
 # marker records as the base when BASE is a local name (the CPU test).
 ARG BASE=vllm/vllm-openai:cu134-nightly@sha256:ad9dc6397abc878d8e764daa39e16bdc7f1ecf9fb3d0283c076530b299c31ad0
-ARG GO_IMAGE=golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437
+ARG GO_IMAGE=golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb
 
 FROM ${GO_IMAGE} AS build
 WORKDIR /src
