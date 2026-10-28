@@ -1,0 +1,37 @@
+# qwen38-flash-next on 1×H200 (180B-A6B hybrid MoE, NVIDIA's NVFP4 checkpoint: routed experts
+# NVFP4 run as Marlin W4A16 on Hopper, attention and shared experts BF16, MTP FP8 as in the
+# FP8 release). The 47.8 GiB PLE n-gram table lives in pinned host memory (vLLM's default
+# engram offload, carried by the CRIU dump), which leaves 66.5 GiB of weights on the GPU and
+# 48 GiB for KV cache and Mamba state: the full native 262 144 context, 32 sequences.
+# MTP with 3 draft tokens and the qwen3 / qwen3_coder parsers per the vLLM recipe; sampling
+# from generation_config.json (T 1.0, top-p 0.95, top-k 20), the card's thinking values.
+schema: warmctl.profile/v1
+id: qwen38-flash-next-h200-tp1
+model: {id: nvidia/Qwen3.8-Flash-Next-NVFP4, revision: fc694b54fb0174e0913e6adf86691ef85a4ead47, served_names: [qwen38-flash-next]}
+parallel: {tp: 1}
+hardware: [h200-141gb]
+vllm:
+  quantization: modelopt
+  max-model-len: 262144
+  max-num-seqs: 32
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 51539607552
+  enable-chunked-prefill: true
+  moe-backend: marlin
+  limit-mm-per-prompt: {image: 0, video: 0}
+  mamba-cache-mode: align
+  # Engram tables in pinned host memory, carried by the CRIU dump (as for DeepSeek-V4.1).
+  engram-config: {cpu_offload: true, dp_shared_memory: false, use_thp: false}
+  speculative-config: {method: mtp, num_speculative_tokens: 3}
+  reasoning-parser: qwen3
+  enable-auto-tool-choice: true
+  tool-call-parser: qwen3_coder
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+# Marlin experts are not bitwise repeatable: the canary compares within a tolerance and warns.
+canary: {mode: warn, tolerance: 1.0e-3}
+resources: {memory: 150GiB}
