@@ -1,0 +1,29 @@
+# qwen38-27b on 1×H200, serving release (hybrid dense, Qwen's block FP8): the full native
+# 262 144 context, 64 sequences, 80 GiB of KV cache and Mamba state (16 of 64 layers keep
+# KV, 64 KiB/token: ~1.3 M tokens), MTP with 3 draft tokens as in the vLLM recipe, qwen3
+# reasoning and qwen3_coder tool calls. Thinking stays on (the model's default); sampling
+# comes from generation_config.json (T 1.0, top-p 0.95, top-k 20), the card's thinking values.
+schema: warmctl.profile/v1
+id: qwen38-27b-h200-mtp
+model: {id: Qwen/Qwen3.8-27B-FP8, revision: 017b9c7af6b5689d5dd426a76e0bc077eb5ca20a, served_names: [qwen38-27b]}
+parallel: {tp: 1}
+hardware: [h200-141gb]
+vllm:
+  max-model-len: 262144
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 85899345920
+  enable-chunked-prefill: true
+  limit-mm-per-prompt: {image: 0, video: 0}
+  mamba-cache-mode: align
+  speculative-config: {method: mtp, num_speculative_tokens: 3}
+  reasoning-parser: qwen3
+  enable-auto-tool-choice: true
+  tool-call-parser: qwen3_coder
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 128GiB}

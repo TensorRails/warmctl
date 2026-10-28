@@ -33,6 +33,11 @@ models:
     title: Gemma 4 31B
     license: Apache-2.0
     description: Dense, one large GPU.
+  - name: qwen38-flash-next
+    title: Qwen3.8-Flash-Next NVFP4
+    license: NVIDIA Open Model License + Qwen Community License 1.0
+    gated: true
+    description: Qwen's 180B-A6B hybrid MoE in NVIDIA's NVFP4, MTP; 1×H200 (Marlin experts, n-gram table in host memory), 256K context.
   - name: qwen38-27b
     title: Qwen3.8-27B FP8
     license: Apache-2.0
