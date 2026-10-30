@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.14 — 2026-10-30
 
 Restore
 
@@ -67,8 +67,9 @@ Profiles
   expert parallel as the vLLM recipe lays it out (plain TP does not fit the
   checkpoint's 128-wide FP8 blocks), FP8 KV cache and indexer keys, MTP with
   3 draft tokens, the native 262 144 context, FlashInfer's PCIe IPC
-  all-reduce (no NVLink on these cards). On 4×: vLLM starts in 388 s, `up`
-  serves in 34 s.
+  all-reduce (no NVLink on these cards). With a warm page cache `up` serves
+  in 34 s on 4× (vLLM starts in 388 s) and in 38 s on 8× (757 s, most of it
+  FlashInfer autotuning the PCIe all-reduce, which the snapshot keeps).
 
 ## v2.0.0-beta.13 — 2026-10-25
 

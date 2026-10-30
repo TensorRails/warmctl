@@ -6,6 +6,9 @@
 # The PLE n-gram table stays in pinned host memory (vLLM's default engram
 # offload, carried by the CRIU dump). All-reduce over PCIe uses FlashInfer's
 # PCIe IPC kernels; the adapter detaches and rebuilds them around a checkpoint.
+# Measured (driver 580.173.02): vLLM cold start 757 s (8 of them minutes of
+# FlashInfer autotuning the PCIe all-reduce, which the snapshot keeps), build
+# 1037 s, snapshot 294 GiB (weights 146.6 GiB), up 37.7 s with a warm cache.
 schema: warmctl.profile/v1
 id: qwen38-flash-next-rtx6000-tep8
 model: {id: Qwen/Qwen3.8-Flash-Next-FP8, revision: 236dfdf285828023ca3bcd3f37366c58a3469b13, served_names: [qwen38-flash-next]}
