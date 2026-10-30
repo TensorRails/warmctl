@@ -126,6 +126,10 @@ class AsyncFakeDevice(FakeDevice):
             op = self.queues[stream].pop(0)
             if op[0] == 'copy':
                 self.to_device(*op[1:])
+            elif op[0] == 'sum':
+                _, totals, row, ptr, n, position = op
+                got = pool.reference_sum(self.memory[ptr - self.base:ptr - self.base + n], position)
+                totals[row] = [a + b for a, b in zip(totals[row], got)]
             elif op[1] == until:
                 return
 
@@ -137,6 +141,21 @@ class AsyncFakeDevice(FakeDevice):
 
     def destroy(self, handle):
         self.handles.remove(handle)
+
+    # Fingerprints as the data lands: summed from device memory when the
+    # stream gets to them, like a kernel queued behind the copy.
+    def totals(self, rows):
+        return [[0, 0, 0] for _ in range(rows)]
+
+    def accumulate(self, totals, row, ptr, n, position, stream):
+        self.queues[stream].append(('sum', totals, row, ptr, n, position))
+
+    def collect(self, tables, rows):
+        out = [[0, 0, 0] for _ in range(rows)]
+        for table in tables:
+            for i, row in enumerate(table):
+                out[i] = [a + b for a, b in zip(out[i], row)]
+        return out
 
 
 class PipelinedReloadTest(unittest.TestCase):
@@ -171,6 +190,26 @@ class PipelinedReloadTest(unittest.TestCase):
             self.assertFalse(self.device.registered)
             self.assertFalse(self.device.handles)
             self.assertGreater(stats.read, 0)
+
+    def test_fingerprints_as_the_data_lands(self):
+        with tempfile.TemporaryDirectory() as root:
+            allocations, written, before = self._snapshot(root)
+            stats = transfer.Stats()
+            # Parts of 4096 bytes in chunks of 333: allocations span parts, and
+            # parts go to different lanes, so the tables must add up.
+            transfer.reload(self.device, allocations, written, root, threads=3, slot_bytes=333, stats=stats)
+            self.assertEqual(bytes(self.device.memory), before)
+            starts, _ = pool.part_starts(written)
+            want = [pool.reference_sum(before[int(a['ptr'], 16) - self.base:int(a['ptr'], 16) - self.base + a['bytes']],
+                                       pool.stream_start(a, starts)) for a in allocations]
+            self.assertEqual(stats.sums, want)
+            os.environ['WARMCTL_POOL_FUSED'] = '0'
+            try:
+                stats = transfer.Stats()
+                transfer.reload(self.device, allocations, written, root, threads=3, slot_bytes=333, stats=stats)
+                self.assertIsNone(stats.sums)
+            finally:
+                del os.environ['WARMCTL_POOL_FUSED']
 
     def test_switch_off(self):
         with tempfile.TemporaryDirectory() as root:

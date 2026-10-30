@@ -10,6 +10,10 @@ A `device` object does the CUDA work (device.py; a fake in the tests):
     stream(), event()           a non-blocking stream of the calling thread, an event
     to_device_async(dev_ptr, host_ptr, n, stream), record(event, stream)
     wait(event), drain(stream), destroy(handle)
+  and, to fingerprint as the data lands (WARMCTL_POOL_FUSED=0 turns it off):
+    totals(rows)                a zeroed fingerprint table on the GPU
+    accumulate(totals, row, ptr, n, position, stream)   add a region's fingerprint
+    collect(tables, rows)       the tables' sum, after every stream drained
 
 Host staging is anonymous mmap registered with the driver, one slot per
 thread, released when done: after an export no byte of the weights stays in
@@ -42,6 +46,11 @@ def pipelined(device):
     return hasattr(device, 'to_device_async') and os.environ.get('WARMCTL_POOL_ASYNC', '1') != '0'
 
 
+def fused(device):
+    """Whether a pipelined reload fingerprints each chunk as it lands."""
+    return hasattr(device, 'accumulate') and os.environ.get('WARMCTL_POOL_FUSED', '1') != '0'
+
+
 class Stats:
     """Seconds a reload spent, summed over its threads: reading part files
     into slots, and waiting for copies (a slot to come back, or the stream
@@ -50,6 +59,8 @@ class Stats:
     def __init__(self):
         self.lock = threading.Lock()
         self.read = self.copy = 0.0
+        # Set by a fused reload: every allocation's fingerprint, in order.
+        self.sums = None
 
     def add(self, read, copy):
         with self.lock:
@@ -175,15 +186,17 @@ class Lane:
     thread: a slot is filled while the other one's copy is in flight, and
     refilled only after its event fired."""
 
-    def __init__(self, device, size):
+    def __init__(self, device, size, rows=0):
         self.device, self.size = device, size
         self.slots, self.events, self.pending = [], [], [False, False]
-        self.stream = None
+        self.stream = self.totals = None
         try:
             self.stream = device.stream()
             for _ in range(2):
                 self.slots.append(Slot(device, size))
                 self.events.append(device.event())
+            if rows:
+                self.totals = device.totals(rows)
         except BaseException:
             self.close()
             raise
@@ -205,6 +218,11 @@ class Lane:
         self.device.to_device_async(target, slot.ptr, n, self.stream)
         self.device.record(self.events[i], self.stream)
         self.pending[i] = True
+
+    def land(self, row, target, n, position):
+        """Queue the fingerprint of the n bytes just copied to target behind
+        the copy on this lane's stream: it reads them from device memory."""
+        self.device.accumulate(self.totals, row, target, n, position, self.stream)
 
     def drain(self):
         """Wait for every queued copy: the reload is done only once its
@@ -231,9 +249,11 @@ class Lane:
             self.slots, self.events = [], []
 
 
-def _pipelined(device, threads, slot_bytes, jobs, stats):
+def _pipelined(device, threads, slot_bytes, jobs, stats, rows=0):
     """Run job(lane) for every job on threads that each own a lane; the
-    results come back in job order."""
+    results come back in job order. With rows, each lane has a fingerprint
+    table and stats.sums gets their sum."""
+    tables = []
     work = queue.Queue()
     for item in enumerate(jobs):
         work.put(item)
@@ -242,7 +262,10 @@ def _pipelined(device, threads, slot_bytes, jobs, stats):
 
     def runner():
         device.bind()
-        lane = Lane(device, slot_bytes)
+        lane = Lane(device, slot_bytes, rows)
+        if lane.totals is not None:
+            with stats.lock:
+                tables.append(lane.totals)
         try:
             while not failed.is_set():
                 try:
@@ -266,6 +289,8 @@ def _pipelined(device, threads, slot_bytes, jobs, stats):
         futures = [executor.submit(runner) for _ in range(max(1, min(threads, len(jobs))))]
     for future in futures:
         future.result()
+    if rows:
+        stats.sums = device.collect(tables, rows)
     return results
 
 
@@ -276,8 +301,11 @@ def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SL
     SHA-256 checked against the record. stats, a Stats, collects where the
     threads spent their time."""
     layout = pool.pieces(allocations, parts)
+    starts, _ = pool.part_starts(parts)
     stats = stats if stats is not None else Stats()
     if pipeline and not verify and pipelined(device):
+        fuse = fused(device)
+
         def lane_job(index):
             def work(lane):
                 part = parts[index]
@@ -285,11 +313,15 @@ def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SL
                     for allocation, inner, offset, length in layout[index]:
                         target = int(allocations[allocation]['ptr'], 16) + inner
                         for done in range(0, length, lane.size):
-                            lane.fill(target + done, f, offset + done, min(lane.size, length - done))
+                            n = min(lane.size, length - done)
+                            lane.fill(target + done, f, offset + done, n)
+                            if fuse:
+                                lane.land(allocation, target + done, n, starts[index] + offset + done)
                 return part['size']
             return work
 
-        return sum(_pipelined(device, threads, slot_bytes, [lane_job(part['index']) for part in parts], stats))
+        jobs = [lane_job(part['index']) for part in parts]
+        return sum(_pipelined(device, threads, slot_bytes, jobs, stats, len(allocations) if fuse else 0))
 
     def job(index):
         def work(slot):

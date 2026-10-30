@@ -277,4 +277,8 @@ func TestReloadSummary(t *testing.T) {
 	if got := reloadSummary(split); got != want {
 		t.Fatalf("%q", got)
 	}
+	split[1].Fused = true
+	if got := reloadSummary(split); !strings.Contains(got, "pipelined, fingerprinted as it landed, 4 threads") {
+		t.Fatalf("%q", got)
+	}
 }

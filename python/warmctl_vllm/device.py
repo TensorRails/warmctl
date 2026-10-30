@@ -112,6 +112,24 @@ class CudaDevice:
     def synchronize(self):
         self.torch.cuda.synchronize(self.device)
 
+    def _add_region(self, totals, ptr, nbytes, position):
+        """Add the fingerprint of nbytes at ptr, starting at stream position,
+        to the 3-element int64 tensor totals, on the current stream: the one
+        computation sums and accumulate share."""
+        torch = self.torch
+        if not nbytes:
+            return
+        view = torch.as_tensor(_CudaArray(ptr, nbytes), device=self.device)
+        for start in range(0, nbytes, BLOCK_BYTES):
+            n = min(BLOCK_BYTES, nbytes - start)
+            block = view.narrow(0, start, n).to(torch.int64)
+            weight = torch.arange(position + start, position + start + n, device=self.device,
+                                  dtype=torch.int64).remainder_(251).add_(1)
+            totals[0] += block.sum()
+            totals[1] += block.square().sum()
+            totals[2] += block.mul_(weight).sum()
+            del block, weight
+
     def sums(self, regions):
         """Fingerprints of (ptr, nbytes, stream position) regions, computed on
         the GPU in blocks; equal to pool.reference_sum."""
@@ -121,17 +139,7 @@ class CudaDevice:
         with torch.cuda.device(self.device), torch.inference_mode():
             for ptr, nbytes, position in regions:
                 totals = torch.zeros(3, dtype=torch.int64, device=self.device)
-                if nbytes:
-                    view = torch.as_tensor(_CudaArray(ptr, nbytes), device=self.device)
-                    for start in range(0, nbytes, BLOCK_BYTES):
-                        n = min(BLOCK_BYTES, nbytes - start)
-                        block = view.narrow(0, start, n).to(torch.int64)
-                        weight = torch.arange(position + start, position + start + n, device=self.device,
-                                              dtype=torch.int64).remainder_(251).add_(1)
-                        totals[0] += block.sum()
-                        totals[1] += block.square().sum()
-                        totals[2] += block.mul_(weight).sum()
-                        del block, weight
+                self._add_region(totals, ptr, nbytes, position)
                 out.append(totals)
             if not out:
                 return []
@@ -139,5 +147,30 @@ class CudaDevice:
         # Hand the temporaries back: a restore wakes the KV cache next and
         # needs that memory free.
         del out
+        torch.cuda.empty_cache()
+        return result
+
+    # Fingerprints as the data lands: a pipelined reload queues accumulate on
+    # its lane's stream right after each copy, into a table of its own (an
+    # allocation can span parts that different lanes copy), and collect adds
+    # the tables once every lane has drained.
+    def totals(self, rows):
+        return self.torch.zeros((rows, 3), dtype=self.torch.int64, device=self.device)
+
+    def accumulate(self, totals, row, ptr, nbytes, position, stream):
+        torch = self.torch
+        queue = torch.cuda.ExternalStream(stream[1].value, device=self.device)
+        with torch.cuda.device(self.device), torch.cuda.stream(queue), torch.inference_mode():
+            self._add_region(totals[row], ptr, nbytes, position)
+
+    def collect(self, tables, rows):
+        torch = self.torch
+        self.synchronize()
+        with torch.cuda.device(self.device), torch.inference_mode():
+            total = torch.zeros((rows, 3), dtype=torch.int64, device=self.device)
+            for table in tables:
+                total += table
+            result = [[int(v) for v in row] for row in total.cpu().tolist()]
+        del total, tables
         torch.cuda.empty_cache()
         return result

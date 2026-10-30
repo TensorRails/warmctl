@@ -101,9 +101,11 @@ class Extension:
         loaded = transfer.reload(device, record['allocations'], record['parts'], directory, threads, slot_bytes,
                                  verify, stats, pipeline=not sync)
         summed = time.monotonic()
-        starts, _ = pool.part_starts(record['parts'])
-        sums = device.sums([(int(a['ptr'], 16), a['bytes'], pool.stream_start(a, starts))
-                            for a in record['allocations']])
+        sums = stats.sums
+        if sums is None:
+            starts, _ = pool.part_starts(record['parts'])
+            sums = device.sums([(int(a['ptr'], 16), a['bytes'], pool.stream_start(a, starts))
+                                for a in record['allocations']])
         done = time.monotonic()
         bad = pool.compare([a['sum'] for a in record['allocations']], sums)
         require(not bad, 'weights fingerprint differs in %d allocations, first %s'
@@ -111,7 +113,8 @@ class Extension:
         return {'rank': rank, 'bytes': loaded, 'allocations': len(sums), 'seconds': done - started,
                 'reload_seconds': summed - copied, 'fingerprint_seconds': done - summed,
                 'read_seconds': stats.read, 'copy_seconds': stats.copy, 'threads': threads,
-                'pipelined': not verify and not sync and transfer.pipelined(device)}
+                'pipelined': not verify and not sync and transfer.pipelined(device),
+                'fused': stats.sums is not None}
 
     def _warmctl_rank(self):
         from vllm.distributed import parallel_state

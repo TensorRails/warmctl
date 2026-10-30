@@ -74,6 +74,9 @@ type Reloaded struct {
 	Copy        float64 `json:"copy_seconds"`
 	Threads     int     `json:"threads"`
 	Pipelined   bool    `json:"pipelined"`
+	// Fused: the fingerprint was computed as each chunk landed, so
+	// Fingerprint is only the final sum and compare.
+	Fused bool `json:"fused"`
 }
 
 func byRank[T any](rows []T, rank func(T) int, ranks int) ([]T, error) {
