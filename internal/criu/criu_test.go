@@ -7,10 +7,18 @@ import (
 )
 
 func TestArgs(t *testing.T) {
-	dump := strings.Join(DumpArgs(32768, "/state/images", "/state/work"), " ")
+	dump := strings.Join(DumpArgs(32768, "/state/images", "/state/work", false), " ")
 	want := "dump -v4 --tree 32768 --images-dir /state/images --work-dir /state/work --log-file /state/work/dump.log --shell-job --file-locks --ext-unix-sk --tcp-established --link-remap --ghost-limit 67108864 -L /state/work/plugins"
 	if dump != want {
 		t.Fatalf("dump argv\n got %s\nwant %s", dump, want)
+	}
+	if got := strings.Join(DumpArgs(32768, "/i", "/w", true), " "); !strings.HasSuffix(got, " -L /w/plugins --network-lock skip") {
+		t.Fatalf("dump argv with skip: %s", got)
+	}
+	for v, want := range map[string]bool{"4.2.1": true, "4.3": true, " 5.0\n": true, "3.19": false, "3.17.1": false, "": false, "dev": false} {
+		if SkipsNetworkLock(v) != want {
+			t.Errorf("SkipsNetworkLock(%q) != %t", v, want)
+		}
 	}
 	restore := strings.Join(RestoreArgs("/capture/images", "/state/work"), " ")
 	want = "restore -v4 --images-dir /capture/images --restore-detached --leave-stopped --work-dir /state/work --pidfile /state/work/root.pid --log-file /state/work/restore.log --shell-job --file-locks --ext-unix-sk --tcp-established --link-remap -L /state/work/plugins"
