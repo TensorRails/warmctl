@@ -1,0 +1,27 @@
+# Eight engine replicas of Qwen3-8B, one per GPU, on 8×H200, 8×B300 or 8×RTX
+# PRO 6000: the process tree of a dense data-parallel engine (API servers, an
+# engine core and a worker per replica: 26 processes holding CUDA state) with
+# small weights. The acceptance lane for data parallelism without experts and
+# for the CUDA restore's per-process cost (tests/acceptance/gpu/cuda-ab.sh).
+schema: warmctl.profile/v1
+id: qwen3-8b-dp8
+model: {id: Qwen/Qwen3-8B, revision: b968826d9c46dd6066d109eabc6255188de91218, served_names: [qwen3-8b]}
+parallel: {tp: 1, dp: 8}
+hardware: [h200-141gb, b300-275gb, b300ac-275gb, rtx-pro-6000-96gb]
+vllm:
+  max-model-len: 32768
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 8589934592
+  # The KV cache is sized above; the utilization only gates startup, where
+  # every replica of a dense model also holds a context on GPU 0 (vLLM
+  # initialises each replica's single-rank world there), ~3.6 GiB each.
+  gpu-memory-utilization: 0.6
+  enable-chunked-prefill: true
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 512GiB}

@@ -45,6 +45,21 @@ Restore
   with eight ranks reading at once: 8 threads per rank made the copy 3.8 s
   and 16 threads 6.9 s, so 4 stays the default.
 
+Engine
+
+- Data-parallel engines of dense models build: the adapter numbers a
+  replica by vLLM's `data_parallel_index`. vLLM sets `data_parallel_rank` to
+  0 in every replica of a dense model (no expert parallelism, so the
+  replicas share no process group), and every replica answered as rank 0:
+  the build failed on its first RPC with `[Errno 17] File exists:
+  …/warmctl_describe-…/0.json`. MoE profiles with expert parallelism were not
+  affected; vLLM without the field keeps using `data_parallel_rank`.
+- Profile `qwen3-8b-dp8`: eight replicas of Qwen3-8B on 8×H200, 8×B300 or
+  8×RTX PRO 6000, the acceptance lane for dense data parallelism. It sets
+  `gpu-memory-utilization` 0.6: its KV cache is sized in bytes, and every
+  replica also holds a context of ~3.6 GiB on GPU 0, which made the 0.85
+  default fail replica 0's free-memory check at startup.
+
 ## v2.0.0-beta.13 — 2026-10-25
 
 Distribution
