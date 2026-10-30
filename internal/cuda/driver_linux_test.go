@@ -116,8 +116,8 @@ func TestDriverTooOld(t *testing.T) {
 		t.Fatal(b, why, err)
 	}
 	resetDriver(fakeLibcuda(t, "12090"))
-	if _, _, err := Select(BackendDriver, ""); err == nil {
-		t.Fatal("driver accepted a 12.9 libcuda")
+	if b, _, err := Select(BackendDriver, ""); err == nil || b != nil {
+		t.Fatal("driver accepted a 12.9 libcuda", b)
 	}
 	resetDriver(filepath.Join(t.TempDir(), "missing.so"))
 	if b, why, _ := Select(BackendAuto, "x"); b.Name() != BackendCLI || why == "" {
