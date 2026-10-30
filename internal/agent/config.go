@@ -44,7 +44,11 @@ type Config struct {
 	CRIU       string `json:"criu"`
 	// CUDACheckpoint is NVIDIA's cuda-checkpoint.
 	CUDACheckpoint string `json:"cuda_checkpoint"`
-	Trees          []Tree `json:"trees"`
+	// CUDABackend moves CUDA state through libcuda's checkpoint API in the
+	// agent (driver), cuda-checkpoint (cli), or the first that works here
+	// (auto, the default).
+	CUDABackend string `json:"cuda_backend,omitempty"`
+	Trees       []Tree `json:"trees"`
 	// Watch are paths the freeze step looks for among the tree's open
 	// files and mappings, so the host knows which mounts a restore needs.
 	Watch []string `json:"watch,omitempty"`
@@ -155,6 +159,7 @@ type (
 		Owners  []int              `json:"owners"`
 		Seconds float64            `json:"seconds"`
 		Phases  map[string]float64 `json:"phases,omitempty"`
+		Backend string             `json:"backend,omitempty"`
 	}
 	// FreezeResult is the stopped tree and how many of its open files and
 	// mappings sit under each watched path.

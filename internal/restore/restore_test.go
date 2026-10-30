@@ -116,9 +116,7 @@ func TestDeviceMapFollowsRanks(t *testing.T) {
 	if args, _ := r.cudaArgs(); len(args.Parallel) != 2 || !args.Concurrent {
 		t.Fatalf("parallel-all: parallel %v concurrent %t", args.Parallel, args.Concurrent)
 	}
-	r.m.Process.CollectivesDetached = true
 	r.o.CUDAExecution = "auto"
-	r.m.Process.CollectivesDetached = false
 	if args, _ := r.cudaArgs(); len(args.Parallel) != 0 || args.Concurrent {
 		t.Fatal("linked collectives ran workers in parallel")
 	}
