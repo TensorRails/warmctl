@@ -9,6 +9,13 @@ Restore
   Qwen3.8-Flash-Next 4×RTX PRO 6000 (135 GiB) the weights phase went from
   4.3 s to 3.0 s with a warm page cache. `WARMCTL_POOL_FUSED=0` in the engine
   keeps the separate pass.
+- Snapshots record CRIU's network-lock method `skip` (CRIU 4 and later). With
+  the default, iptables, restore ran `iptables -D` once per TCP connection
+  against rules that existed only in the donor's network namespace, and
+  every run failed: 280 of them, 0.8–1.7 s, for Qwen3.8-Flash-Next TEP4.
+  Every TCP connection of the engine joins two processes of the frozen tree
+  over the container's loopback, so the lock guarded nothing. Snapshots
+  built before keep their method.
 
 ## v2.0.0-beta.14 — 2026-10-30
 
