@@ -5,13 +5,19 @@ A `device` object does the CUDA work (device.py; a fake in the tests):
     register(ptr, n)            page-lock host memory for DMA
     unregister(ptr)
     to_host(host_ptr, dev_ptr, n), to_device(dev_ptr, host_ptr, n)   synchronous copies
+  and, when it can pipeline a reload (device.py does; WARMCTL_POOL_ASYNC=0
+  turns it off):
+    stream(), event()           a non-blocking stream of the calling thread, an event
+    to_device_async(dev_ptr, host_ptr, n, stream), record(event, stream)
+    wait(event), drain(stream), destroy(handle)
 
 Host staging is anonymous mmap registered with the driver, one slot per
 thread, released when done: after an export no byte of the weights stays in
 the process's anonymous memory, so the CRIU dump does not carry them.
 Threads work part by part; the copy, the SHA-256 and the file I/O of one
 part overlap with those of the others (ctypes, hashlib and os all release
-the GIL).
+the GIL). A pipelined reload gives each thread two slots and a stream: it
+reads chunk k+1 from the part file while chunk k is copied to the GPU.
 """
 from __future__ import annotations
 
@@ -20,6 +26,8 @@ import hashlib
 import mmap
 import os
 import queue
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import pool
@@ -27,6 +35,26 @@ from .primitives import require
 
 SLOT_BYTES = 64 << 20
 THREADS = 4
+
+
+def pipelined(device):
+    """Whether a reload overlaps reads and copies on this device."""
+    return hasattr(device, 'to_device_async') and os.environ.get('WARMCTL_POOL_ASYNC', '1') != '0'
+
+
+class Stats:
+    """Seconds a reload spent, summed over its threads: reading part files
+    into slots, and waiting for copies (a slot to come back, or the stream
+    to drain at the end of a part)."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.read = self.copy = 0.0
+
+    def add(self, read, copy):
+        with self.lock:
+            self.read += read
+            self.copy += copy
 
 
 class Slot:
@@ -142,10 +170,126 @@ def export(device, allocations, parts, directory, rank, threads=THREADS, slot_by
     return _parallel(device, threads, slot_bytes, [job(part['index']) for part in parts])
 
 
-def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SLOT_BYTES, verify=False):
-    """Copy every listed allocation back from the part files. With verify,
-    each part is read whole and its SHA-256 checked against the record."""
+class Lane:
+    """Two page-locked slots, an event each and one stream, owned by one
+    thread: a slot is filled while the other one's copy is in flight, and
+    refilled only after its event fired."""
+
+    def __init__(self, device, size):
+        self.device, self.size = device, size
+        self.slots, self.events, self.pending = [], [], [False, False]
+        self.stream = None
+        try:
+            self.stream = device.stream()
+            for _ in range(2):
+                self.slots.append(Slot(device, size))
+                self.events.append(device.event())
+        except BaseException:
+            self.close()
+            raise
+        self.turn = 0
+        self.read = self.copy = 0.0
+
+    def fill(self, target, f, offset, n):
+        """Read n bytes at offset of f into the next slot and queue its copy
+        to target."""
+        i, self.turn = self.turn, self.turn ^ 1
+        if self.pending[i]:
+            started = time.monotonic()
+            self.device.wait(self.events[i])
+            self.copy += time.monotonic() - started
+        slot = self.slots[i]
+        started = time.monotonic()
+        _read_exact(f, offset, slot.view[:n])
+        self.read += time.monotonic() - started
+        self.device.to_device_async(target, slot.ptr, n, self.stream)
+        self.device.record(self.events[i], self.stream)
+        self.pending[i] = True
+
+    def drain(self):
+        """Wait for every queued copy: the reload is done only once its
+        bytes are on the GPU."""
+        started = time.monotonic()
+        self.device.drain(self.stream)
+        self.copy += time.monotonic() - started
+        self.pending = [False, False]
+
+    def close(self):
+        # Copies still in flight read the slots: drain before unpinning.
+        try:
+            if self.stream is not None:
+                try:
+                    self.device.drain(self.stream)
+                finally:
+                    for event in self.events:
+                        self.device.destroy(event)
+                    self.device.destroy(self.stream)
+                    self.stream = None
+        finally:
+            for slot in self.slots:
+                slot.close()
+            self.slots, self.events = [], []
+
+
+def _pipelined(device, threads, slot_bytes, jobs, stats):
+    """Run job(lane) for every job on threads that each own a lane; the
+    results come back in job order."""
+    work = queue.Queue()
+    for item in enumerate(jobs):
+        work.put(item)
+    results = [None] * len(jobs)
+    failed = threading.Event()
+
+    def runner():
+        device.bind()
+        lane = Lane(device, slot_bytes)
+        try:
+            while not failed.is_set():
+                try:
+                    index, job = work.get_nowait()
+                except queue.Empty:
+                    # The next part's reads overlap this part's last copies;
+                    # the lane drains once, when the queue is empty.
+                    lane.drain()
+                    return
+                results[index] = job(lane)
+        except BaseException:
+            failed.set()
+            raise
+        finally:
+            try:
+                lane.close()
+            finally:
+                stats.add(lane.read, lane.copy)
+
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = [executor.submit(runner) for _ in range(max(1, min(threads, len(jobs))))]
+    for future in futures:
+        future.result()
+    return results
+
+
+def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SLOT_BYTES, verify=False, stats=None,
+           pipeline=True):
+    """Copy every listed allocation back from the part files; return the
+    bytes of the parts read. With verify, each part is read whole and its
+    SHA-256 checked against the record. stats, a Stats, collects where the
+    threads spent their time."""
     layout = pool.pieces(allocations, parts)
+    stats = stats if stats is not None else Stats()
+    if pipeline and not verify and pipelined(device):
+        def lane_job(index):
+            def work(lane):
+                part = parts[index]
+                with open(os.path.join(directory, part['path']), 'rb', buffering=0) as f:
+                    for allocation, inner, offset, length in layout[index]:
+                        target = int(allocations[allocation]['ptr'], 16) + inner
+                        for done in range(0, length, lane.size):
+                            lane.fill(target + done, f, offset + done, min(lane.size, length - done))
+                return part['size']
+            return work
+
+        return sum(_pipelined(device, threads, slot_bytes, [lane_job(part['index']) for part in parts], stats))
 
     def job(index):
         def work(slot):
@@ -154,20 +298,25 @@ def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SL
                 if verify:
                     _reload_verified(device, slot, f, part, layout[index], allocations)
                 else:
-                    _reload_ranges(device, slot, f, layout[index], allocations)
+                    _reload_ranges(device, slot, f, layout[index], allocations, stats)
             return part['size']
         return work
 
     return sum(_parallel(device, threads, slot_bytes, [job(part['index']) for part in parts]))
 
 
-def _reload_ranges(device, slot, f, layout, allocations):
+def _reload_ranges(device, slot, f, layout, allocations, stats):
+    read = copy = 0.0
     for allocation, inner, offset, length in layout:
         target = int(allocations[allocation]['ptr'], 16) + inner
         for done in range(0, length, slot.size):
             n = min(slot.size, length - done)
+            started = time.monotonic()
             _read_exact(f, offset + done, slot.view[:n])
+            middle = time.monotonic()
             device.to_device(target + done, slot.ptr, n)
+            read, copy = read + middle - started, copy + time.monotonic() - middle
+    stats.add(read, copy)
 
 
 def _reload_verified(device, slot, f, part, layout, allocations):

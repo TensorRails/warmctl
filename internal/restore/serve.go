@@ -40,17 +40,12 @@ func (r *restore) wake(ctx context.Context) error {
 	if threads == 0 {
 		threads = 4
 	}
-	reloaded, err := e.ReloadPool(ctx, r.manifestPath(), r.guest().capture, threads, r.o.VerifyWeights)
+	reloaded, err := e.ReloadPool(ctx, r.manifestPath(), r.guest().capture, threads, r.o.VerifyWeights,
+		r.o.SyncWeights)
 	if err != nil {
 		return err
 	}
-	var bytes int64
-	slowest := 0.0
-	for _, x := range reloaded {
-		bytes += x.Bytes
-		slowest = max(slowest, x.Seconds)
-	}
-	r.p.Printf("weights reloaded and fingerprints match: %.2f GiB, slowest rank %.1fs", float64(bytes)/(1<<30), slowest)
+	r.p.Printf("weights reloaded and fingerprints match: %s", reloadSummary(reloaded))
 	if r.pf != nil {
 		r.p.Printf("prefetch: %s", r.pf)
 	}
@@ -178,4 +173,29 @@ func (r *restore) servePod(ctx context.Context, exited <-chan error) error {
 		return fmt.Errorf("gateway: %w", r.o.Gate.err)
 	}
 	return r.o.Gate.Close()
+}
+
+// reloadSummary is the weights phase in one line: the bytes, the slowest
+// rank and, from adapters that split it, where that rank's time went.
+func reloadSummary(ranks []vllm.Reloaded) string {
+	var bytes int64
+	var slow vllm.Reloaded
+	for _, x := range ranks {
+		bytes += x.Bytes
+		if x.Seconds >= slow.Seconds {
+			slow = x
+		}
+	}
+	out := fmt.Sprintf("%.2f GiB, slowest rank %.1fs", float64(bytes)/(1<<30), slow.Seconds)
+	if slow.Reload == 0 && slow.Fingerprint == 0 {
+		return out
+	}
+	mode := "sync"
+	if slow.Pipelined {
+		mode = "pipelined"
+	}
+	gib := float64(slow.Bytes) / (1 << 30)
+	return out + fmt.Sprintf(" (rank %d: copy %.1fs at %.1f GiB/s, %s, %d threads spent read %.1fs and copy wait %.1fs; "+
+		"fingerprint %.1fs)", slow.Rank, slow.Reload, gib/max(slow.Reload, 1e-9), mode, slow.Threads, slow.Read,
+		slow.Copy, slow.Fingerprint)
 }

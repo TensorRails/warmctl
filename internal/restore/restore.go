@@ -35,8 +35,11 @@ type Options struct {
 	CUDACheckpoint string
 	NoVerify       bool
 	VerifyWeights  bool
-	Threads        int
-	CPUTest        bool
+	// SyncWeights reloads the weights with synchronous copies instead of
+	// the pipelined ones.
+	SyncWeights bool
+	Threads     int
+	CPUTest     bool
 	// Serve keeps the engine serving until ctx ends; otherwise Run returns
 	// once serving started and leaves the receiver running.
 	Serve bool
