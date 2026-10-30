@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Restore
+
+- The weights reload fingerprints each chunk as it lands, on the copy's
+  stream, instead of in a pass over the whole pool afterwards (#38). On
+  Qwen3.8-Flash-Next 4×RTX PRO 6000 (135 GiB) the weights phase went from
+  4.3 s to 3.0 s with a warm page cache. `WARMCTL_POOL_FUSED=0` in the engine
+  keeps the separate pass.
+
 ## v2.0.0-beta.14 — 2026-10-30
 
 Restore
