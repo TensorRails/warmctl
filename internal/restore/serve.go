@@ -194,6 +194,9 @@ func reloadSummary(ranks []vllm.Reloaded) string {
 	if slow.Pipelined {
 		mode = "pipelined"
 	}
+	if slow.Fused {
+		mode += ", fingerprinted as it landed"
+	}
 	gib := float64(slow.Bytes) / (1 << 30)
 	return out + fmt.Sprintf(" (rank %d: copy %.1fs at %.1f GiB/s, %s, %d threads spent read %.1fs and copy wait %.1fs; "+
 		"fingerprint %.1fs)", slow.Rank, slow.Reload, gib/max(slow.Reload, 1e-9), mode, slow.Threads, slow.Read,
