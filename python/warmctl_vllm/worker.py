@@ -13,7 +13,6 @@ from . import pool, protocol, transfer
 from .primitives import require
 
 
-
 def replica(config):
     """The data-parallel replica of a worker. vLLM sets data_parallel_rank to
     0 in every replica of a dense model (no expert parallelism: the replicas
