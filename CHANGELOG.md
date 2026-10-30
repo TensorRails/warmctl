@@ -60,6 +60,16 @@ Engine
   replica also holds a context of ~3.6 GiB on GPU 0, which made the 0.85
   default fail replica 0's free-memory check at startup.
 
+Profiles
+
+- `qwen38-flash-next-rtx6000-tep4` and `-tep8`: Qwen3.8-Flash-Next (Qwen's
+  FP8 release of the 180B-A6B hybrid MoE) on 4× and 8×RTX PRO 6000, tensor and
+  expert parallel as the vLLM recipe lays it out (plain TP does not fit the
+  checkpoint's 128-wide FP8 blocks), FP8 KV cache and indexer keys, MTP with
+  3 draft tokens, the native 262 144 context, FlashInfer's PCIe IPC
+  all-reduce (no NVLink on these cards). On 4×: vLLM starts in 388 s, `up`
+  serves in 34 s.
+
 ## v2.0.0-beta.13 — 2026-10-25
 
 Distribution

@@ -1,0 +1,42 @@
+# qwen38-flash-next on 4×RTX PRO 6000 Blackwell Server Edition (PCIe, no NVLink):
+# Qwen's FP8 release of the 180B-A6B hybrid MoE, tensor and expert parallel over
+# the 4 GPUs (TEP4, the vLLM recipe's layout: plain TP4 does not fit the
+# checkpoint's 128-wide FP8 blocks). FP8 KV cache and indexer keys, MTP with 3
+# draft tokens, the qwen3 / qwen3_coder parsers, the native 262 144 context.
+# The PLE n-gram table stays in pinned host memory (vLLM's default engram
+# offload, carried by the CRIU dump). All-reduce over PCIe uses FlashInfer's
+# PCIe IPC kernels; the adapter detaches and rebuilds them around a checkpoint.
+# Measured (driver 580.173.02): vLLM cold start 388 s, build 612 s, snapshot
+# 241.5 GiB (weights 135 GiB), up 34 s with a warm page cache, 72 GiB per GPU.
+schema: warmctl.profile/v1
+id: qwen38-flash-next-rtx6000-tep4
+model: {id: Qwen/Qwen3.8-Flash-Next-FP8, revision: 236dfdf285828023ca3bcd3f37366c58a3469b13, served_names: [qwen38-flash-next]}
+parallel: {tp: 4, ep: true}
+hardware: [rtx-pro-6000-96gb]
+vllm:
+  max-model-len: 262144
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 34359738368
+  kv-cache-dtype: fp8
+  attention-config: {indexer_kv_dtype: fp8}
+  enable-chunked-prefill: true
+  enable-prefix-caching: true
+  limit-mm-per-prompt: {image: 0, video: 0}
+  mamba-cache-mode: align
+  engram-config: {cpu_offload: true, dp_shared_memory: false, use_thp: false}
+  speculative-config: {method: mtp, num_speculative_tokens: 3}
+  reasoning-parser: qwen3
+  enable-auto-tool-choice: true
+  tool-call-parser: qwen3_coder
+  disable-custom-all-reduce: null
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+  fuse_allreduce_rms: true
+env:
+  VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC: "1"
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+resources: {memory: 256GiB}
