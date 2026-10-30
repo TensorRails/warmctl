@@ -8,9 +8,10 @@
 # on the GPU it is part of the weights pool, reloaded with them. All-reduce
 # over PCIe uses FlashInfer's PCIe IPC kernels; the adapter detaches and
 # rebuilds them around a checkpoint.
-# Measured (driver 580.173.02): vLLM cold start 757 s (8 of them minutes of
-# FlashInfer autotuning the PCIe all-reduce, which the snapshot keeps), build
-# 1037 s, snapshot 294 GiB (weights 146.6 GiB), up 37.7 s with a warm cache.
+# Measured (driver 580.173.02): vLLM cold start 790 s (8 minutes of it
+# FlashInfer autotuning the PCIe all-reduce, which the snapshot keeps),
+# snapshot 282 GiB (weights 194 GiB, CRIU 82 GiB), up 29.4 s with a warm page
+# cache (37.7 s with the table in host memory).
 schema: warmctl.profile/v1
 id: qwen38-flash-next-rtx6000-tep8
 model: {id: Qwen/Qwen3.8-Flash-Next-FP8, revision: 236dfdf285828023ca3bcd3f37366c58a3469b13, served_names: [qwen38-flash-next]}
