@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeHelper keeps a state per PID like cuda-checkpoint does.
@@ -37,8 +38,9 @@ func (f *fakeHelper) run(_ context.Context, args ...string) (string, error) {
 
 func TestCheckpointRestore(t *testing.T) {
 	f := &fakeHelper{state: map[int]string{10: "running", 11: "running", 12: "running"}}
-	s := NewSession("/work/cuda-checkpoint", []int{10, 11, 12})
-	s.run = f.run
+	c := NewCLI("/work/cuda-checkpoint")
+	c.run = f.run
+	s := NewSession(c, []int{10, 11, 12})
 	if err := s.Checkpoint(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -76,13 +78,14 @@ func TestCheckpointRestore(t *testing.T) {
 
 func TestFailures(t *testing.T) {
 	f := &fakeHelper{state: map[int]string{10: "running", 11: "locked"}}
-	s := NewSession("x", []int{10, 11})
-	s.run = f.run
+	c := NewCLI("x")
+	c.run = f.run
+	s := NewSession(c, []int{10, 11})
 	if err := s.Checkpoint(context.Background()); err == nil || !strings.Contains(err.Error(), `11 is "locked"`) {
 		t.Fatalf("wrong state accepted: %v", err)
 	}
 	f = &fakeHelper{state: map[int]string{10: "checkpointed", 11: "checkpointed"}, fail: "--pid 11 --action restore"}
-	s.run, s.Parallel = f.run, []int{10, 11}
+	c.run, s.Parallel = f.run, []int{10, 11}
 	if err := s.Restore(context.Background(), "GPU-a=GPU-b"); err == nil {
 		t.Fatal("failed restore accepted")
 	}
@@ -91,5 +94,96 @@ func TestFailures(t *testing.T) {
 	}
 	if _, err := DeviceMap([]Pair{{"GPU-a", "GPU-x"}, {"GPU-a", "GPU-y"}}); err == nil {
 		t.Fatal("duplicate source accepted")
+	}
+}
+
+// overlapHelper records the most calls of each action in flight at once.
+type overlapHelper struct {
+	fakeHelper
+	inflight, peak map[string]int
+}
+
+func (o *overlapHelper) run(ctx context.Context, args ...string) (string, error) {
+	action := args[2]
+	if len(args) > 3 {
+		action = args[3]
+	}
+	if action == "restore" && args[1] < "13" {
+		action = "restore-first"
+	}
+	o.mu.Lock()
+	o.inflight[action]++
+	o.peak[action] = max(o.peak[action], o.inflight[action])
+	o.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	out, err := o.fakeHelper.run(ctx, args...)
+	o.mu.Lock()
+	o.inflight[action]--
+	o.mu.Unlock()
+	return out, err
+}
+
+func TestRestoreConcurrency(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		o := &overlapHelper{fakeHelper: fakeHelper{state: map[int]string{}}, inflight: map[string]int{}, peak: map[string]int{}}
+		for pid := 10; pid < 16; pid++ {
+			o.state[pid] = "checkpointed"
+		}
+		c := NewCLI("x")
+		c.run = o.run
+		s := NewSession(c, []int{10, 11, 12, 13, 14, 15})
+		s.Parallel, s.Concurrent = []int{13, 14, 15}, concurrent
+		if err := s.Restore(context.Background(), "GPU-a=GPU-b"); err != nil {
+			t.Fatal(err)
+		}
+		for pid, st := range o.state {
+			if st != "running" {
+				t.Fatalf("concurrent %t: %d is %q", concurrent, pid, st)
+			}
+		}
+		if o.peak["--get-state"] != 6 {
+			t.Errorf("state checks ran %d at a time, want 6", o.peak["--get-state"])
+		}
+		// The parallel owners overlap in both modes; the owners without a
+		// rank and the unlock only in the concurrent one. The serial ranks
+		// still finish before the parallel ones start.
+		first, all := map[bool]int{false: 1, true: 3}[concurrent], map[bool]int{false: 1, true: 6}[concurrent]
+		if o.peak["restore-first"] != first || o.peak["restore"] != 3 || o.peak["unlock"] != all {
+			t.Errorf("concurrent %t: peaks %v", concurrent, o.peak)
+		}
+		for _, k := range []string{"check", "restore_first", "restore_parallel", "unlock"} {
+			if s.Phases[k] <= 0 {
+				t.Errorf("concurrent %t: no %s phase in %v", concurrent, k, s.Phases)
+			}
+		}
+	}
+}
+
+func TestParseDeviceMap(t *testing.T) {
+	pairs, err := ParseDeviceMap("GPU-a=GPU-x,GPU-b=GPU-y")
+	if err != nil || len(pairs) != 2 || pairs[1] != (Pair{"GPU-b", "GPU-y"}) {
+		t.Fatal(pairs, err)
+	}
+	for _, bad := range []string{"", "GPU-a", "GPU-a=GPU-x,GPU-a=GPU-y", "a=b"} {
+		if _, err := ParseDeviceMap(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if b, err := uuidBytes("GPU-56ce119a-6848-3ae0-cf4f-8c1564626fc6"); err != nil || b[0] != 0x56 || b[15] != 0xc6 {
+		t.Fatal(b, err)
+	}
+	for _, bad := range []string{"56ce119a-6848-3ae0-cf4f-8c1564626fc6", "GPU-56ce", "GPU-zzce119a-6848-3ae0-cf4f-8c1564626fc6"} {
+		if _, err := uuidBytes(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestSelect(t *testing.T) {
+	if b, _, err := Select(BackendCLI, "/x/cuda-checkpoint"); err != nil || b.Name() != BackendCLI {
+		t.Fatal(b, err)
+	}
+	if _, _, err := Select("fast", ""); err == nil {
+		t.Fatal("unknown backend accepted")
 	}
 }

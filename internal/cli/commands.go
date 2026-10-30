@@ -36,9 +36,9 @@ func (l *list) String() string     { return strings.Join(*l, ",") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
 type common struct {
-	state, dockerSock, progress, criu, helper, scratch, cudaExec string
-	noVerify, cpuTest                                            bool
-	threads                                                      int
+	state, dockerSock, progress, criu, helper, scratch, cudaExec, cudaBackend string
+	noVerify, cpuTest                                                         bool
+	threads                                                                   int
 }
 
 func (c *common) register(fs *flag.FlagSet) {
@@ -47,8 +47,12 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.progress, "progress", "plain", "progress format: plain or jsonl")
 	fs.StringVar(&c.criu, "criu", "", "host CRIU binary to use instead of the image's")
 	fs.StringVar(&c.helper, "cuda-checkpoint", "", "host cuda-checkpoint to use instead of the image's")
+	fs.StringVar(&c.cudaBackend, "cuda-backend", "auto",
+		"how CUDA state moves: driver (libcuda's checkpoint API), cli (cuda-checkpoint), or auto (driver when usable)")
 	fs.StringVar(&c.scratch, "scratch", "", "accepted for compatibility")
-	fs.StringVar(&c.cudaExec, "cuda-execution", "auto", "CUDA restore: auto, serial or parallel")
+	fs.StringVar(&c.cudaExec, "cuda-execution", "auto",
+		"CUDA restore: auto (everything concurrent when no collective links the processes), serial, "+
+			"parallel (only the workers concurrent) or parallel-all")
 	fs.BoolVar(&c.noVerify, "no-verify", false, "canary only warns")
 	fs.IntVar(&c.threads, "threads", 0, "pool copy threads per rank (default 4)")
 	fs.BoolVar(&c.cpuTest, "test-cpu", false, "end-to-end test on a CPU host: no GPU devices, no io_uring check")
@@ -106,7 +110,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer, vers
 	o.ModelDir, _ = filepath.Abs(o.ModelDir)
 	o.Set, o.ProfileDirs, o.StateDir, o.DockerSocket = sets, dirs, c.state, c.dockerSock
 	o.CRIU, o.CUDACheckpoint, o.NoVerify, o.Threads, o.Version = c.criu, c.helper, c.noVerify, c.threads, version
-	o.CPUTest = c.cpuTest
+	o.CPUTest, o.CUDABackend = c.cpuTest, c.cudaBackend
 	o.Progress = run.NewProgress(stdout, c.progress)
 	m, err := snapshot.Run(ctx, o)
 	if err != nil {
@@ -163,6 +167,7 @@ func runUp(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	o.StateDir, o.DockerSocket, o.CUDAExecution, o.NoVerify = c.state, c.dockerSock, c.cudaExec, c.noVerify
 	o.CRIU, o.CUDACheckpoint, o.Threads, o.Serve, o.CPUTest = c.criu, c.helper, c.threads, true, c.cpuTest
+	o.CUDABackend = c.cudaBackend
 	if err := restore.Run(ctx, o); err != nil {
 		o.Progress.Printf("up failed: %v", err)
 		return err

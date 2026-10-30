@@ -315,12 +315,18 @@ func (a *agent) cudaCheckpoint(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	var name string
 	if len(owners) > 0 {
-		if err := cuda.NewSession(a.cfg.CUDACheckpoint, owners).Checkpoint(ctx); err != nil {
+		b, err := a.cudaBackend()
+		if err != nil {
 			return nil, err
 		}
+		if err := cuda.NewSession(b, owners).Checkpoint(ctx); err != nil {
+			return nil, err
+		}
+		name = b.Name()
 	}
-	return CUDAResult{Owners: owners, Seconds: time.Since(start).Seconds()}, nil
+	return CUDAResult{Owners: owners, Seconds: time.Since(start).Seconds(), Backend: name}, nil
 }
 
 // cudaRestore puts the owners' device memory back on this container's
@@ -333,14 +339,31 @@ func (a *agent) cudaRestore(ctx context.Context, raw json.RawMessage) (any, erro
 		}
 	}
 	start := time.Now()
+	var phases map[string]float64
+	var name string
 	if len(args.Owners) > 0 {
-		s := cuda.NewSession(a.cfg.CUDACheckpoint, args.Owners)
-		s.Parallel = args.Parallel
+		b, err := a.cudaBackend()
+		if err != nil {
+			return nil, err
+		}
+		s := cuda.NewSession(b, args.Owners)
+		s.Parallel, s.Concurrent = args.Parallel, args.Concurrent
 		if err := s.Restore(ctx, args.DeviceMap); err != nil {
 			return nil, err
 		}
+		phases, name = s.Phases, b.Name()
 	}
-	return CUDAResult{Owners: args.Owners, Seconds: time.Since(start).Seconds()}, nil
+	return CUDAResult{Owners: args.Owners, Seconds: time.Since(start).Seconds(), Phases: phases, Backend: name}, nil
+}
+
+// cudaBackend is the configured way to move CUDA state; auto says in the
+// log why it fell back to cuda-checkpoint.
+func (a *agent) cudaBackend() (cuda.Backend, error) {
+	b, why, err := cuda.Select(a.cfg.CUDABackend, a.cfg.CUDACheckpoint)
+	if why != "" {
+		a.logf("CUDA backend: cuda-checkpoint, the driver API is not usable here: %s", why)
+	}
+	return b, err
 }
 
 // references counts the tree's open files and file mappings under each

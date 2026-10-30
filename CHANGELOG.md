@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+Restore
+
+- The CUDA restore runs everything concurrently when no collective links the
+  processes (`--cuda-execution auto`): the state checks, the processes without
+  a rank (API servers and engine cores; 18 of a DP8 engine's 26), then the
+  ranks, then the unlock. Before, only the ranks overlapped. On Qwen3-8B DP8
+  on 8×RTX PRO 6000 (26 processes) the CUDA restore went from 9.4 s to 8.9 s
+  (the processes without a rank 1.85 s → 1.4 s); in all 6 restores the
+  weights' fingerprints matched and the engine served. `--cuda-execution
+  parallel` keeps the previous
+  order (ranks concurrent, the rest serial).
+- The `CUDA restored` line reports each phase: `CUDA restored: 26 owners (8
+  in parallel) in 8.8s (restore first 1.4s, restore parallel 7.4s, unlock
+  0.0s, check 0.0s)`.
+- The agent moves CUDA state through libcuda's checkpoint API
+  (`cuCheckpointProcess*`, loaded with purego) instead of starting
+  `cuda-checkpoint` for every process and call (#8). It resolves the libcuda
+  `cuda-checkpoint` would load (the agent's `LD_LIBRARY_PATH` and the driver's
+  version-check override), never creates a context, and needs the CUDA 13.0
+  driver API or newer (driver 580 and later). `--cuda-backend` on `build` and
+  `up`: `auto` (the default) takes the driver API when its libcuda loads with
+  a known argument layout, else falls back to `cuda-checkpoint` and says why
+  in the agent log; `driver` and `cli` force one. The `CUDA checkpointed` and
+  `CUDA restored` lines name the backend. On Qwen3-8B DP8 (8×RTX PRO 6000,
+  26 processes) the driver API checkpointed in 21.2 s and restored as fast as
+  the helper (8.8–9.6 s against 8.9–9.6 s): concurrent restores from the
+  agent's threads do not serialize in libcuda.
+- `tests/acceptance/gpu/cuda-ab.sh` and `cuda-ab-up.sh` alternate restores of
+  one snapshot across `--cuda-execution` modes and other `up` flags, and
+  resume after a reboot (a preempted VM).
+
 Engine
 
 - Data-parallel engines of dense models build: the adapter numbers a
