@@ -3,9 +3,11 @@
 # the 8 GPUs (TEP8, the vLLM recipe's layout: plain TP8 does not fit the
 # checkpoint's 128-wide FP8 blocks). FP8 KV cache and indexer keys, MTP with 3
 # draft tokens, the qwen3 / qwen3_coder parsers, the native 262 144 context.
-# The PLE n-gram table stays in pinned host memory (vLLM's default engram
-# offload, carried by the CRIU dump). All-reduce over PCIe uses FlashInfer's
-# PCIe IPC kernels; the adapter detaches and rebuilds them around a checkpoint.
+# The PLE n-gram table lives on the GPUs, not in pinned host memory, where the
+# CRIU dump carried it and restore copied it back through 4 KiB page faults;
+# on the GPU it is part of the weights pool, reloaded with them. All-reduce
+# over PCIe uses FlashInfer's PCIe IPC kernels; the adapter detaches and
+# rebuilds them around a checkpoint.
 # Measured (driver 580.173.02): vLLM cold start 757 s (8 of them minutes of
 # FlashInfer autotuning the PCIe all-reduce, which the snapshot keeps), build
 # 1037 s, snapshot 294 GiB (weights 146.6 GiB), up 37.7 s with a warm cache.
@@ -25,7 +27,7 @@ vllm:
   enable-prefix-caching: true
   limit-mm-per-prompt: {image: 0, video: 0}
   mamba-cache-mode: align
-  engram-config: {cpu_offload: true, dp_shared_memory: false, use_thp: false}
+  engram-config: {cpu_offload: false, dp_shared_memory: false, use_thp: false}
   speculative-config: {method: mtp, num_speculative_tokens: 3}
   reasoning-parser: qwen3
   enable-auto-tool-choice: true
