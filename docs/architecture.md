@@ -29,7 +29,7 @@
 | sleep | host | `sleep(level=2)`; the manifest keeps the exported allocations still in the allocator table |
 | prepare | extension | vLLM's `checkpoint_prepare`; whether any collective keeps peer memory mapped |
 | ipc | agent | under cuInterpose: the coordinator saves every cross-process allocation's bytes and releases the sharing, addresses kept ([interpose.md](interpose.md)) |
-| cuda | agent | cuda-checkpoint lock and checkpoint of every process holding CUDA state |
+| cuda | agent | lock and checkpoint of every process holding CUDA state, through libcuda's checkpoint API (or cuda-checkpoint with `--cuda-backend cli`) |
 | freeze, dump | agent | SIGSTOP through pidfds, `criu dump` (link remaps, empty plugin directory) |
 | fs | agent | `/workspace`, `/tmp`, `/dev/shm` as tar plus JSON, taken after the dump so CRIU's link_remap files are ordinary members |
 | publish | host | every file into the content-addressed store, linked into the output; `manifest.json` last |
@@ -44,7 +44,7 @@
 | arrive | host | while `up` still pulls the snapshot: wait until every file but the weights lane is in place and checked |
 | install-fs | agent | the three trees, checked against their manifests |
 | criu, thaw | agent | `criu restore --leave-stopped`, then SIGCONT through pidfds |
-| cuda | agent | cuda-checkpoint restore with the donor-to-receiver device map, workers in parallel when no collective links them, then unlock |
+| cuda | agent | restore with the donor-to-receiver device map (libcuda's checkpoint API, or cuda-checkpoint), every owner concurrently when no collective links them (the processes without a rank first, then the ranks), then unlock; state checks run concurrently |
 | ipc | agent | under cuInterpose: the coordinator re-creates the shared allocations and multicast objects at their addresses and loads their bytes |
 | arrived | host | while `up` still pulls the snapshot: wait for the weights lane; the reload reads the checked bytes from memory while the pull syncs them |
 | wake | host, extension | vLLM's `checkpoint_restore`, `wake_up(weights)`, the pool reloaded and every allocation's fingerprint compared, `wake_up(kv_cache)` |

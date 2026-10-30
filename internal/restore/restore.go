@@ -33,8 +33,10 @@ type Options struct {
 	ModelDir       string
 	CRIU           string
 	CUDACheckpoint string
-	NoVerify       bool
-	VerifyWeights  bool
+	// CUDABackend is the agent's cuda.Select mode: auto, driver or cli.
+	CUDABackend   string
+	NoVerify      bool
+	VerifyWeights bool
 	// SyncWeights reloads the weights with synchronous copies instead of
 	// the pipelined ones.
 	SyncWeights bool
