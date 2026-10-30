@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/agent"
@@ -225,7 +226,8 @@ func (r *restore) processes(ctx context.Context) error {
 	if err := r.c.Step(ctx, "cuda", args, &res); err != nil {
 		return err
 	}
-	r.p.Printf("CUDA restored: %d owners (%d in parallel) in %.1fs", len(args.Owners), len(args.Parallel), res.Seconds)
+	r.p.Printf("CUDA restored: %d owners (%d in parallel) in %.1fs%s",
+		len(args.Owners), len(args.Parallel), res.Seconds, phases(res.Phases))
 	if !r.interposed() || len(r.m.Process.IPCProcesses) == 0 {
 		return nil
 	}
@@ -248,7 +250,7 @@ func (r *restore) cudaArgs() (agent.CUDARestoreArgs, error) {
 	if err != nil {
 		return agent.CUDARestoreArgs{}, err
 	}
-	args := agent.CUDARestoreArgs{DeviceMap: deviceMap}
+	args := agent.CUDARestoreArgs{DeviceMap: deviceMap, Concurrent: Concurrent(r.o.CUDAExecution, r.m.Process)}
 	parallel := Parallel(r.o.CUDAExecution, r.m.Process)
 	for _, o := range r.m.Process.Owners {
 		args.Owners = append(args.Owners, o.PID)
@@ -280,8 +282,36 @@ func Parallel(mode string, p manifest.Process) bool {
 	switch mode {
 	case "serial", "serial-v1":
 		return false
-	case "parallel", "tp8-independent-workers-v1":
+	case "parallel", "parallel-all", "tp8-independent-workers-v1":
 		return true
 	}
 	return p.CollectivesDetached
+}
+
+// Concurrent decides whether the owners without a rank (API servers,
+// engine cores) also restore concurrently, and every owner unlocks at once:
+// in auto whenever the workers do, since no process then maps another's
+// memory. parallel keeps them serial, the order first qualified on GPUs.
+func Concurrent(mode string, p manifest.Process) bool {
+	switch mode {
+	case "parallel-all":
+		return true
+	case "auto", "":
+		return p.CollectivesDetached
+	}
+	return false
+}
+
+// phases formats the CUDA restore's phase seconds, in the order they run.
+func phases(p map[string]float64) string {
+	if len(p) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, k := range []string{"restore_first", "restore_parallel", "unlock", "check"} {
+		if v, ok := p[k]; ok {
+			parts = append(parts, fmt.Sprintf("%s %.1fs", strings.ReplaceAll(k, "_", " "), v))
+		}
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }

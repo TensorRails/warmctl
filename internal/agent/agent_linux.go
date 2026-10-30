@@ -333,14 +333,16 @@ func (a *agent) cudaRestore(ctx context.Context, raw json.RawMessage) (any, erro
 		}
 	}
 	start := time.Now()
+	var phases map[string]float64
 	if len(args.Owners) > 0 {
 		s := cuda.NewSession(a.cfg.CUDACheckpoint, args.Owners)
-		s.Parallel = args.Parallel
+		s.Parallel, s.Concurrent = args.Parallel, args.Concurrent
 		if err := s.Restore(ctx, args.DeviceMap); err != nil {
 			return nil, err
 		}
+		phases = s.Phases
 	}
-	return CUDAResult{Owners: args.Owners, Seconds: time.Since(start).Seconds()}, nil
+	return CUDAResult{Owners: args.Owners, Seconds: time.Since(start).Seconds(), Phases: phases}, nil
 }
 
 // references counts the tree's open files and file mappings under each

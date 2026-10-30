@@ -152,8 +152,9 @@ type (
 	}
 	// CUDAResult lists the processes whose CUDA state moved.
 	CUDAResult struct {
-		Owners  []int   `json:"owners"`
-		Seconds float64 `json:"seconds"`
+		Owners  []int              `json:"owners"`
+		Seconds float64            `json:"seconds"`
+		Phases  map[string]float64 `json:"phases,omitempty"`
 	}
 	// FreezeResult is the stopped tree and how many of its open files and
 	// mappings sit under each watched path.
@@ -163,9 +164,10 @@ type (
 	}
 	// CUDARestoreArgs drive the restore's cuda step.
 	CUDARestoreArgs struct {
-		Owners    []int  `json:"owners"`
-		Parallel  []int  `json:"parallel,omitempty"`
-		DeviceMap string `json:"device_map"`
+		Owners     []int  `json:"owners"`
+		Parallel   []int  `json:"parallel,omitempty"`
+		Concurrent bool   `json:"concurrent,omitempty"`
+		DeviceMap  string `json:"device_map"`
 	}
 	// DumpResult reports the CRIU dump.
 	DumpResult struct {

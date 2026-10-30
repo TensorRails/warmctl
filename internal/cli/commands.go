@@ -48,7 +48,9 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.criu, "criu", "", "host CRIU binary to use instead of the image's")
 	fs.StringVar(&c.helper, "cuda-checkpoint", "", "host cuda-checkpoint to use instead of the image's")
 	fs.StringVar(&c.scratch, "scratch", "", "accepted for compatibility")
-	fs.StringVar(&c.cudaExec, "cuda-execution", "auto", "CUDA restore: auto, serial or parallel")
+	fs.StringVar(&c.cudaExec, "cuda-execution", "auto",
+		"CUDA restore: auto (everything concurrent when no collective links the processes), serial, "+
+			"parallel (only the workers concurrent) or parallel-all")
 	fs.BoolVar(&c.noVerify, "no-verify", false, "canary only warns")
 	fs.IntVar(&c.threads, "threads", 0, "pool copy threads per rank (default 4)")
 	fs.BoolVar(&c.cpuTest, "test-cpu", false, "end-to-end test on a CPU host: no GPU devices, no io_uring check")
