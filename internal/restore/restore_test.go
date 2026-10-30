@@ -12,6 +12,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/profile"
 	"github.com/TensorRails/warmctl/v2/internal/run"
+	"github.com/TensorRails/warmctl/v2/internal/vllm"
 )
 
 func donor() manifest.Hardware {
@@ -259,5 +260,21 @@ func TestArrival(t *testing.T) {
 	if r.launching(ctx) != nil || r.arrive(ctx) != nil || r.arrived(ctx) != nil ||
 		r.manifestPath() != "/capture/manifest.json" {
 		t.Fatal("a pulled snapshot waited")
+	}
+}
+
+func TestReloadSummary(t *testing.T) {
+	old := []vllm.Reloaded{{Rank: 0, Bytes: 1 << 30, Seconds: 2}, {Rank: 1, Bytes: 1 << 30, Seconds: 3}}
+	if got := reloadSummary(old); got != "2.00 GiB, slowest rank 3.0s" {
+		t.Fatalf("%q", got)
+	}
+	split := []vllm.Reloaded{
+		{Rank: 0, Bytes: 40 << 30, Seconds: 5, Reload: 4, Fingerprint: 1, Read: 9, Copy: 6, Threads: 4, Pipelined: true},
+		{Rank: 1, Bytes: 40 << 30, Seconds: 6, Reload: 5, Fingerprint: 1, Read: 12, Copy: 7, Threads: 4, Pipelined: true},
+	}
+	want := "80.00 GiB, slowest rank 6.0s (rank 1: copy 5.0s at 8.0 GiB/s, pipelined, 4 threads spent read 12.0s " +
+		"and copy wait 7.0s; fingerprint 1.0s)"
+	if got := reloadSummary(split); got != want {
+		t.Fatalf("%q", got)
 	}
 }

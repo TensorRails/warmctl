@@ -60,12 +60,20 @@ type Prepared struct {
 	NCCLMode    string   `json:"nccl_mode"`
 }
 
-// Reloaded is warmctl_reload_pool of one rank.
+// Reloaded is warmctl_reload_pool of one rank. Read and Copy are summed over
+// the rank's threads: reading part files into page-locked slots, and waiting
+// for copies to the GPU. Adapters before the split report only Seconds.
 type Reloaded struct {
 	Rank        int     `json:"rank"`
 	Bytes       int64   `json:"bytes"`
 	Allocations int     `json:"allocations"`
 	Seconds     float64 `json:"seconds"`
+	Reload      float64 `json:"reload_seconds"`
+	Fingerprint float64 `json:"fingerprint_seconds"`
+	Read        float64 `json:"read_seconds"`
+	Copy        float64 `json:"copy_seconds"`
+	Threads     int     `json:"threads"`
+	Pipelined   bool    `json:"pipelined"`
 }
 
 func byRank[T any](rows []T, rank func(T) int, ranks int) ([]T, error) {
@@ -131,10 +139,15 @@ func (e *Engine) FinishRestore(ctx context.Context) error {
 
 // ReloadPool copies every rank's pool back from the snapshot mounted at
 // directory, whose manifest is at manifestPath, and checks fingerprints.
+// sync is sent only when set: adapters that predate the pipelined reload
+// refuse arguments they do not know.
 func (e *Engine) ReloadPool(ctx context.Context, manifestPath, directory string, threads int,
-	verify bool) ([]Reloaded, error) {
+	verify, sync bool) ([]Reloaded, error) {
 	var rows []Reloaded
 	kwargs := map[string]any{"manifest": manifestPath, "directory": directory, "threads": threads, "verify": verify}
+	if sync {
+		kwargs["sync"] = true
+	}
 	if err := e.RPC(ctx, "warmctl_reload_pool", kwargs, PoolRPC, &rows); err != nil {
 		return nil, err
 	}

@@ -7,6 +7,36 @@ import ctypes
 
 BLOCK_BYTES = 8 << 20
 
+# From driver_types.h.
+_STREAM_NON_BLOCKING = 1
+_EVENT_DISABLE_TIMING = 2
+_MEMCPY_HOST_TO_DEVICE = 1
+
+_bound = {}
+
+
+def _runtime(lib):
+    """Stream, event and async-copy functions of a libcudart, bound once."""
+    if id(lib) not in _bound:
+        handle, size, kind, err = ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int
+        signatures = {
+            'cudaStreamCreateWithFlags': [ctypes.POINTER(handle), ctypes.c_uint],
+            'cudaEventCreateWithFlags': [ctypes.POINTER(handle), ctypes.c_uint],
+            'cudaMemcpyAsync': [handle, handle, size, kind, handle],
+            'cudaEventRecord': [handle, handle],
+            'cudaEventSynchronize': [handle],
+            'cudaStreamSynchronize': [handle],
+            'cudaStreamDestroy': [handle],
+            'cudaEventDestroy': [handle],
+        }
+        functions = {}
+        for name, argtypes in signatures.items():
+            fn = getattr(lib, name)
+            fn.restype, fn.argtypes = err, argtypes
+            functions[name] = fn
+        _bound[id(lib)] = functions
+    return _bound[id(lib)]
+
 
 class _CudaArray:
     """__cuda_array_interface__ over raw device memory: lets torch read an
@@ -41,6 +71,43 @@ class CudaDevice:
 
     def to_device(self, dev_ptr, host_ptr, nbytes):
         self.rt.cudaMemcpy(ctypes.c_void_p(dev_ptr), ctypes.c_void_p(host_ptr), nbytes)
+
+    # The pipelined reload's calls, bound from the same libcudart: vLLM's
+    # wrapper has no streams or events.
+    def _call(self, name, *args):
+        fn = _runtime(self.rt.lib).get(name)
+        err = fn(*args)
+        if err != 0:
+            message = self.rt.cudaGetErrorString(err)
+            raise RuntimeError('%s: %s (%d)' % (name, message.decode() if isinstance(message, bytes) else message,
+                                                err))
+
+    def stream(self):
+        handle = ctypes.c_void_p()
+        self._call('cudaStreamCreateWithFlags', ctypes.byref(handle), _STREAM_NON_BLOCKING)
+        return ('stream', handle)
+
+    def event(self):
+        handle = ctypes.c_void_p()
+        self._call('cudaEventCreateWithFlags', ctypes.byref(handle), _EVENT_DISABLE_TIMING)
+        return ('event', handle)
+
+    def to_device_async(self, dev_ptr, host_ptr, nbytes, stream):
+        self._call('cudaMemcpyAsync', ctypes.c_void_p(dev_ptr), ctypes.c_void_p(host_ptr), ctypes.c_size_t(nbytes),
+                   _MEMCPY_HOST_TO_DEVICE, stream[1])
+
+    def record(self, event, stream):
+        self._call('cudaEventRecord', event[1], stream[1])
+
+    def wait(self, event):
+        self._call('cudaEventSynchronize', event[1])
+
+    def drain(self, stream):
+        self._call('cudaStreamSynchronize', stream[1])
+
+    def destroy(self, handle):
+        kind, value = handle
+        self._call('cudaStreamDestroy' if kind == 'stream' else 'cudaEventDestroy', value)
 
     def synchronize(self):
         self.torch.cuda.synchronize(self.device)

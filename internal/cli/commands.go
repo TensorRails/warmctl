@@ -271,6 +271,7 @@ func registerUp(fs *flag.FlagSet, o *restore.Options) *string {
 	fs.StringVar(&o.Canary, "canary", "", "override the canary policy: bitwise, tolerance, warn or off")
 	fs.StringVar(&o.ModelDir, "model-dir", "", "model directory, when the snapshot needs it")
 	fs.BoolVar(&o.VerifyWeights, "verify-weights", false, "check each weights part's SHA-256 while reloading")
+	fs.BoolVar(&o.SyncWeights, "sync-weights", false, "reload the weights with synchronous copies, not pipelined ones")
 	fs.StringVar(&o.RunDir, "run-dir", restore.DefaultRunDir, "in place: the agent's config, sockets and CRIU work")
 	fs.Bool("wait", false, "accepted for compatibility")
 	fs.Duration("wait-timeout", 0, "accepted for compatibility")

@@ -74,7 +74,7 @@ class Extension:
         return {'rank': self._warmctl_rank()}
 
     def warmctl_reload_pool(self, manifest, directory, threads=transfer.THREADS, slot_bytes=transfer.SLOT_BYTES,
-                            verify=False):
+                            verify=False, sync=False):
         """Copy the rank's pool back from the snapshot after wake_up(weights)
         and check every allocation's fingerprint, before any forward pass."""
         started = time.monotonic()
@@ -88,15 +88,22 @@ class Extension:
         require(not missing, 'weights pool layout differs after wake: %d allocations missing, first %s'
                 % (len(missing), missing[:3]))
         device = self._warmctl_device()
+        stats = transfer.Stats()
+        copied = time.monotonic()
         loaded = transfer.reload(device, record['allocations'], record['parts'], directory, threads, slot_bytes,
-                                 verify)
+                                 verify, stats, pipeline=not sync)
+        summed = time.monotonic()
         starts, _ = pool.part_starts(record['parts'])
         sums = device.sums([(int(a['ptr'], 16), a['bytes'], pool.stream_start(a, starts))
                             for a in record['allocations']])
+        done = time.monotonic()
         bad = pool.compare([a['sum'] for a in record['allocations']], sums)
         require(not bad, 'weights fingerprint differs in %d allocations, first %s'
                 % (len(bad), [record['allocations'][i]['ptr'] for i in bad[:3]]))
-        return {'rank': rank, 'bytes': loaded, 'allocations': len(sums), 'seconds': time.monotonic() - started}
+        return {'rank': rank, 'bytes': loaded, 'allocations': len(sums), 'seconds': done - started,
+                'reload_seconds': summed - copied, 'fingerprint_seconds': done - summed,
+                'read_seconds': stats.read, 'copy_seconds': stats.copy, 'threads': threads,
+                'pipelined': not verify and not sync and transfer.pipelined(device)}
 
     def _warmctl_rank(self):
         from vllm.distributed import parallel_state

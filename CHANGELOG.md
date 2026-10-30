@@ -11,8 +11,7 @@ Restore
   on 8×RTX PRO 6000 (26 processes) the CUDA restore went from 9.4 s to 8.9 s
   (the processes without a rank 1.85 s → 1.4 s); in all 6 restores the
   weights' fingerprints matched and the engine served. `--cuda-execution
-  parallel` keeps the previous
-  order (ranks concurrent, the rest serial).
+  parallel` keeps the previous order (ranks concurrent, the rest serial).
 - The `CUDA restored` line reports each phase: `CUDA restored: 26 owners (8
   in parallel) in 8.8s (restore first 1.4s, restore parallel 7.4s, unlock
   0.0s, check 0.0s)`.
@@ -32,6 +31,19 @@ Restore
 - `tests/acceptance/gpu/cuda-ab.sh` and `cuda-ab-up.sh` alternate restores of
   one snapshot across `--cuda-execution` modes and other `up` flags, and
   resume after a reboot (a preempted VM).
+- The weights reload is pipelined (#38): each thread owns two page-locked
+  64 MiB slots and a stream of its own, and reads the next chunk of a part
+  file while the previous one is copied to the GPU (`cudaMemcpyAsync`).
+  `up --sync-weights` keeps the synchronous copies.
+- The reload line splits the slowest rank's time: `weights reloaded and
+  fingerprints match: 122.53 GiB, slowest rank 3.7s (rank 0: copy 3.0s at
+  5.1 GiB/s, pipelined, 4 threads spent read 10.7s and copy wait 0.0s;
+  fingerprint 0.8s)`. On Qwen3-8B DP8 on 8×RTX PRO 6000 (15.3 GiB per rank,
+  warm page cache) the pipeline took the copy wait from 0.8–1.0 s to 0–0.1 s
+  and the copy from 3.4 s to 3.1 s on average; the rest is the threads'
+  reads from the page cache into the slots, bound by host memory bandwidth
+  with eight ranks reading at once: 8 threads per rank made the copy 3.8 s
+  and 16 threads 6.9 s, so 4 stays the default.
 
 ## v2.0.0-beta.13 — 2026-10-25
 
