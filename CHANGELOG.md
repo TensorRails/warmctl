@@ -1,17 +1,6 @@
 # Changelog
 
-## Unreleased
-
-Profiles
-
-- `qwen38-flash-next-rtx6000-tep4` and `-tep8` keep the PLE n-gram table on
-  the GPUs (`engram-config.cpu_offload: false`). In pinned host memory the
-  CRIU dump carried it and restore copied it back through 4 KiB page faults:
-  16.4 GiB per rank in 10 s on TEP4. On the GPU it is part of the weights
-  pool, reloaded with them. TEP4: CRIU images 105 → 41 GiB, CRIU restore
-  18–19 s → 7–9 s, `up` 33–34 s → 21–23 s with a warm page cache, the KV cache
-  unchanged (4.3 M tokens); 85 GiB per GPU in use. TEP8: `up` 37.7 s →
-  29.4 s, CRIU restore ~16 s → 9.8 s, the KV cache unchanged (6.8 M tokens).
+## v2.0.0-beta.15 — 2026-10-30
 
 Restore
 
@@ -27,6 +16,25 @@ Restore
   Every TCP connection of the engine joins two processes of the frozen tree
   over the container's loopback, so the lock guarded nothing. Snapshots
   built before keep their method.
+
+Profiles
+
+- `qwen38-flash-next-rtx6000-tep4` and `-tep8` keep the PLE n-gram table on
+  the GPUs (`engram-config.cpu_offload: false`). In pinned host memory the
+  CRIU dump carried it and restore copied it back through 4 KiB page faults:
+  16.4 GiB per rank in 10 s on TEP4. On the GPU it is part of the weights
+  pool, reloaded with them. TEP4: CRIU images 105 → 41 GiB, CRIU restore
+  18–19 s → 7–9 s, `up` 33–34 s → 21–23 s with a warm page cache, the KV cache
+  unchanged (4.3 M tokens); 85 GiB per GPU in use. TEP8: `up` 37.7 s →
+  29.4 s, CRIU restore ~16 s → 9.8 s, the KV cache unchanged (6.8 M tokens).
+
+Compatibility
+
+- Compatible both ways, checked on 8×RTX PRO 6000: v2.0.0-beta.13 and
+  beta.14 restore the new snapshots (the PLE table on the GPUs, the
+  network-lock method `skip`), and this release restores snapshots built by
+  beta.8 and beta.14 and a dense DP8 engine; each restore matched its
+  fingerprints and canary and answered.
 
 ## v2.0.0-beta.14 — 2026-10-30
 
