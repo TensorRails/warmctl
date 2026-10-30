@@ -38,8 +38,9 @@ func (f *fakeHelper) run(_ context.Context, args ...string) (string, error) {
 
 func TestCheckpointRestore(t *testing.T) {
 	f := &fakeHelper{state: map[int]string{10: "running", 11: "running", 12: "running"}}
-	s := NewSession("/work/cuda-checkpoint", []int{10, 11, 12})
-	s.run = f.run
+	c := NewCLI("/work/cuda-checkpoint")
+	c.run = f.run
+	s := NewSession(c, []int{10, 11, 12})
 	if err := s.Checkpoint(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -77,13 +78,14 @@ func TestCheckpointRestore(t *testing.T) {
 
 func TestFailures(t *testing.T) {
 	f := &fakeHelper{state: map[int]string{10: "running", 11: "locked"}}
-	s := NewSession("x", []int{10, 11})
-	s.run = f.run
+	c := NewCLI("x")
+	c.run = f.run
+	s := NewSession(c, []int{10, 11})
 	if err := s.Checkpoint(context.Background()); err == nil || !strings.Contains(err.Error(), `11 is "locked"`) {
 		t.Fatalf("wrong state accepted: %v", err)
 	}
 	f = &fakeHelper{state: map[int]string{10: "checkpointed", 11: "checkpointed"}, fail: "--pid 11 --action restore"}
-	s.run, s.Parallel = f.run, []int{10, 11}
+	c.run, s.Parallel = f.run, []int{10, 11}
 	if err := s.Restore(context.Background(), "GPU-a=GPU-b"); err == nil {
 		t.Fatal("failed restore accepted")
 	}
@@ -127,8 +129,10 @@ func TestRestoreConcurrency(t *testing.T) {
 		for pid := 10; pid < 16; pid++ {
 			o.state[pid] = "checkpointed"
 		}
-		s := NewSession("x", []int{10, 11, 12, 13, 14, 15})
-		s.run, s.Parallel, s.Concurrent = o.run, []int{13, 14, 15}, concurrent
+		c := NewCLI("x")
+		c.run = o.run
+		s := NewSession(c, []int{10, 11, 12, 13, 14, 15})
+		s.Parallel, s.Concurrent = []int{13, 14, 15}, concurrent
 		if err := s.Restore(context.Background(), "GPU-a=GPU-b"); err != nil {
 			t.Fatal(err)
 		}
@@ -152,5 +156,34 @@ func TestRestoreConcurrency(t *testing.T) {
 				t.Errorf("concurrent %t: no %s phase in %v", concurrent, k, s.Phases)
 			}
 		}
+	}
+}
+
+func TestParseDeviceMap(t *testing.T) {
+	pairs, err := ParseDeviceMap("GPU-a=GPU-x,GPU-b=GPU-y")
+	if err != nil || len(pairs) != 2 || pairs[1] != (Pair{"GPU-b", "GPU-y"}) {
+		t.Fatal(pairs, err)
+	}
+	for _, bad := range []string{"", "GPU-a", "GPU-a=GPU-x,GPU-a=GPU-y", "a=b"} {
+		if _, err := ParseDeviceMap(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if b, err := uuidBytes("GPU-56ce119a-6848-3ae0-cf4f-8c1564626fc6"); err != nil || b[0] != 0x56 || b[15] != 0xc6 {
+		t.Fatal(b, err)
+	}
+	for _, bad := range []string{"56ce119a-6848-3ae0-cf4f-8c1564626fc6", "GPU-56ce", "GPU-zzce119a-6848-3ae0-cf4f-8c1564626fc6"} {
+		if _, err := uuidBytes(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestSelect(t *testing.T) {
+	if b, _, err := Select(BackendCLI, "/x/cuda-checkpoint"); err != nil || b.Name() != BackendCLI {
+		t.Fatal(b, err)
+	}
+	if _, _, err := Select("fast", ""); err == nil {
+		t.Fatal("unknown backend accepted")
 	}
 }

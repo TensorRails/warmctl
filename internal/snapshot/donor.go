@@ -49,6 +49,7 @@ func (b *bake) prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	cfg.CUDABackend = b.o.CUDABackend
 	if b.model, err = run.ModelSHA256(b.o.ModelDir); err != nil {
 		return err
 	}

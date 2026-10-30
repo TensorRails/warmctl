@@ -97,7 +97,7 @@ func (b *bake) checkpoint(ctx context.Context) error {
 	if err := b.c.Step(ctx, "cuda", nil, &b.cudaRes); err != nil {
 		return err
 	}
-	b.p.Printf("CUDA checkpointed: %d owners in %.1fs", len(b.cudaRes.Owners), b.cudaRes.Seconds)
+	b.p.Printf("CUDA checkpointed: %d owners in %.1fs, %s", len(b.cudaRes.Owners), b.cudaRes.Seconds, b.cudaRes.Backend)
 	if err := b.c.Step(ctx, "freeze", nil, &b.frozen); err != nil {
 		return err
 	}
