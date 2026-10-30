@@ -34,6 +34,8 @@ type Options struct {
 	DockerSocket   string
 	CRIU           string
 	CUDACheckpoint string
+	// CUDABackend is the agent's cuda.Select mode: auto, driver or cli.
+	CUDABackend string
 	// Cuinterpose is a cuInterpose build directory, for profiles whose ipc
 	// is not native; default: cuinterpose/ next to this executable.
 	Cuinterpose  string

@@ -51,9 +51,12 @@ func (r *restore) claim() error {
 // the host's tools from /work; in a pod they are where they are.
 func (r *restore) tools() (agent.Config, error) {
 	if !r.o.InPlace {
-		return snapshot.Tools(filepath.Join(r.dir, "work"), r.o.CRIU, r.o.CUDACheckpoint)
+		cfg, err := snapshot.Tools(filepath.Join(r.dir, "work"), r.o.CRIU, r.o.CUDACheckpoint)
+		cfg.CUDABackend = r.o.CUDABackend
+		return cfg, err
 	}
 	cfg := snapshot.AgentConfig(r.guest().state)
+	cfg.CUDABackend = r.o.CUDABackend
 	// The agent runs in a UTS namespace of its own and names it as a
 	// receiver container is named; the pod's own host name stays.
 	cfg.Hostname = docker.Hostname
@@ -226,8 +229,8 @@ func (r *restore) processes(ctx context.Context) error {
 	if err := r.c.Step(ctx, "cuda", args, &res); err != nil {
 		return err
 	}
-	r.p.Printf("CUDA restored: %d owners (%d in parallel) in %.1fs%s",
-		len(args.Owners), len(args.Parallel), res.Seconds, phases(res.Phases))
+	r.p.Printf("CUDA restored: %d owners (%d in parallel) in %.1fs%s, %s",
+		len(args.Owners), len(args.Parallel), res.Seconds, phases(res.Phases), res.Backend)
 	if !r.interposed() || len(r.m.Process.IPCProcesses) == 0 {
 		return nil
 	}
