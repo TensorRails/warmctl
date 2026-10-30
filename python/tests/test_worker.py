@@ -48,3 +48,17 @@ class ReplyTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReplicaTest(unittest.TestCase):
+    def test_dense_replicas_use_the_index(self):
+        from types import SimpleNamespace
+
+        from warmctl_vllm.worker import replica
+        # A dense model on vLLM with data_parallel_index: every replica has
+        # data_parallel_rank 0.
+        self.assertEqual(replica(SimpleNamespace(data_parallel_rank=0, data_parallel_index=5)), 5)
+        # Expert parallelism keeps both equal.
+        self.assertEqual(replica(SimpleNamespace(data_parallel_rank=3, data_parallel_index=3)), 3)
+        # Older vLLM without the field.
+        self.assertEqual(replica(SimpleNamespace(data_parallel_rank=2)), 2)

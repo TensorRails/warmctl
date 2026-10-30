@@ -13,6 +13,15 @@ from . import pool, protocol, transfer
 from .primitives import require
 
 
+
+def replica(config):
+    """The data-parallel replica of a worker. vLLM sets data_parallel_rank to
+    0 in every replica of a dense model (no expert parallelism: the replicas
+    share no process group) and keeps the replica in data_parallel_index;
+    versions before that field number the replicas in data_parallel_rank."""
+    index = getattr(config, 'data_parallel_index', None)
+    return config.data_parallel_rank if index is None else index
+
 class Extension:
     def warmctl_rpc(self, method, kwargs, reply):
         """Run method, warmctl's or vLLM's own worker method, and publish its
@@ -101,9 +110,8 @@ class Extension:
     def _warmctl_rank(self):
         from vllm.distributed import parallel_state
 
-        config = self.vllm_config.parallel_config
         tp = parallel_state.get_tensor_model_parallel_rank()
-        return config.data_parallel_rank * config.tensor_parallel_size + tp
+        return replica(self.vllm_config.parallel_config) * self.vllm_config.parallel_config.tensor_parallel_size + tp
 
     def _warmctl_table(self):
         from vllm.device_allocator.cumem import CuMemAllocator
