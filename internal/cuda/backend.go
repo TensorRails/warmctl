@@ -38,7 +38,10 @@ func Select(mode, helper string) (b Backend, why string, err error) {
 		return NewCLI(helper), "", nil
 	case BackendDriver:
 		d, err := NewDriver()
-		return d, "", err
+		if err != nil {
+			return nil, "", err
+		}
+		return d, "", nil
 	case BackendAuto, "":
 		d, err := NewDriver()
 		if err != nil {
