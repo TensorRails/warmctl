@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+Restore
+
+- The CUDA restore runs everything concurrently when no collective links the
+  processes (`--cuda-execution auto`): the state checks, the processes without
+  a rank (API servers and engine cores; 18 of a DP8 engine's 26), then the
+  ranks, then the unlock. Before, only the ranks overlapped. On Qwen3-8B DP8
+  on 8×RTX PRO 6000 (26 processes) the CUDA restore went from 9.4 s to 8.9 s
+  (the processes without a rank 1.85 s → 1.4 s); in all 6 restores the
+  weights' fingerprints matched and the engine served. `--cuda-execution
+  parallel` keeps the previous
+  order (ranks concurrent, the rest serial).
+- The `CUDA restored` line reports each phase: `CUDA restored: 26 owners (8
+  in parallel) in 8.8s (restore first 1.4s, restore parallel 7.4s, unlock
+  0.0s, check 0.0s)`.
+- `tests/acceptance/gpu/cuda-ab.sh` and `cuda-ab-up.sh` alternate restores of
+  one snapshot across `--cuda-execution` modes and other `up` flags, and
+  resume after a reboot (a preempted VM).
+
 ## v2.0.0-beta.13 — 2026-10-25
 
 Distribution

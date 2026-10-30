@@ -44,7 +44,7 @@
 | arrive | host | while `up` still pulls the snapshot: wait until every file but the weights lane is in place and checked |
 | install-fs | agent | the three trees, checked against their manifests |
 | criu, thaw | agent | `criu restore --leave-stopped`, then SIGCONT through pidfds |
-| cuda | agent | cuda-checkpoint restore with the donor-to-receiver device map, workers in parallel when no collective links them, then unlock |
+| cuda | agent | cuda-checkpoint restore with the donor-to-receiver device map, every owner concurrently when no collective links them (the processes without a rank first, then the ranks), then unlock; state checks run concurrently |
 | ipc | agent | under cuInterpose: the coordinator re-creates the shared allocations and multicast objects at their addresses and loads their bytes |
 | arrived | host | while `up` still pulls the snapshot: wait for the weights lane; the reload reads the checked bytes from memory while the pull syncs them |
 | wake | host, extension | vLLM's `checkpoint_restore`, `wake_up(weights)`, the pool reloaded and every allocation's fingerprint compared, `wake_up(kv_cache)` |

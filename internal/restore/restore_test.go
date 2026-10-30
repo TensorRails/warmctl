@@ -100,14 +100,37 @@ func TestDeviceMapFollowsRanks(t *testing.T) {
 	if len(args.Owners) != 3 || len(args.Parallel) != 2 || args.Parallel[0] != 32790 {
 		t.Fatalf("owners %v parallel %v", args.Owners, args.Parallel)
 	}
+	if !args.Concurrent {
+		t.Fatal("auto with detached collectives restores the owners without a rank serially")
+	}
+	r.o.CUDAExecution = "parallel"
+	if args, _ := r.cudaArgs(); len(args.Parallel) != 2 || args.Concurrent {
+		t.Fatalf("parallel: parallel %v concurrent %t", args.Parallel, args.Concurrent)
+	}
 	r.o.CUDAExecution = "serial-v1"
 	if args, _ := r.cudaArgs(); len(args.Parallel) != 0 {
 		t.Fatal("serial-v1 ran workers in parallel")
 	}
+	r.o.CUDAExecution = "parallel-all"
+	r.m.Process.CollectivesDetached = false
+	if args, _ := r.cudaArgs(); len(args.Parallel) != 2 || !args.Concurrent {
+		t.Fatalf("parallel-all: parallel %v concurrent %t", args.Parallel, args.Concurrent)
+	}
+	r.m.Process.CollectivesDetached = true
 	r.o.CUDAExecution = "auto"
 	r.m.Process.CollectivesDetached = false
-	if args, _ := r.cudaArgs(); len(args.Parallel) != 0 {
+	if args, _ := r.cudaArgs(); len(args.Parallel) != 0 || args.Concurrent {
 		t.Fatal("linked collectives ran workers in parallel")
+	}
+}
+
+func TestPhases(t *testing.T) {
+	got := phases(map[string]float64{"check": 0.21, "unlock": 1.04, "restore_first": 9.1, "restore_parallel": 10})
+	if got != " (restore first 9.1s, restore parallel 10.0s, unlock 1.0s, check 0.2s)" {
+		t.Fatalf("%q", got)
+	}
+	if phases(nil) != "" {
+		t.Fatal("phases without a report")
 	}
 }
 

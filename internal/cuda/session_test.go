@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeHelper keeps a state per PID like cuda-checkpoint does.
@@ -91,5 +92,65 @@ func TestFailures(t *testing.T) {
 	}
 	if _, err := DeviceMap([]Pair{{"GPU-a", "GPU-x"}, {"GPU-a", "GPU-y"}}); err == nil {
 		t.Fatal("duplicate source accepted")
+	}
+}
+
+// overlapHelper records the most calls of each action in flight at once.
+type overlapHelper struct {
+	fakeHelper
+	inflight, peak map[string]int
+}
+
+func (o *overlapHelper) run(ctx context.Context, args ...string) (string, error) {
+	action := args[2]
+	if len(args) > 3 {
+		action = args[3]
+	}
+	if action == "restore" && args[1] < "13" {
+		action = "restore-first"
+	}
+	o.mu.Lock()
+	o.inflight[action]++
+	o.peak[action] = max(o.peak[action], o.inflight[action])
+	o.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	out, err := o.fakeHelper.run(ctx, args...)
+	o.mu.Lock()
+	o.inflight[action]--
+	o.mu.Unlock()
+	return out, err
+}
+
+func TestRestoreConcurrency(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		o := &overlapHelper{fakeHelper: fakeHelper{state: map[int]string{}}, inflight: map[string]int{}, peak: map[string]int{}}
+		for pid := 10; pid < 16; pid++ {
+			o.state[pid] = "checkpointed"
+		}
+		s := NewSession("x", []int{10, 11, 12, 13, 14, 15})
+		s.run, s.Parallel, s.Concurrent = o.run, []int{13, 14, 15}, concurrent
+		if err := s.Restore(context.Background(), "GPU-a=GPU-b"); err != nil {
+			t.Fatal(err)
+		}
+		for pid, st := range o.state {
+			if st != "running" {
+				t.Fatalf("concurrent %t: %d is %q", concurrent, pid, st)
+			}
+		}
+		if o.peak["--get-state"] != 6 {
+			t.Errorf("state checks ran %d at a time, want 6", o.peak["--get-state"])
+		}
+		// The parallel owners overlap in both modes; the owners without a
+		// rank and the unlock only in the concurrent one. The serial ranks
+		// still finish before the parallel ones start.
+		first, all := map[bool]int{false: 1, true: 3}[concurrent], map[bool]int{false: 1, true: 6}[concurrent]
+		if o.peak["restore-first"] != first || o.peak["restore"] != 3 || o.peak["unlock"] != all {
+			t.Errorf("concurrent %t: peaks %v", concurrent, o.peak)
+		}
+		for _, k := range []string{"check", "restore_first", "restore_parallel", "unlock"} {
+			if s.Phases[k] <= 0 {
+				t.Errorf("concurrent %t: no %s phase in %v", concurrent, k, s.Phases)
+			}
+		}
 	}
 }
