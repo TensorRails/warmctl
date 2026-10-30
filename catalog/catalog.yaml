@@ -34,10 +34,10 @@ models:
     license: Apache-2.0
     description: Dense, one large GPU.
   - name: qwen38-flash-next
-    title: Qwen3.8-Flash-Next NVFP4
-    license: NVIDIA Open Model License + Qwen Community License 1.0
+    title: Qwen3.8-Flash-Next
+    license: Qwen Community License 1.0 (NVFP4 build also NVIDIA Open Model License)
     gated: true
-    description: Qwen's 180B-A6B hybrid MoE in NVIDIA's NVFP4, MTP; 1×H200 (Marlin experts, n-gram table in host memory), 256K context.
+    description: Qwen's 180B-A6B hybrid MoE with MTP, 256K context. 1×H200 in NVIDIA's NVFP4 (Marlin experts); 4× and 8×RTX PRO 6000 in Qwen's FP8, tensor and expert parallel. The n-gram table stays in host memory.
   - name: qwen38-27b
     title: Qwen3.8-27B FP8
     license: Apache-2.0
