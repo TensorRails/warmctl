@@ -417,8 +417,9 @@ func (a *agent) dump(ctx context.Context) (any, error) {
 	if err := criu.PrepareWork(work); err != nil {
 		return nil, err
 	}
+	version := criuVersion(ctx, a.cfg.CRIU)
 	start := time.Now()
-	if err := criu.Dump(ctx, a.cfg.CRIU, a.enginePID(), images, work); err != nil {
+	if err := criu.Dump(ctx, a.cfg.CRIU, version, a.enginePID(), images, work); err != nil {
 		return nil, err
 	}
 	seconds := time.Since(start).Seconds()
@@ -429,7 +430,7 @@ func (a *agent) dump(ctx context.Context) (any, error) {
 	}
 	_ = a.frozen.Close()
 	a.frozen = nil
-	return DumpResult{Seconds: seconds, Version: criuVersion(ctx, a.cfg.CRIU)}, nil
+	return DumpResult{Seconds: seconds, Version: version}, nil
 }
 
 func criuVersion(ctx context.Context, program string) string {

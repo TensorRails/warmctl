@@ -28,10 +28,12 @@ func PrepareWork(dir string) error {
 	return os.Mkdir(filepath.Join(dir, "plugins"), 0o700)
 }
 
-// Dump checkpoints the tree rooted at tree into images. CRIU kills the tree
+// Dump checkpoints the tree rooted at tree into images with the CRIU at
+// program, whose version is version (criu --version). CRIU kills the tree
 // afterwards; the caller reaps it.
-func Dump(ctx context.Context, program string, tree int, images, work string) error {
-	if _, err := process.Capture(ctx, Timeout, program, DumpArgs(tree, images, work)...); err != nil {
+func Dump(ctx context.Context, program, version string, tree int, images, work string) error {
+	args := DumpArgs(tree, images, work, SkipsNetworkLock(version))
+	if _, err := process.Capture(ctx, Timeout, program, args...); err != nil {
 		return fmt.Errorf("criu dump: %w\n%s", err, logTail(filepath.Join(work, "dump.log")))
 	}
 	return nil
