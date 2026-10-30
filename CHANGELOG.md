@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+Profiles
+
+- `qwen38-flash-next-rtx6000-tep4` and `-tep8` keep the PLE n-gram table on
+  the GPUs (`engram-config.cpu_offload: false`). In pinned host memory the
+  CRIU dump carried it and restore copied it back through 4 KiB page faults:
+  16.4 GiB per rank in 10 s on TEP4. On the GPU it is part of the weights
+  pool, reloaded with them. TEP4: CRIU images 105 → 41 GiB, CRIU restore
+  18–19 s → 7–9 s, `up` 33–34 s → 21–23 s with a warm page cache, the KV cache
+  unchanged (4.3 M tokens); 85 GiB per GPU in use. TEP8: `up` 37.7 s →
+  29.4 s, CRIU restore ~16 s → 9.8 s, the KV cache unchanged (6.8 M tokens).
+
 Restore
 
 - The weights reload fingerprints each chunk as it lands, on the copy's
