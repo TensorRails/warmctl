@@ -33,10 +33,12 @@ type Options struct {
 	ModelDir       string
 	CRIU           string
 	CUDACheckpoint string
-	NoVerify       bool
-	VerifyWeights  bool
-	Threads        int
-	CPUTest        bool
+	// CUDABackend is the agent's cuda.Select mode: auto, driver or cli.
+	CUDABackend   string
+	NoVerify      bool
+	VerifyWeights bool
+	Threads       int
+	CPUTest       bool
 	// Serve keeps the engine serving until ctx ends; otherwise Run returns
 	// once serving started and leaves the receiver running.
 	Serve bool
