@@ -34,16 +34,16 @@ var arrivalWait = 2 * time.Minute
 // Stage copies the snapshot in dir to dst, every file of m and its
 // manifest.json, many ranges in flight, and returns how many bytes it read
 // from dir. A file stored as zstd frames is decoded frame by frame on the
-// workers, so dst always holds the files as they are. It is for a snapshot directory on a FUSE file system (an S3
-// bucket behind geesefs, as a RunPod Global Volume, or MooseFS, as its
-// network volumes): FUSE keeps no page cache the prefetch could fill for
-// later readers, and the restore's readers (CRIU or dmtcp_restart, the
-// weights reload) read one stream each. The files go lane by lane, those
-// the receiver starts with, those the process restore reads, the weights,
-// and done, when set, hears of each file once it is complete: the restore
-// runs while the weights still come. A copy whose manifest.json matches is
-// complete and is reused: manifest.json is written last. An encoded
-// snapshot is staged wherever it is.
+// workers, so dst always holds the files as they are. It is for a snapshot
+// directory on a FUSE file system (an S3 bucket behind geesefs, as a RunPod
+// Global Volume, or MooseFS, as its network volumes): FUSE keeps no page
+// cache the prefetch could fill for later readers, and the restore's readers
+// (CRIU or dmtcp_restart, the weights reload) read one stream each. The files
+// go lane by lane, those the receiver starts with, those the process restore
+// reads, the weights, and done, when set, hears of each file once it is
+// complete: the restore runs while the weights still come. A copy whose
+// manifest.json matches is complete and is reused: manifest.json is written
+// last. An encoded snapshot is staged wherever it is.
 func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(path string)) (int64, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
 	if err != nil {
@@ -59,33 +59,54 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(
 		done = func(string) {}
 	}
 	first, weights := lanes(m)
+	left, err := prepare(ctx, dir, dst, append(append([]manifest.File(nil), first...), weights...), done)
+	if err != nil {
+		return 0, err
+	}
+	read, err := copyJobs(ctx, dir, dst, stagePlan(first, weights), left, done)
+	if err != nil {
+		return read, err
+	}
+	return read, os.WriteFile(filepath.Join(dst, "manifest.json"), raw, 0o644)
+}
+
+// prepare waits for every file to show up in dir and makes it in dst at its
+// size under its staging name; an empty file is done at once. It returns how
+// many bytes each file still lacks.
+func prepare(ctx context.Context, dir, dst string, files []manifest.File, done func(string)) (
+	map[string]*atomic.Int64, error) {
 	left := map[string]*atomic.Int64{}
-	for _, f := range append(append([]manifest.File(nil), first...), weights...) {
+	for _, f := range files {
 		info, err := arrived(ctx, filepath.Join(dir, f.Path), f.Stored())
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if f.Size == 0 {
 			if err := create(info, filepath.Join(dst, f.Path), 0); err != nil {
-				return 0, err
+				return nil, err
 			}
 			done(f.Path)
 			continue
 		}
 		if err := create(info, filepath.Join(dst, f.Path)+staging, f.Size); err != nil {
-			return 0, err
+			return nil, err
 		}
 		left[f.Path] = new(atomic.Int64)
 		left[f.Path].Store(f.Size)
 	}
-	jobs := stagePlan(first, weights)
+	return left, nil
+}
 
+// copyJobs runs jobs on stageWorkers workers and returns the bytes they read
+// from dir; the first error stops them all.
+func copyJobs(ctx context.Context, dir, dst string, jobs []prefetchJob, left map[string]*atomic.Int64,
+	done func(string)) (int64, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch := feed(ctx, jobs)
 	var read atomic.Int64
 	var once sync.Once
-	var firstErr error
+	var first error
 	var wg sync.WaitGroup
 	for range stageWorkers {
 		wg.Add(1)
@@ -94,28 +115,34 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(
 			w := &stager{buf: make([]byte, 8<<20)}
 			defer w.close()
 			for j := range ch {
-				to := filepath.Join(dst, j.path)
-				n, got, err := w.run(filepath.Join(dir, j.path), to+staging, j)
+				got, err := w.stage(dir, dst, j, left[j.path], done)
 				read.Add(got)
-				if err == nil && left[j.path].Add(-n) == 0 {
-					if err = os.Rename(to+staging, to); err == nil {
-						done(j.path)
-					}
-				}
 				if err != nil {
-					once.Do(func() { firstErr = err; cancel() })
+					once.Do(func() { first = err; cancel() })
 				}
 			}
 		}()
 	}
 	wg.Wait()
-	if firstErr != nil {
-		return read.Load(), firstErr
+	if first != nil {
+		return read.Load(), first
 	}
-	if err := ctx.Err(); err != nil {
-		return read.Load(), err
+	return read.Load(), ctx.Err()
+}
+
+// stage does j; when j wrote the file's last bytes, the file takes its own
+// name and done hears of it. It returns the bytes it read.
+func (w *stager) stage(dir, dst string, j prefetchJob, left *atomic.Int64, done func(string)) (int64, error) {
+	to := filepath.Join(dst, j.path)
+	n, got, err := w.run(filepath.Join(dir, j.path), to+staging, j)
+	if err != nil || left.Add(-n) != 0 {
+		return got, err
 	}
-	return read.Load(), os.WriteFile(filepath.Join(dst, "manifest.json"), raw, 0o644)
+	if err := os.Rename(to+staging, to); err != nil {
+		return got, err
+	}
+	done(j.path)
+	return got, nil
 }
 
 // stagePlan is prefetchPlan's order, an encoded file cut at its frames.

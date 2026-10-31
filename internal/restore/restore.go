@@ -214,7 +214,8 @@ func CanRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools) error {
 	return canRestore(m, inPlace, tools, host.ProbeBackend)
 }
 
-func canRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools, probeHost func() (host.BackendProbe, error)) error {
+func canRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools,
+	probeHost func() (host.BackendProbe, error)) error {
 	switch b := m.Process.BackendName(); b {
 	case manifest.BackendCRIU:
 		if !inPlace {

@@ -33,8 +33,8 @@ func TestParseList(t *testing.T) {
 		t.Fatal("an empty list parsed")
 	}
 	m := NewMap(peers)
-	if real, err := m.Real([]int{44000, 40000}); err != nil || !reflect.DeepEqual(real, []int{59133, 59128}) {
-		t.Fatalf("real %v %v", real, err)
+	if got, err := m.Real([]int{44000, 40000}); err != nil || !reflect.DeepEqual(got, []int{59133, 59128}) {
+		t.Fatalf("real %v %v", got, err)
 	}
 	if virtual, err := m.Virtual([]int{59128}); err != nil || virtual[0] != 40000 {
 		t.Fatalf("virtual %v %v", virtual, err)
@@ -42,8 +42,8 @@ func TestParseList(t *testing.T) {
 	if _, err := m.Real([]int{45000}); err == nil {
 		t.Fatal("a PID outside the computation translated")
 	}
-	if real, err := m.Real(nil); err != nil || len(real) != 0 {
-		t.Fatalf("nil %v %v", real, err)
+	if got, err := m.Real(nil); err != nil || len(got) != 0 {
+		t.Fatalf("nil %v %v", got, err)
 	}
 }
 

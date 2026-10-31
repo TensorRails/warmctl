@@ -27,7 +27,8 @@ func parseSize(s string) (int64, error) {
 // the KV cache.
 // reload runs the engine's pool reload; while the weights still arrive
 // (r.weights), an arrival that fails ends it.
-func (r *restore) reload(ctx context.Context, fn func(context.Context) ([]vllm.Reloaded, error)) ([]vllm.Reloaded, error) {
+func (r *restore) reload(ctx context.Context, fn func(context.Context) ([]vllm.Reloaded, error)) (
+	[]vllm.Reloaded, error) {
 	if r.weights == nil {
 		return fn(ctx)
 	}

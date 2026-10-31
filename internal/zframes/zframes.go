@@ -43,66 +43,92 @@ func Encode(ctx context.Context, src, dst string, workers, split int) ([]int64, 
 	if err != nil {
 		return nil, 0, errors.Join(err, out.Close())
 	}
+	e := &encoder{enc: enc, batch: make([][]byte, workers), split: split}
+	ends, err := e.copy(ctx, in, out)
+	if err != nil {
+		return nil, 0, errors.Join(err, out.Close())
+	}
+	return ends, max(e.split, 1), out.Close()
+}
+
+// encoder compresses a batch of frames at a time: read in order, compressed
+// at once, written in order.
+type encoder struct {
+	enc   *zstd.Encoder
+	batch [][]byte
+	split int
+}
+
+func (e *encoder) copy(ctx context.Context, in io.Reader, out io.Writer) ([]int64, error) {
 	var ends []int64
 	var end int64
-	batch := make([][]byte, workers)
 	for {
-		// A batch of frames is read in order, compressed at once, written in order.
-		n := 0
-		for ; n < workers; n++ {
-			if batch[n] == nil {
-				batch[n] = make([]byte, Size)
-			}
-			got, err := io.ReadFull(in, batch[n][:Size])
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-				return nil, 0, errors.Join(err, out.Close())
-			}
-			batch[n] = batch[n][:got]
-			if got < Size {
-				n++
-				break
-			}
+		n, last, err := e.read(in)
+		if err != nil || n == 0 {
+			return ends, err
 		}
-		if n == 0 {
-			break
-		}
-		if split == 0 {
-			split = 1
-			if len(enc.EncodeAll(planes(batch[0], 2), nil)) < len(enc.EncodeAll(batch[0], nil)) {
-				split = 2
-			}
-		}
-		frames := make([][]byte, n)
-		var wg sync.WaitGroup
-		for i := range n {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				frames[i] = enc.EncodeAll(planes(batch[i], split), nil)
-			}()
-		}
-		wg.Wait()
-		for _, f := range frames {
+		e.choose(e.batch[0])
+		for _, f := range e.compress(n) {
 			if _, err := out.Write(f); err != nil {
-				return nil, 0, errors.Join(err, out.Close())
+				return nil, err
 			}
 			end += int64(len(f))
 			ends = append(ends, end)
 		}
 		if err := ctx.Err(); err != nil {
-			return nil, 0, errors.Join(err, out.Close())
+			return nil, err
 		}
-		if len(batch[n-1]) < Size {
-			break
+		if last {
+			return ends, nil
 		}
 	}
-	if split == 0 {
-		split = 1
+}
+
+// read fills the batch with up to len(batch) frames and says whether in
+// ended.
+func (e *encoder) read(in io.Reader) (int, bool, error) {
+	for n := range e.batch {
+		if e.batch[n] == nil {
+			e.batch[n] = make([]byte, Size)
+		}
+		got, err := io.ReadFull(in, e.batch[n][:Size])
+		e.batch[n] = e.batch[n][:got]
+		switch {
+		case errors.Is(err, io.EOF):
+			return n, true, nil
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return n + 1, true, nil
+		case err != nil:
+			return 0, false, err
+		}
 	}
-	return ends, split, out.Close()
+	return len(e.batch), false, nil
+}
+
+// choose settles an unset split on the first frame.
+func (e *encoder) choose(first []byte) {
+	if e.split != 0 {
+		return
+	}
+	e.split = 1
+	if len(e.enc.EncodeAll(planes(first, 2), nil)) < len(e.enc.EncodeAll(first, nil)) {
+		e.split = 2
+	}
+}
+
+// compress encodes the batch's first n frames at once.
+func (e *encoder) compress(n int) [][]byte {
+	frames := make([][]byte, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			frames[i] = e.enc.EncodeAll(planes(e.batch[i], e.split), nil)
+		}()
+	}
+	wg.Wait()
+	return frames
 }
 
 // Frame is where frame i of a file of size bytes lies, in the stored file

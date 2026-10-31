@@ -131,6 +131,25 @@ func (c Config) Validate() error {
 	if !abs(c.Control) || len(c.Trees) == 0 {
 		return errors.New("agent: control socket and trees are required")
 	}
+	if err := c.validateBackend(); err != nil {
+		return err
+	}
+	if c.Inference != "" && (!abs(c.Inference) || c.EngineAddr == "") {
+		return errors.New("agent: inference socket needs an absolute path and an engine address")
+	}
+	for _, t := range c.Trees {
+		if t.Name == "" || !abs(t.Path) {
+			return fmt.Errorf("agent: invalid tree %+v", t)
+		}
+	}
+	if c.IPC != "" && c.IPC != interpose.Native && !abs(c.IPCCoordinator) {
+		return fmt.Errorf("agent: ipc %s needs the coordinator's path", c.IPC)
+	}
+	return c.validateMode()
+}
+
+// validateBackend checks what the process tree's backend needs.
+func (c Config) validateBackend() error {
 	switch c.Backend {
 	case "", BackendCRIU:
 		if c.CRIU == "" {
@@ -146,17 +165,11 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("agent: unknown backend %q", c.Backend)
 	}
-	if c.Inference != "" && (!abs(c.Inference) || c.EngineAddr == "") {
-		return errors.New("agent: inference socket needs an absolute path and an engine address")
-	}
-	for _, t := range c.Trees {
-		if t.Name == "" || !abs(t.Path) {
-			return fmt.Errorf("agent: invalid tree %+v", t)
-		}
-	}
-	if c.IPC != "" && c.IPC != interpose.Native && !abs(c.IPCCoordinator) {
-		return fmt.Errorf("agent: ipc %s needs the coordinator's path", c.IPC)
-	}
+	return nil
+}
+
+// validateMode checks what a snapshot or a restore needs.
+func (c Config) validateMode() error {
 	switch c.Mode {
 	case ModeSnapshot:
 		if len(c.Argv) == 0 || !abs(c.Log, c.Out) {

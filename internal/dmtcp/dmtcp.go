@@ -225,8 +225,7 @@ func Images(dir string) ([]string, error) {
 // fails as soon as a peer leaves or failed, checked on every poll, says so.
 func (t Tools) WaitPeers(ctx context.Context, n int, timeout time.Duration, failed func() error) ([]Peer, error) {
 	deadline := time.Now().Add(timeout)
-	most := 0
-	var last error
+	w := peerWait{n: n}
 	for {
 		if failed != nil {
 			if err := failed(); err != nil {
@@ -235,24 +234,15 @@ func (t Tools) WaitPeers(ctx context.Context, n int, timeout time.Duration, fail
 		}
 		peers, err := t.List(ctx)
 		if err == nil {
-			if len(peers) < most {
-				return nil, fmt.Errorf("dmtcp: %d of %d restarted processes left; the log above says why", most-len(peers), most)
+			if err := w.left(peers); err != nil {
+				return nil, err
 			}
-			most = len(peers)
-			running := 0
-			for _, p := range peers {
-				if p.State == "RUNNING" {
-					running++
-				}
-			}
-			if running == n && len(peers) == n {
+			if err = w.running(peers); err == nil {
 				return peers, nil
 			}
-			err = fmt.Errorf("%d of %d peers running", running, n)
 		}
-		last = err
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("dmtcp: restart not done after %s: %w", timeout, last)
+			return nil, fmt.Errorf("dmtcp: restart not done after %s: %w", timeout, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -260,6 +250,32 @@ func (t Tools) WaitPeers(ctx context.Context, n int, timeout time.Duration, fail
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// peerWait follows a restart's peer list.
+type peerWait struct{ n, most int }
+
+// left fails once the list is shorter than it was: a restarted process died.
+func (w *peerWait) left(peers []Peer) error {
+	if len(peers) < w.most {
+		return fmt.Errorf("dmtcp: %d of %d restarted processes left; the log above says why", w.most-len(peers), w.most)
+	}
+	w.most = len(peers)
+	return nil
+}
+
+// running is nil once all n peers run.
+func (w *peerWait) running(peers []Peer) error {
+	running := 0
+	for _, p := range peers {
+		if p.State == "RUNNING" {
+			running++
+		}
+	}
+	if running == w.n && len(peers) == w.n {
+		return nil
+	}
+	return fmt.Errorf("%d of %d peers running", running, w.n)
 }
 
 // Map is a peer list as virtual-to-real and real-to-virtual PIDs.
@@ -278,7 +294,7 @@ func NewMap(peers []Peer) Map {
 func (m Map) Real(virtual []int) ([]int, error) { return translate(virtual, m.ToReal, "virtual") }
 
 // Virtual translates real PIDs; it fails on one the computation lacks.
-func (m Map) Virtual(real []int) ([]int, error) { return translate(real, m.ToVirtual, "real") }
+func (m Map) Virtual(pids []int) ([]int, error) { return translate(pids, m.ToVirtual, "real") }
 
 func translate(in []int, table map[int]int, kind string) ([]int, error) {
 	out := make([]int, 0, len(in))

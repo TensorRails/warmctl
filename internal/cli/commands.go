@@ -59,7 +59,8 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.IntVar(&c.threads, "threads", 0, "pool copy threads per rank (default 4)")
 	fs.BoolVar(&c.cpuTest, "test-cpu", false, "end-to-end test on a CPU host: no GPU devices, no io_uring check")
 	fs.StringVar(&c.dmtcp.Dir, "dmtcp-dir", dmtcp.DefaultDir, "directory of DMTCP's programs, for the dmtcp backend")
-	fs.StringVar(&c.dmtcp.Plugin, "dmtcp-plugin", dmtcp.DefaultPlugin, "warmctl's fdkeep DMTCP plugin, for the dmtcp backend")
+	fs.StringVar(&c.dmtcp.Plugin, "dmtcp-plugin", dmtcp.DefaultPlugin,
+		"warmctl's fdkeep DMTCP plugin, for the dmtcp backend")
 }
 
 // parse accepts the positional argument before, after or between the
