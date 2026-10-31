@@ -28,29 +28,31 @@ var arrivalWait = 2 * time.Minute
 // Stage copies the snapshot in dir to dst, every file of m and its
 // manifest.json, many ranges in flight, and returns how many bytes it
 // copied. It is for a snapshot directory on a FUSE file system (an S3
-// bucket behind geesefs, as a RunPod Global Volume): FUSE keeps no page
-// cache the prefetch could fill for later readers, and the restore's readers
-// (CRIU or dmtcp_restart, the weights reload) read one stream each. The
-// process images go first. A copy whose manifest.json matches is complete
-// and is reused: manifest.json is written last.
-func Stage(ctx context.Context, dir, dst string, m manifest.Manifest) (int64, error) {
+// bucket behind geesefs, as a RunPod Global Volume, or MooseFS, as its
+// network volumes): FUSE keeps no page cache the prefetch could fill for
+// later readers, and the restore's readers (CRIU or dmtcp_restart, the
+// weights reload) read one stream each. The files go lane by lane, those
+// the receiver starts with, those the process restore reads, the weights,
+// and done, when set, hears of each file once it is complete: the restore
+// runs while the weights still come. A copy whose manifest.json matches is
+// complete and is reused: manifest.json is written last.
+func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(path string)) (int64, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
 	if err != nil {
 		return 0, err
 	}
-	if have, err := os.ReadFile(filepath.Join(dst, "manifest.json")); err == nil && bytes.Equal(have, raw) {
+	if staged(dst, raw) {
 		return 0, nil
 	}
 	if err := os.RemoveAll(dst); err != nil {
 		return 0, err
 	}
-	var images, rest []manifest.File
-	for _, f := range m.Files {
-		if f.Role == manifest.RoleCRIU {
-			images = append(images, f)
-		} else {
-			rest = append(rest, f)
-		}
+	if done == nil {
+		done = func(string) {}
+	}
+	first, weights := lanes(m)
+	left := map[string]*atomic.Int64{}
+	for _, f := range append(append([]manifest.File(nil), first...), weights...) {
 		info, err := arrived(ctx, filepath.Join(dir, f.Path), f.Size)
 		if err != nil {
 			return 0, err
@@ -58,15 +60,21 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest) (int64, er
 		if err := create(info, filepath.Join(dst, f.Path), f.Size); err != nil {
 			return 0, err
 		}
+		if f.Size == 0 {
+			done(f.Path)
+			continue
+		}
+		left[f.Path] = new(atomic.Int64)
+		left[f.Path].Store(f.Size)
 	}
-	jobs := prefetchPlan(append(images, rest...), nil, prefetchChunk, 0)
+	jobs := prefetchPlan(first, weights, prefetchChunk, 0)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch := feed(ctx, jobs)
 	var copied atomic.Int64
 	var once sync.Once
-	var first error
+	var firstErr error
 	var wg sync.WaitGroup
 	for range stageWorkers {
 		wg.Add(1)
@@ -77,19 +85,46 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest) (int64, er
 				n, err := copyRange(filepath.Join(dir, j.path), filepath.Join(dst, j.path), j.offset, j.size, buf)
 				copied.Add(n)
 				if err != nil {
-					once.Do(func() { first = err; cancel() })
+					once.Do(func() { firstErr = err; cancel() })
+					continue
+				}
+				if left[j.path].Add(-n) == 0 {
+					done(j.path)
 				}
 			}
 		}()
 	}
 	wg.Wait()
-	if first != nil {
-		return copied.Load(), first
+	if firstErr != nil {
+		return copied.Load(), firstErr
 	}
 	if err := ctx.Err(); err != nil {
 		return copied.Load(), err
 	}
 	return copied.Load(), os.WriteFile(filepath.Join(dst, "manifest.json"), raw, 0o644)
+}
+
+// staged is whether dst holds a complete copy of the snapshot whose
+// manifest.json is raw.
+func staged(dst string, raw []byte) bool {
+	have, err := os.ReadFile(filepath.Join(dst, "manifest.json"))
+	return err == nil && bytes.Equal(have, raw)
+}
+
+// lanes orders m's files as a restore needs them: the receiver's launch
+// files, the rest the process restore reads, then the weights.
+func lanes(m manifest.Manifest) (first, weights []manifest.File) {
+	launch := map[string]bool{}
+	for _, f := range m.LaunchLane() {
+		launch[f.Path] = true
+		first = append(first, f)
+	}
+	for _, f := range m.FirstLane() {
+		if !launch[f.Path] {
+			first = append(first, f)
+		}
+	}
+	return first, m.WeightLane()
 }
 
 // arrived waits, up to arrivalWait, until src exists with size bytes.

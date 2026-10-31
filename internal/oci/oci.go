@@ -245,7 +245,7 @@ func pushIfMissing(ctx context.Context, p *pusher, d ocispec.Descriptor,
 // output, which must not exist. It returns the snapshot's manifest.
 func Pull(ctx context.Context, target oras.Target, ref, output string, s store.Store,
 	o Options) (m manifest.Manifest, err error) {
-	defer func() { o.Arrivals.end(err) }()
+	defer func() { o.Arrivals.End(err) }()
 	desc, am, m, config, err := resolve(ctx, target, ref)
 	if err != nil {
 		return m, err
@@ -287,7 +287,7 @@ func Pull(ctx context.Context, target oras.Target, ref, output string, s store.S
 			os.RemoveAll(dir)
 		}
 	}()
-	o.Arrivals.begin(output, m, config)
+	o.Arrivals.Begin(output, m, config)
 	got := &tally{}
 	if err := download(ctx, target, s, arrivalOrder(m, files), dir, got, o); err != nil {
 		return m, err
@@ -467,7 +467,7 @@ func (dl *downloader) checked(sha, name string) error {
 			left = append(left, f)
 			continue
 		}
-		dl.arrivals.arrived(f.Path)
+		dl.arrivals.Arrived(f.Path)
 	}
 	if len(left) > 0 {
 		dl.mu.Lock()
@@ -496,7 +496,7 @@ func (dl *downloader) place(f manifest.File) error {
 	if err := link(dl.ctx, dl.s, f, dl.dir); err != nil {
 		return err
 	}
-	dl.arrivals.arrived(f.Path)
+	dl.arrivals.Arrived(f.Path)
 	return nil
 }
 

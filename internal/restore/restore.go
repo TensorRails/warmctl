@@ -18,6 +18,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/gateway"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
+	"github.com/TensorRails/warmctl/v2/internal/oci"
 	"github.com/TensorRails/warmctl/v2/internal/run"
 )
 
@@ -162,22 +163,37 @@ func (r *restore) read(ctx context.Context) error {
 	return nil
 }
 
-// stage restores a snapshot on a FUSE file system from a local copy (Stage).
+// stage restores a snapshot on a FUSE file system from a local copy that
+// Stage makes while the restore runs: the copy is the restore's Arrival, as
+// a pull is, so the process restore starts once its files are in and the
+// weights keep coming. A complete copy from an earlier up is reused.
 func (r *restore) stage(ctx context.Context) error {
 	dst := filepath.Join(r.o.StateDir, "staged", r.m.ID)
-	start := time.Now()
-	n, err := Stage(ctx, r.snapshot, dst, r.m)
+	raw, err := os.ReadFile(filepath.Join(r.snapshot, "manifest.json"))
 	if err != nil {
-		return fmt.Errorf("copy from FUSE to %s: %w", dst, err)
+		return err
 	}
-	seconds := time.Since(start).Seconds()
-	if n == 0 {
+	if staged(dst, raw) {
 		r.p.Printf("snapshot on FUSE: restoring from the complete copy in %s", dst)
-	} else {
-		r.p.Printf("snapshot on FUSE: copied %.2f GiB to %s in %.1fs (%.2f GiB/s)", float64(n)/(1<<30), dst,
-			seconds, float64(n)/(1<<30)/seconds)
+		r.snapshot = dst
+		return nil
 	}
-	r.snapshot = dst
+	a := oci.NewArrivals()
+	a.Begin(dst, r.m, raw)
+	src, start := r.snapshot, time.Now()
+	go func() {
+		n, err := Stage(ctx, src, dst, r.m, a.Arrived)
+		if err != nil {
+			err = fmt.Errorf("copy from FUSE to %s: %w", dst, err)
+		} else {
+			seconds := time.Since(start).Seconds()
+			r.p.Printf("snapshot on FUSE: copied %.2f GiB to %s in %.1fs (%.2f GiB/s)", float64(n)/(1<<30), dst,
+				seconds, float64(n)/(1<<30)/seconds)
+		}
+		a.End(err)
+	}()
+	r.p.Printf("snapshot on FUSE: copying it to %s while it restores", dst)
+	r.o.Arrival, r.snapshot = a, dst
 	return nil
 }
 

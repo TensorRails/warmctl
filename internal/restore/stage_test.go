@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,16 +35,21 @@ func TestStage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "manifest.json"), []byte(`{"id":"q06"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	n, err := Stage(ctx, src, dst, m)
+	var mu sync.Mutex
+	var done []string
+	n, err := Stage(ctx, src, dst, m, func(p string) { mu.Lock(); done = append(done, p); mu.Unlock() })
 	if err != nil || n != int64(len(image)+len("weights")) {
 		t.Fatalf("copied %d: %v", n, err)
+	}
+	if len(done) != len(files) {
+		t.Fatalf("done heard of %v", done)
 	}
 	for p, body := range withFile(files, "manifest.json", []byte(`{"id":"q06"}`)) {
 		if got, err := os.ReadFile(filepath.Join(dst, p)); err != nil || !bytes.Equal(got, body) {
 			t.Fatalf("%s differs: %v", p, err)
 		}
 	}
-	if n, err := Stage(ctx, src, dst, m); err != nil || n != 0 {
+	if n, err := Stage(ctx, src, dst, m, nil); err != nil || n != 0 {
 		t.Fatalf("a complete copy was copied again: %d %v", n, err)
 	}
 	// A source that stays shorter than the manifest says is an error, not a
@@ -58,7 +64,7 @@ func TestStage(t *testing.T) {
 			m.Files[i].Size = int64(len(image)) + 10
 		}
 	}
-	if _, err := Stage(ctx, src, dst, m); err == nil || !strings.Contains(err.Error(), "not there") {
+	if _, err := Stage(ctx, src, dst, m, nil); err == nil || !strings.Contains(err.Error(), "not there") {
 		t.Fatalf("short source: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "manifest.json")); err == nil {
@@ -80,7 +86,7 @@ func TestStageWaitsForLateFiles(t *testing.T) {
 		os.MkdirAll(filepath.Join(src, "weights"), 0o755)
 		os.WriteFile(filepath.Join(src, "weights/part-0"), body, 0o444)
 	}()
-	if n, err := Stage(context.Background(), src, dst, m); err != nil || n != int64(len(body)) {
+	if n, err := Stage(context.Background(), src, dst, m, nil); err != nil || n != int64(len(body)) {
 		t.Fatalf("copied %d: %v", n, err)
 	}
 	if got, err := os.ReadFile(filepath.Join(dst, "weights/part-0")); err != nil || !bytes.Equal(got, body) {
