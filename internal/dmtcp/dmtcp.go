@@ -46,10 +46,12 @@ const (
 //   - vLLM's spawn hands the engine core a pipe DMTCP turned into a
 //     socketpair and does not drain in the child, so the checkpoint never
 //     ends: the engine core is forked instead;
-//   - libuv must not batch epoll_ctl through io_uring, which DMTCP cannot see.
+//   - libuv must not batch epoll_ctl through io_uring, which DMTCP cannot see;
+//   - UCX (NIXL's transport, in the vLLM image) must not hook mmap and shmat:
+//     its hooks call the originals past DMTCP's wrappers.
 var Env = []string{
 	"OMP_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1", "MKL_NUM_THREADS=1",
-	"VLLM_WORKER_MULTIPROC_METHOD=fork", "UV_USE_IO_URING=0",
+	"VLLM_WORKER_MULTIPROC_METHOD=fork", "UV_USE_IO_URING=0", "UCX_MEM_MMAP_HOOK_MODE=none",
 }
 
 // Tools are DMTCP's programs and the fdkeep plugin.
