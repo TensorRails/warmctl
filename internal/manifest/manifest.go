@@ -100,6 +100,9 @@ type Owner struct {
 
 // Process describes the dumped process tree.
 type Process struct {
+	// Backend dumped the tree: criu (empty in older snapshots) or dmtcp, whose
+	// PIDs here are DMTCP's virtual ones.
+	Backend             string   `json:"backend,omitempty"`
 	RootPID             int      `json:"root_pid"`
 	MaxID               int      `json:"max_id"`
 	PIDFloor            int      `json:"pid_floor"`

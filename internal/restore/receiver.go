@@ -57,6 +57,12 @@ func (r *restore) tools() (agent.Config, error) {
 	}
 	cfg := snapshot.AgentConfig(r.guest().state)
 	cfg.CUDABackend = r.o.CUDABackend
+	if r.dmtcp() {
+		// No UTS namespace of its own: the restarted engine keeps the pod's name.
+		cfg.Backend, cfg.DMTCP = agent.BackendDMTCP, r.o.DMTCP
+		cfg.DMTCP.TmpDir = filepath.Join(r.dir, "dmtcp-tmp")
+		return cfg, nil
+	}
 	// The agent runs in a UTS namespace of its own and names it as a
 	// receiver container is named; the pod's own host name stays.
 	cfg.Hostname = docker.Hostname

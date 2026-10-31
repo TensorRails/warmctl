@@ -253,6 +253,7 @@ func (b *bake) process() manifest.Process {
 		rankOf[w.PID] = w.Rank
 	}
 	p := manifest.Process{
+		Backend: b.backend,
 		RootPID: b.frozen.Tree.Root, MaxID: b.frozen.Tree.MaxID(), PIDFloor: criu.PIDFloor,
 		NeedsModel:          b.frozen.References[b.launch.Profile.Model.MountPath()] > 0,
 		CollectivesDetached: b.detached() || b.ipc.Interposed, EngineURL: EngineAddr,

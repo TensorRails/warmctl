@@ -79,6 +79,23 @@ func TestConfigValidate(t *testing.T) {
 	if bad.Validate() == nil {
 		t.Fatal("relative tree accepted")
 	}
+	dm := snap
+	dm.CRIU, dm.Backend, dm.DMTCP.Plugin = "", BackendDMTCP, "/opt/warmctl/dmtcp/libdmtcp_fdkeep.so"
+	if err := dm.Validate(); err != nil {
+		t.Fatalf("dmtcp backend without criu: %v", err)
+	}
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.DMTCP.Plugin = "" },
+		func(c *Config) { c.IPC, c.IPCCoordinator = "interpose", "/opt/warmctl/ipc/coordinator" },
+		func(c *Config) { c.Backend = "podman" },
+		func(c *Config) { c.Backend = BackendCRIU },
+	} {
+		bad := dm
+		mutate(&bad)
+		if bad.Validate() == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
+	}
 	name := filepath.Join(t.TempDir(), "c.json")
 	if err := snap.Write(name); err != nil {
 		t.Fatal(err)

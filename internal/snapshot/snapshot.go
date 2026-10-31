@@ -14,6 +14,7 @@ import (
 
 	"github.com/TensorRails/warmctl/v2"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
@@ -49,6 +50,14 @@ type Options struct {
 	CPUTest  bool
 	Version  string
 	Progress *run.Progress
+	// InPlace bakes in this container, without Docker: the engine runs as a
+	// child of the agent, itself a child of this process, and sees real
+	// paths (docs/dmtcp.md).
+	InPlace bool
+	// Backend snapshots the process tree in place: auto, criu or dmtcp. A
+	// donor container always runs CRIU.
+	Backend string
+	DMTCP   dmtcp.Tools
 }
 
 type bake struct {
@@ -85,6 +94,8 @@ type bake struct {
 	frozen      agent.FreezeResult
 	dumped      agent.DumpResult
 	manifest    manifest.Manifest
+	// backend snapshots the process tree: agent.BackendCRIU or BackendDMTCP.
+	backend string
 }
 
 // Run bakes and returns the published manifest.
@@ -139,9 +150,17 @@ func (b *bake) resolve(context.Context) error {
 }
 
 func (b *bake) preflight(ctx context.Context) error {
+	if err := b.chooseBackend(); err != nil {
+		return err
+	}
 	if disabled, err := host.IOUringDisabled(); !b.o.CPUTest && (err != nil || disabled != 2) {
-		return errors.New("kernel.io_uring_disabled must be 2 (sysctl -w kernel.io_uring_disabled=2): " +
-			"CRIU cannot dump io_uring")
+		if b.backend != agent.BackendDMTCP {
+			return errors.New("kernel.io_uring_disabled must be 2 (sysctl -w kernel.io_uring_disabled=2): " +
+				"CRIU cannot dump io_uring")
+		}
+		// A container that may not run CRIU may not set the sysctl either.
+		b.p.Printf("warning: kernel.io_uring_disabled is %d, not 2 (%v): the engine runs with UV_USE_IO_URING=0, "+
+			"and a process that sets up io_uring anyway will not restart", disabled, err)
 	}
 	all, err := host.Inventory(ctx)
 	if err != nil {
@@ -169,10 +188,39 @@ func (b *bake) preflight(ctx context.Context) error {
 	if b.topology, b.topoSHA, err = host.Topology(ctx, b.gpus); err != nil {
 		return err
 	}
+	if b.o.InPlace {
+		return nil
+	}
 	if b.dk, err = docker.New(ctx, b.o.DockerSocket); err != nil {
 		return err
 	}
 	return b.dk.CheckInit(ctx)
+}
+
+// chooseBackend decides how the tree is dumped: a donor container is made
+// to run CRIU; in place, it is what this container may run.
+func (b *bake) chooseBackend() error {
+	if !b.o.InPlace {
+		if b.o.Backend != "" && b.o.Backend != host.BackendAuto && b.o.Backend != host.BackendCRIU {
+			return fmt.Errorf("backend %s: only an in-place bake (--in-place) runs without CRIU", b.o.Backend)
+		}
+		b.backend = agent.BackendCRIU
+		return nil
+	}
+	probe, err := host.ProbeBackend()
+	if err != nil {
+		return err
+	}
+	backend, why, err := host.ChooseBackend(b.o.Backend, probe)
+	if err != nil {
+		return err
+	}
+	b.backend = backend
+	b.p.Printf("process snapshot backend: %s (%s)", backend, why)
+	if backend == agent.BackendDMTCP {
+		return b.o.DMTCP.Check()
+	}
+	return nil
 }
 
 // Hardware finds the hardware row of the selected GPUs: all of one model,

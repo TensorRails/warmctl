@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/config"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/gateway"
 	"github.com/TensorRails/warmctl/v2/internal/host"
@@ -39,6 +40,7 @@ type common struct {
 	state, dockerSock, progress, criu, helper, scratch, cudaExec, cudaBackend string
 	noVerify, cpuTest                                                         bool
 	threads                                                                   int
+	dmtcp                                                                     dmtcp.Tools
 }
 
 func (c *common) register(fs *flag.FlagSet) {
@@ -56,6 +58,9 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.BoolVar(&c.noVerify, "no-verify", false, "canary only warns")
 	fs.IntVar(&c.threads, "threads", 0, "pool copy threads per rank (default 4)")
 	fs.BoolVar(&c.cpuTest, "test-cpu", false, "end-to-end test on a CPU host: no GPU devices, no io_uring check")
+	fs.StringVar(&c.dmtcp.Dir, "dmtcp-dir", "", "directory of DMTCP's programs, for the dmtcp backend (default: PATH)")
+	fs.StringVar(&c.dmtcp.Plugin, "dmtcp-plugin", "/opt/warmctl/dmtcp/libdmtcp_fdkeep.so",
+		"warmctl's fdkeep DMTCP plugin, for the dmtcp backend")
 }
 
 // parse accepts the positional argument before, after or between the
@@ -97,6 +102,10 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer, vers
 	fs.Int64Var(&o.PartBytes, "part-bytes", 1<<30, "size of a weights part")
 	fs.DurationVar(&o.ReadyTimeout, "ready-timeout", 90*time.Minute, "how long the engine may take to load")
 	fs.StringVar(&o.Cuinterpose, "cuinterpose", "", "cuInterpose build directory (default: cuinterpose/ next to warmctl)")
+	fs.BoolVar(&o.InPlace, "in-place", false, "bake in this container, without Docker (a pod without privileges: "+
+		"docs/dmtcp.md)")
+	fs.StringVar(&o.Backend, "backend", host.BackendAuto, "in place, how the process tree is snapshotted: "+
+		"auto (CRIU when this container may run it, else DMTCP), criu or dmtcp")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -110,7 +119,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer, vers
 	o.ModelDir, _ = filepath.Abs(o.ModelDir)
 	o.Set, o.ProfileDirs, o.StateDir, o.DockerSocket = sets, dirs, c.state, c.dockerSock
 	o.CRIU, o.CUDACheckpoint, o.NoVerify, o.Threads, o.Version = c.criu, c.helper, c.noVerify, c.threads, version
-	o.CPUTest, o.CUDABackend = c.cpuTest, c.cudaBackend
+	o.CPUTest, o.CUDABackend, o.DMTCP = c.cpuTest, c.cudaBackend, c.dmtcp
 	o.Progress = run.NewProgress(stdout, c.progress)
 	m, err := snapshot.Run(ctx, o)
 	if err != nil {
@@ -167,6 +176,7 @@ func runUp(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	o.StateDir, o.DockerSocket, o.CUDAExecution, o.NoVerify = c.state, c.dockerSock, c.cudaExec, c.noVerify
 	o.CRIU, o.CUDACheckpoint, o.Threads, o.Serve, o.CPUTest = c.criu, c.helper, c.threads, true, c.cpuTest
+	o.DMTCP = c.dmtcp
 	o.CUDABackend = c.cudaBackend
 	if err := restore.Run(ctx, o); err != nil {
 		o.Progress.Printf("up failed: %v", err)

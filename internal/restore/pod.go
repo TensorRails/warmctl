@@ -12,7 +12,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -24,7 +23,6 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/pyext"
 	"github.com/TensorRails/warmctl/v2/internal/run"
-	"github.com/TensorRails/warmctl/v2/internal/runtimefs"
 	"github.com/TensorRails/warmctl/v2/internal/snapshot"
 )
 
@@ -244,28 +242,7 @@ func VisibleGPUs(listed []string, inventory []host.GPU) (string, error) {
 
 // podEnv is the agent's environment in a pod: the container's, with the
 // snapshot's launch environment over it, as a receiver container has.
-func podEnv(base []string, launch map[string]string) []string {
-	out := make([]string, 0, len(base)+len(launch))
-	for _, kv := range base {
-		if key, _, _ := strings.Cut(kv, "="); !hasKey(launch, key) {
-			out = append(out, kv)
-		}
-	}
-	keys := make([]string, 0, len(launch))
-	for key := range launch {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		out = append(out, key+"="+launch[key])
-	}
-	return out
-}
-
-func hasKey(m map[string]string, key string) bool {
-	_, ok := m[key]
-	return ok
-}
+func podEnv(base []string, launch map[string]string) []string { return run.MergeEnv(base, launch) }
 
 // engineMounts are what the restored engine finds where the donor had it:
 // the snapshot's Python package, its cuInterpose build (mapped by every
@@ -299,6 +276,9 @@ func podModel(given string, m manifest.Manifest) (string, error) {
 // checkPod is the pod half of the preflight: what Docker would have given
 // a receiver container, Kubernetes must have given this one.
 func (r *restore) checkPod() error {
+	if r.dmtcp() {
+		return r.checkUnprivileged()
+	}
 	comm, _ := os.ReadFile("/proc/1/comm")
 	if err := checkInit(string(comm), os.Getpid()); err != nil {
 		return err
@@ -331,6 +311,21 @@ func (r *restore) checkPod() error {
 		}
 	}
 	if err := r.checkTrees(); err != nil {
+		return err
+	}
+	r.warnPod()
+	return r.checkBase()
+}
+
+// dmtcp is whether the snapshot's tree restarts under DMTCP.
+func (r *restore) dmtcp() bool { return r.m.Process.Backend == agent.BackendDMTCP }
+
+// checkUnprivileged is the pod half of the preflight for a snapshot the
+// dmtcp backend took: nothing is mounted, no namespace made and no PID
+// moved, so none of a receiver container's privileges is asked for; DMTCP
+// must be here, and claimPod refuses trees it may not take.
+func (r *restore) checkUnprivileged() error {
+	if err := r.o.DMTCP.Check(); err != nil {
 		return err
 	}
 	r.warnPod()
@@ -406,7 +401,7 @@ func (r *restore) claimPod() error {
 	}
 	for _, t := range agent.DefaultTrees {
 		size, ours := r.tmpfs(t.Path)
-		if !ours {
+		if !ours || r.dmtcp() {
 			if err := claimDir(t.Path); err != nil {
 				return err
 			}
@@ -425,32 +420,8 @@ func (r *restore) claimPod() error {
 	return nil
 }
 
-// claimDir makes dir this restore's: it may be empty or hold what an
-// earlier restore left under its mark, which goes; anything else may be
-// the operator's data on a volume and is refused.
-func claimDir(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		entries, err = nil, os.MkdirAll(dir, 0o755)
-	}
-	if err != nil {
-		return err
-	}
-	marked := false
-	for _, e := range entries {
-		marked = marked || e.Name() == runtimefs.Mark
-	}
-	if len(entries) > 0 && !marked {
-		return fmt.Errorf("%s holds files no restore left there (no %s): mount an emptyDir at %s, "+
-			"or leave it to the container's layer", dir, runtimefs.Mark, dir)
-	}
-	for _, e := range entries {
-		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
-			return err
-		}
-	}
-	return os.WriteFile(filepath.Join(dir, runtimefs.Mark), []byte("a warmctl restore's directory\n"), 0o644)
-}
+// claimDir makes dir this restore's (run.ClaimDir).
+func claimDir(dir string) error { return run.ClaimDir(dir) }
 
 // startPod mounts what the restored engine needs and starts the agent as
 // this process's child.
@@ -467,6 +438,13 @@ func (r *restore) startPod(ctx context.Context) error {
 		r.warnDriver()
 	}
 	for _, m := range append(r.engineMounts(model), drivers...) {
+		if r.dmtcp() {
+			// No mounts without privileges: the files are linked in.
+			if err := run.Place(m.Source, m.Target); err != nil {
+				return fmt.Errorf("place %s at %s: %w", m.Source, m.Target, err)
+			}
+			continue
+		}
 		if err := mountPoint(m.Source, m.Target); err != nil {
 			return err
 		}
@@ -482,7 +460,7 @@ func (r *restore) startPod(ctx context.Context) error {
 	r.c, err = run.Spawn(ctx, run.Child{
 		Name: r.o.ID, Argv: []string{self, "agent", "--config", filepath.Join(r.dir, "work", "agent.json")},
 		Env: podEnv(os.Environ(), r.m.Launch.Env), IO: filepath.Join(r.dir, "io"), Log: snapshot.EngineLog,
-		AgentLog: filepath.Join(r.dir, "agent.log"), Output: os.Stderr, Ranks: r.m.Launch.Ranks, NewUTS: true,
+		AgentLog: filepath.Join(r.dir, "agent.log"), Output: os.Stderr, Ranks: r.m.Launch.Ranks, NewUTS: !r.dmtcp(),
 	})
 	if err != nil {
 		return err

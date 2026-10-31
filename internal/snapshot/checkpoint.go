@@ -17,7 +17,7 @@ func (b *bake) export(ctx context.Context) error {
 		part = 1 << 30
 	}
 	var err error
-	if b.exports, err = b.c.Engine.ExportPool(ctx, guestState+"/out/weights", part, threads(b.o.Threads)); err != nil {
+	if b.exports, err = b.c.Engine.ExportPool(ctx, b.state()+"/out/weights", part, threads(b.o.Threads)); err != nil {
 		return err
 	}
 	var bytes int64
@@ -104,7 +104,7 @@ func (b *bake) checkpoint(ctx context.Context) error {
 	if err := b.c.Step(ctx, "dump", nil, &b.dumped); err != nil {
 		return err
 	}
-	b.p.Printf("CRIU dump of %d processes in %.1fs (criu %s)",
+	b.p.Printf("%s dump of %d processes in %.1fs (%s)", b.backend,
 		len(b.frozen.Tree.Processes), b.dumped.Seconds, b.dumped.Version)
 	var fs struct {
 		Trees []struct {

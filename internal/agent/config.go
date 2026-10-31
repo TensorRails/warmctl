@@ -8,6 +8,7 @@ import (
 	"path"
 
 	"github.com/TensorRails/warmctl/v2/internal/criu"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
 )
 
@@ -15,6 +16,13 @@ import (
 const (
 	ModeSnapshot = "snapshot"
 	ModeRestore  = "restore"
+)
+
+// Process snapshot backends: CRIU where the container may run it, DMTCP in
+// containers without the privileges (docs/dmtcp.md).
+const (
+	BackendCRIU  = "criu"
+	BackendDMTCP = "dmtcp"
 )
 
 // Tree is a directory the snapshot carries as a runtimefs archive.
@@ -62,6 +70,12 @@ type Config struct {
 	// restore in place, where the container's host name is the pod's (or,
 	// with hostNetwork, the node's) and the engine ran under a receiver's.
 	Hostname string `json:"hostname,omitempty"`
+	// Backend snapshots the process tree: criu (the default) or dmtcp. Under
+	// dmtcp the engine runs under dmtcp_launch from the start, the tree's
+	// PIDs in results and arguments are DMTCP's virtual ones, and there is no
+	// freeze: DMTCP stops the tree itself.
+	Backend string      `json:"backend,omitempty"`
+	DMTCP   dmtcp.Tools `json:"dmtcp,omitempty"`
 
 	// Snapshot: the engine to start and where results go.
 	Argv []string `json:"argv,omitempty"`
@@ -114,8 +128,23 @@ func abs(paths ...string) bool {
 
 // Validate checks the fields the mode needs.
 func (c Config) Validate() error {
-	if !abs(c.Control) || c.CRIU == "" || len(c.Trees) == 0 {
-		return errors.New("agent: control socket, criu and trees are required")
+	if !abs(c.Control) || len(c.Trees) == 0 {
+		return errors.New("agent: control socket and trees are required")
+	}
+	switch c.Backend {
+	case "", BackendCRIU:
+		if c.CRIU == "" {
+			return errors.New("agent: the criu backend needs criu")
+		}
+	case BackendDMTCP:
+		if !abs(c.DMTCP.Plugin) {
+			return errors.New("agent: the dmtcp backend needs the fdkeep plugin's absolute path")
+		}
+		if c.IPC == interpose.Interpose {
+			return errors.New("agent: the dmtcp backend does not run under cuInterpose")
+		}
+	default:
+		return fmt.Errorf("agent: unknown backend %q", c.Backend)
 	}
 	if c.Inference != "" && (!abs(c.Inference) || c.EngineAddr == "") {
 		return errors.New("agent: inference socket needs an absolute path and an engine address")

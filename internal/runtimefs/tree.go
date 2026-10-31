@@ -176,6 +176,11 @@ func scan(ctx context.Context, source string) ([]observed, error) {
 		if len(list) >= MaxEntries {
 			return errors.New("runtimefs: too many entries")
 		}
+		// The claim mark is warmctl's, never the engine's: an in-place bake
+		// claims its trees too, and a receiver writes its own.
+		if name == Mark {
+			return nil
+		}
 		o, err := observe(source, name)
 		if err != nil {
 			return err

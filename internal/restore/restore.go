@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/gateway"
 	"github.com/TensorRails/warmctl/v2/internal/host"
@@ -51,6 +52,8 @@ type Options struct {
 	InPlace bool
 	// RunDir, in place, holds the agent's config, sockets and CRIU work.
 	RunDir string
+	// DMTCP restarts a snapshot the dmtcp backend took.
+	DMTCP dmtcp.Tools
 	// Gate, in place, is the gateway, opened before the pull.
 	Gate *Gate
 	// Arrival, when set, is the pull still filling Snapshot: the restore
@@ -157,6 +160,10 @@ func (r *restore) read(context.Context) error {
 }
 
 func (r *restore) preflight(ctx context.Context) error {
+	if r.dmtcp() && !r.o.InPlace {
+		return errors.New("the dmtcp backend took this snapshot: it restarts in place (--mode in-place), " +
+			"in a container like the one it was taken in")
+	}
 	if r.o.InPlace {
 		if err := r.checkPod(); err != nil {
 			return err

@@ -21,6 +21,7 @@ import (
 
 	"github.com/TensorRails/warmctl/v2/internal/criu"
 	"github.com/TensorRails/warmctl/v2/internal/cuda"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
 	"github.com/TensorRails/warmctl/v2/internal/process"
 	"github.com/TensorRails/warmctl/v2/internal/runtimefs"
@@ -42,6 +43,8 @@ type agent struct {
 	// interposed is whether the engine runs under cuInterpose, and why.
 	interposed bool
 	ipcReason  string
+	// dmtcpMap is the restarted tree's virtual-to-real PIDs (dmtcp backend).
+	dmtcpMap dmtcp.Map
 
 	mu      sync.Mutex
 	engine  int
@@ -62,6 +65,11 @@ func Run(ctx context.Context, configPath string, log io.Writer) error {
 	}
 	cfg.CRIU, cfg.CUDACheckpoint = tool(cfg.CRIU), tool(cfg.CUDACheckpoint)
 	a := &agent{cfg: cfg, log: log, pos: -1, done: make(chan struct{}), exited: make(chan struct{})}
+	if a.dmtcp() {
+		if err := cfg.DMTCP.Setenv(); err != nil {
+			return err
+		}
+	}
 	if cfg.Hostname != "" {
 		if err := ownHostname(cfg.Hostname); err != nil {
 			return err
@@ -202,6 +210,9 @@ func (a *agent) run(ctx context.Context, step string, args json.RawMessage) (any
 	case "restore/cuda":
 		return a.cudaRestore(ctx, args)
 	case "snapshot/freeze":
+		if a.dmtcp() {
+			return a.dmtcpFreeze(ctx)
+		}
 		f, err := criu.Freeze(ctx, a.enginePID())
 		if err != nil {
 			return nil, err
@@ -209,6 +220,9 @@ func (a *agent) run(ctx context.Context, step string, args json.RawMessage) (any
 		a.frozen = f
 		return FreezeResult{Tree: f.Tree, References: references(f.Tree, a.cfg.Watch)}, nil
 	case "snapshot/dump":
+		if a.dmtcp() {
+			return a.dmtcpDump(ctx)
+		}
 		return a.dump(ctx)
 	case "snapshot/fs":
 		return a.archive(ctx)
@@ -218,8 +232,15 @@ func (a *agent) run(ctx context.Context, step string, args json.RawMessage) (any
 	case "restore/install-fs":
 		return a.install(ctx)
 	case "restore/criu":
+		if a.dmtcp() {
+			return a.dmtcpRestore(ctx)
+		}
 		return a.restore(ctx)
 	case "restore/thaw":
+		if a.dmtcp() {
+			// dmtcp_restart resumes the tree; its CUDA state waits for the cuda step.
+			return nil, nil
+		}
 		return nil, a.frozen.Thaw(ctx)
 	}
 	return nil, fmt.Errorf("no step %q in %s mode", step, a.cfg.Mode)
@@ -263,11 +284,16 @@ func (a *agent) startEngine(ctx context.Context) error {
 	if a.interposed, a.ipcReason, err = a.chooseIPC(ctx); err != nil {
 		return err
 	}
-	argv := a.cfg.Argv
+	argv, env := a.cfg.Argv, a.cfg.Env
 	if a.interposed {
 		argv = interpose.Wrap(argv)
 	}
-	if err := criu.ReservePIDFloor(); err != nil {
+	if a.dmtcp() {
+		// DMTCP's virtual PIDs start at 40000, above the floor; no allocator to move.
+		if argv, env, err = a.underDMTCP(ctx, argv, env); err != nil {
+			return err
+		}
+	} else if err := criu.ReservePIDFloor(); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(a.cfg.Log), 0o755); err != nil {
@@ -281,8 +307,8 @@ func (a *agent) startEngine(ctx context.Context) error {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	// No env in the config: the engine inherits the container's, which is
 	// the image's environment plus the profile's.
-	if len(a.cfg.Env) > 0 {
-		cmd.Env = a.cfg.Env
+	if len(env) > 0 {
+		cmd.Env = env
 	}
 	cmd.Dir, cmd.Stdout, cmd.Stderr = a.cfg.Dir, log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -293,7 +319,7 @@ func (a *agent) startEngine(ctx context.Context) error {
 	a.engine = cmd.Process.Pid
 	a.mu.Unlock()
 	go func() { a.setExit(cmd.Wait()) }()
-	if cmd.Process.Pid < criu.PIDFloor {
+	if !a.dmtcp() && cmd.Process.Pid < criu.PIDFloor {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("engine PID %d is below the floor %d", cmd.Process.Pid, criu.PIDFloor)
 	}
@@ -326,6 +352,16 @@ func (a *agent) cudaCheckpoint(ctx context.Context) (any, error) {
 		}
 		name = b.Name()
 	}
+	if a.dmtcp() && len(owners) > 0 {
+		// The host keys owners by the PIDs the workers report, DMTCP's.
+		m, err := a.peers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if owners, err = m.Virtual(owners); err != nil {
+			return nil, err
+		}
+	}
 	return CUDAResult{Owners: owners, Seconds: time.Since(start).Seconds(), Backend: name}, nil
 }
 
@@ -346,8 +382,17 @@ func (a *agent) cudaRestore(ctx context.Context, raw json.RawMessage) (any, erro
 		if err != nil {
 			return nil, err
 		}
-		s := cuda.NewSession(b, args.Owners)
-		s.Parallel, s.Concurrent = args.Parallel, args.Concurrent
+		owners, parallel := args.Owners, args.Parallel
+		if a.dmtcp() {
+			if owners, err = a.dmtcpMap.Real(owners); err != nil {
+				return nil, err
+			}
+			if parallel, err = a.dmtcpMap.Real(parallel); err != nil {
+				return nil, err
+			}
+		}
+		s := cuda.NewSession(b, owners)
+		s.Parallel, s.Concurrent = parallel, args.Concurrent
 		if err := s.Restore(ctx, args.DeviceMap); err != nil {
 			return nil, err
 		}
