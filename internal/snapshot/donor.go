@@ -54,7 +54,7 @@ func (b *bake) prepare(ctx context.Context) error {
 	if b.backend == agent.BackendDMTCP {
 		cfg.DMTCP = b.o.DMTCP
 	}
-	if b.model, err = run.ModelSHA256(b.o.ModelDir); err != nil {
+	if err := b.hashModel(); err != nil {
 		return err
 	}
 	var sum string
@@ -73,7 +73,11 @@ func (b *bake) prepare(ctx context.Context) error {
 	b.cfg.Mode, b.cfg.Out = agent.ModeSnapshot, b.state()+"/out"
 	b.cfg.Argv = append(append([]string(nil), b.launch.Argv...), "--host", "127.0.0.1", "--port", "8000")
 	b.cfg.Log = EngineLog
+	// The model, where the engine sees it and, in place, where it is.
 	b.cfg.Watch = []string{b.launch.Profile.Model.MountPath()}
+	if b.o.InPlace {
+		b.cfg.Watch = append(b.cfg.Watch, b.o.ModelDir)
+	}
 	if err := b.interposer(); err != nil {
 		return err
 	}
@@ -85,6 +89,20 @@ func (b *bake) prepare(ctx context.Context) error {
 	}
 	b.p.Printf("pulling %s", b.launch.Profile.Image)
 	b.image, err = b.dk.EnsureImage(ctx, b.launch.Profile.Image, nil)
+	return err
+}
+
+// hashModel resolves the model directory and takes its digest. In place
+// the model is linked in, so the engine's open files name its real
+// directory: the one a DMTCP restart reopens them in.
+func (b *bake) hashModel() error {
+	var err error
+	if b.o.InPlace {
+		if b.o.ModelDir, err = filepath.EvalSymlinks(b.o.ModelDir); err != nil {
+			return err
+		}
+	}
+	b.model, err = run.ModelSHA256(b.o.ModelDir)
 	return err
 }
 
@@ -214,6 +232,10 @@ func (b *bake) tools() (agent.Config, error) {
 // them. Without mounts: the trees are claimed, the model and the adapter
 // linked in (run.Place).
 func (b *bake) placeInPlace() error {
+	var err error
+	if b.owns, err = run.LockContainer(); err != nil {
+		return err
+	}
 	for _, t := range b.cfg.Trees {
 		if err := run.ClaimDir(t.Path); err != nil {
 			return fmt.Errorf("tree %s: %w", t.Path, err)

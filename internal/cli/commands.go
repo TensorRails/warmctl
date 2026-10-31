@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -26,6 +28,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/run"
 	"github.com/TensorRails/warmctl/v2/internal/snapshot"
 	"github.com/TensorRails/warmctl/v2/internal/store"
+	"github.com/TensorRails/warmctl/v2/internal/zframes"
 )
 
 // DefaultState is where warmctl keeps its store, runs and instances.
@@ -104,8 +107,8 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer, vers
 	fs.StringVar(&o.Cuinterpose, "cuinterpose", "", "cuInterpose build directory (default: cuinterpose/ next to warmctl)")
 	fs.BoolVar(&o.InPlace, "in-place", false, "bake in this container, without Docker (a pod without privileges: "+
 		"docs/dmtcp.md)")
-	fs.StringVar(&o.Backend, "backend", host.BackendAuto, "in place, how the process tree is snapshotted: "+
-		"auto (CRIU when this container may run it, else DMTCP), criu or dmtcp")
+	fs.StringVar(&o.Backend, "backend", host.BackendAuto, "how the process tree is snapshotted: "+
+		"auto (DMTCP in place, else CRIU), criu or dmtcp")
 	fs.BoolVar(&o.Compress, "compress", false, "store the process images and weights as zstd frames, for a snapshot "+
 		"restored from network storage (up decodes them as it stages a local copy)")
 	if _, err := parse(fs, args); err != nil {
@@ -424,18 +427,39 @@ func runVerify(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	for _, f := range m.Files {
 		name := filepath.Join(dir, filepath.FromSlash(f.Path))
 		info, err := os.Stat(name)
-		if err != nil || info.Size() != f.Size {
+		if err != nil || info.Size() != f.Stored() {
 			return fmt.Errorf("%s: missing or wrong size", f.Path)
 		}
 		if *deep {
-			sum, _, err := store.HashFile(ctx, name)
-			if err != nil || sum != f.SHA256 {
+			sum, err := fileSum(ctx, name, f)
+			if err != nil {
+				return fmt.Errorf("%s: %w", f.Path, err)
+			}
+			if sum != f.SHA256 {
 				return fmt.Errorf("%s: content differs", f.Path)
 			}
 		}
 	}
 	fmt.Fprintf(stdout, "ok %s (%d files)\n", snapshot.Describe(m), len(m.Files))
 	return nil
+}
+
+// fileSum is the SHA-256 of f's own bytes, which name stores as they are or
+// encoded.
+func fileSum(ctx context.Context, name string, f manifest.File) (string, error) {
+	switch f.Encoding {
+	case "":
+		sum, _, err := store.HashFile(ctx, name)
+		return sum, err
+	case manifest.EncodingZframes:
+		h := sha256.New()
+		if err := zframes.DecodeFile(ctx, name, f.Frames, f.Size, f.Split, h); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(h.Sum(nil)), nil
+	default:
+		return "", fmt.Errorf("encoding %q unknown to this warmctl", f.Encoding)
+	}
 }
 
 // recordSnapshot remembers a published snapshot for gc.

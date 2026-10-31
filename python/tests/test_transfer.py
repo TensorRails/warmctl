@@ -266,9 +266,16 @@ class ArrivedTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, 'part-00000.bin')
             threading.Timer(0.05, lambda: open(path, 'wb').close()).start()
-            self.assertEqual(transfer._arrived(path, timeout=5), path)
+            self.assertEqual(transfer._arrived(path), path)
 
-    def test_gives_up(self):
+    def test_has_no_deadline(self):
+        # warmctl ends a reload whose parts stopped coming; the adapter waits.
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaises(TimeoutError):
-                transfer._arrived(os.path.join(directory, 'never.bin'), timeout=0.05)
+            path = os.path.join(directory, 'part-00001.bin')
+            waiter = threading.Thread(target=transfer._arrived, args=(path,))
+            waiter.start()
+            waiter.join(0.2)
+            self.assertTrue(waiter.is_alive())
+            open(path, 'wb').close()
+            waiter.join(5)
+            self.assertFalse(waiter.is_alive())

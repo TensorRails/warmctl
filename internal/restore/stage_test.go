@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -97,6 +99,39 @@ func TestStageWaitsForLateFiles(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(dst, "weights/part-0")); err != nil || !bytes.Equal(got, body) {
 		t.Fatalf("staged %q: %v", got, err)
+	}
+}
+
+// A stage whose reads hang fails once no range finished for stageStall,
+// without waiting for them.
+func TestStageStall(t *testing.T) {
+	defer func(d time.Duration) { stageStall = d }(stageStall)
+	stageStall = 200 * time.Millisecond
+	src, dst := t.TempDir(), t.TempDir()
+	// Opening a FIFO with no writer blocks, as a hung network read does.
+	fifo := filepath.Join(src, "part-0")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		// Let the hung worker go: a writer opens, the read fails on the pipe.
+		if w, err := os.OpenFile(fifo, os.O_WRONLY, 0); err == nil {
+			w.Close()
+		}
+	}()
+	if err := os.WriteFile(filepath.Join(dst, "part-0"+staging), make([]byte, 16), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	left := map[string]*atomic.Int64{"part-0": new(atomic.Int64)}
+	left["part-0"].Store(16)
+	start := time.Now()
+	_, err := copyJobs(context.Background(), src, dst, []prefetchJob{{path: "part-0", size: 16}}, left,
+		func(string) { t.Error("a hung file arrived") })
+	if err == nil || !strings.Contains(err.Error(), "its reads hang") {
+		t.Fatalf("stall: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("the stall took %s to notice", took)
 	}
 }
 

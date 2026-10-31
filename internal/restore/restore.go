@@ -103,6 +103,8 @@ type restore struct {
 	weights chan error
 	// mounts are a pod restore's bind mounts.
 	mounts []string
+	// owns is a pod restore's hold on the container (run.LockContainer).
+	owns *run.Lock
 }
 
 // Instance is <state>/restores/<id>/instance.json: what `warmctl stop`
@@ -146,6 +148,14 @@ func Run(ctx context.Context, o Options) error {
 }
 
 func (r *restore) read(ctx context.Context) error {
+	if r.o.InPlace {
+		// First: a run in place owns the container, and the stage below
+		// would replace a copy another up of this snapshot restores from.
+		var err error
+		if r.owns, err = run.LockContainer(); err != nil {
+			return err
+		}
+	}
 	r.snapshot = r.o.Snapshot
 	if r.o.Arrival != nil {
 		r.m = r.o.Arrival.Manifest()
@@ -389,6 +399,7 @@ func (r *restore) cleanup() {
 		if r.dir != "" {
 			_ = claimDir(r.dir)
 		}
+		r.owns.Release()
 	} else if r.dir != "" {
 		_ = os.MkdirAll(logs, 0o755)
 		_ = run.CopyFile(filepath.Join(r.dir, "workspace/logs/engine.log"), filepath.Join(logs, "engine.log"), 0o644)

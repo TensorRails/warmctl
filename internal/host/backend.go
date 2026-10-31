@@ -76,25 +76,3 @@ func (p BackendProbe) CRIUReason() string {
 	}
 	return strings.Join(why, ", ")
 }
-
-// ChooseBackend picks how this container snapshots a process tree: auto
-// takes CRIU when the container may run it and DMTCP otherwise; an explicit
-// criu fails where CRIU cannot run. The reason says why, for the log.
-func ChooseBackend(want string, p BackendProbe) (string, string, error) {
-	why := p.CRIUReason()
-	switch want {
-	case "", BackendAuto:
-		if why == "" {
-			return BackendCRIU, "this container may checkpoint", nil
-		}
-		return BackendDMTCP, "CRIU cannot run here: " + why, nil
-	case BackendCRIU:
-		if why != "" {
-			return "", "", fmt.Errorf("backend criu: CRIU cannot run here: %s (use --backend dmtcp)", why)
-		}
-		return BackendCRIU, "asked for", nil
-	case BackendDMTCP:
-		return BackendDMTCP, "asked for", nil
-	}
-	return "", "", fmt.Errorf("unknown backend %q: auto, criu or dmtcp", want)
-}

@@ -73,11 +73,13 @@ type bake struct {
 	launch profile.Launch
 	// ipcDir holds the cuInterpose build the donor mounts, when ipc is not
 	// native; ipc is what the donor decided.
-	ipcDir   string
-	ipc      agent.IPCResult
-	row      profile.Hardware
-	gpus     []host.GPU
-	lease    *host.Lease
+	ipcDir string
+	ipc    agent.IPCResult
+	row    profile.Hardware
+	gpus   []host.GPU
+	lease  *host.Lease
+	// owns is an in-place bake's hold on the container (run.LockContainer).
+	owns     *run.Lock
 	topology string
 	topoSHA  string
 	dk       *docker.Client
@@ -219,30 +221,45 @@ func (b *bake) inPlaceImage() error {
 	return nil
 }
 
-// chooseBackend decides how the tree is dumped: a donor container is made
-// to run CRIU; in place, it is what this container may run.
+// chooseBackend decides how the tree is dumped (bakeBackend).
 func (b *bake) chooseBackend() error {
-	if !b.o.InPlace {
-		if b.o.Backend != "" && b.o.Backend != host.BackendAuto && b.o.Backend != host.BackendCRIU {
-			return fmt.Errorf("backend %s: only an in-place bake (--in-place) runs without CRIU", b.o.Backend)
-		}
-		b.backend = agent.BackendCRIU
-		return nil
-	}
-	probe, err := host.ProbeBackend()
-	if err != nil {
-		return err
-	}
-	backend, why, err := host.ChooseBackend(b.o.Backend, probe)
+	backend, err := bakeBackend(b.o.Backend, b.o.InPlace)
 	if err != nil {
 		return err
 	}
 	b.backend = backend
-	b.p.Printf("process snapshot backend: %s (%s)", backend, why)
 	if backend == agent.BackendDMTCP {
+		b.p.Printf("process snapshot backend: dmtcp (in place)")
 		return b.o.DMTCP.Check()
 	}
 	return nil
+}
+
+// bakeBackend is the backend of a bake asked for want (--backend): CRIU in
+// the donor container warmctl makes, DMTCP in place. An in-place CRIU bake
+// is not supported yet: the bake links the model in (run.Place), so CRIU
+// would record files under the link's target, while an in-place CRIU
+// restore mounts the model at its mount path.
+func bakeBackend(want string, inPlace bool) (string, error) {
+	switch want {
+	case "", host.BackendAuto:
+		if inPlace {
+			return agent.BackendDMTCP, nil
+		}
+		return agent.BackendCRIU, nil
+	case host.BackendCRIU:
+		if inPlace {
+			return "", errors.New("backend criu: an in-place bake runs DMTCP, CRIU in place is not supported yet; " +
+				"bake through Docker (without --in-place)")
+		}
+		return agent.BackendCRIU, nil
+	case host.BackendDMTCP:
+		if !inPlace {
+			return "", errors.New("backend dmtcp: only an in-place bake (--in-place) runs DMTCP")
+		}
+		return agent.BackendDMTCP, nil
+	}
+	return "", fmt.Errorf("unknown backend %q: auto, criu or dmtcp", want)
 }
 
 // Hardware finds the hardware row of the selected GPUs: all of one model,
@@ -292,6 +309,7 @@ func (b *bake) cleanup() {
 	if b.lease != nil {
 		b.lease.Release()
 	}
+	b.owns.Release()
 }
 
 func keepLogs(dir, logs string) {

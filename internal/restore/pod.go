@@ -274,6 +274,36 @@ func podModel(given string, m manifest.Manifest) (string, error) {
 	return "", nil
 }
 
+// dmtcpModel is the model directory a DMTCP snapshot's pod links in: the
+// donor's own path, the only one it may have. A restart reopens the files
+// the processes held where they were, and an in-place bake linked the model
+// in, so those are under m.Launch.ModelDir rather than the mount path.
+func dmtcpModel(given string, m manifest.Manifest) (string, error) {
+	donor := m.Launch.ModelDir
+	if given != "" && !sameDir(given, donor) {
+		return "", fmt.Errorf("--model-dir %s: a DMTCP snapshot reopens the model's files where the donor had them, "+
+			"in %s: put the model there", given, donor)
+	}
+	if given == "" && !m.Process.NeedsModel {
+		return "", nil
+	}
+	if entries, err := os.ReadDir(donor); err != nil || len(entries) == 0 {
+		return "", fmt.Errorf("the snapshot's processes keep files of the model open in %s, the donor's model "+
+			"directory, and a DMTCP restart reopens them there: put the model at that path", donor)
+	}
+	return donor, nil
+}
+
+// sameDir is whether a and b are one directory.
+func sameDir(a, b string) bool {
+	ia, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	ib, err := os.Stat(b)
+	return err == nil && os.SameFile(ia, ib)
+}
+
 // checkPod is the pod half of the preflight: what Docker would have given
 // a receiver container, Kubernetes must have given this one.
 func (r *restore) checkPod() error {
@@ -348,8 +378,13 @@ func linkDevices(donor []manifest.GPU, here []string) ([]string, error) {
 		if d.Device == "" || d.Device == here[i] {
 			continue
 		}
-		info, err := os.Stat(d.Device)
+		info, err := os.Lstat(d.Device)
 		switch {
+		case err == nil && info.Mode()&fs.ModeSymlink != 0:
+			// An earlier restore's link, maybe to another GPU of this pod.
+			if target, err := os.Readlink(d.Device); err == nil && target == here[i] {
+				continue
+			}
 		case err == nil:
 			if mine, err := os.Stat(here[i]); err == nil && os.SameFile(info, mine) {
 				continue
@@ -359,12 +394,27 @@ func linkDevices(donor []manifest.GPU, here []string) ([]string, error) {
 		case !errors.Is(err, fs.ErrNotExist):
 			return linked, err
 		}
-		if err := os.Symlink(here[i], d.Device); err != nil {
+		if err := relink(here[i], d.Device); err != nil {
 			return linked, err
 		}
 		linked = append(linked, fmt.Sprintf("rank %d: %s links to this pod's %s", i, d.Device, here[i]))
 	}
 	return linked, nil
+}
+
+// relink makes path a symbolic link to target, replacing a link there in
+// one rename.
+func relink(target, path string) error {
+	next := path + ".warmctl-link"
+	_ = os.Remove(next)
+	if err := os.Symlink(target, next); err != nil {
+		return err
+	}
+	if err := os.Rename(next, path); err != nil {
+		_ = os.Remove(next)
+		return err
+	}
+	return nil
 }
 
 // checkUnprivileged is the pod half of the preflight for a snapshot the
@@ -373,6 +423,9 @@ func linkDevices(donor []manifest.GPU, here []string) ([]string, error) {
 // must be here, and claimPod refuses trees it may not take.
 func (r *restore) checkUnprivileged() error {
 	if err := r.o.DMTCP.Check(); err != nil {
+		return err
+	}
+	if _, err := dmtcpModel(r.o.ModelDir, r.m); err != nil {
 		return err
 	}
 	r.warnPod()
@@ -474,6 +527,9 @@ func claimDir(dir string) error { return run.ClaimDir(dir) }
 // this process's child.
 func (r *restore) startPod(ctx context.Context) error {
 	model, err := podModel(r.o.ModelDir, r.m)
+	if r.dmtcp() {
+		model, err = dmtcpModel(r.o.ModelDir, r.m)
+	}
 	if err != nil {
 		return err
 	}

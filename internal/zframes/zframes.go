@@ -38,7 +38,7 @@ func Encode(ctx context.Context, src, dst string, workers, split int) ([]int64, 
 	if err != nil {
 		return nil, 0, err
 	}
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1),
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(max(workers, 1)),
 		zstd.WithEncoderCRC(true))
 	if err != nil {
 		return nil, 0, errors.Join(err, out.Close())
@@ -211,3 +211,42 @@ func interleave(out, p []byte, split int) []byte {
 
 // Close frees the decoder.
 func (d *Decoder) Close() { d.d.Close() }
+
+// DecodeFile writes the file of size bytes that src stores as frames (ends
+// from Encode, stored with split) to w, frame by frame.
+func DecodeFile(ctx context.Context, src string, ends []int64, size int64, split int, w io.Writer) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	d, err := NewDecoder()
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	var frame, out []byte
+	for i := range ends {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		at, n, _, want := Frame(ends, size, i)
+		if int64(cap(frame)) < n {
+			frame = make([]byte, n)
+		}
+		if _, err := in.ReadAt(frame[:n], at); err != nil {
+			return fmt.Errorf("frame %d: %w", i, err)
+		}
+		decoded, err := d.Decode(frame[:n], out, want, split)
+		if err != nil {
+			return fmt.Errorf("frame %d: %w", i, err)
+		}
+		if split > 1 {
+			out = decoded
+		}
+		if _, err := w.Write(decoded); err != nil {
+			return err
+		}
+	}
+	return nil
+}

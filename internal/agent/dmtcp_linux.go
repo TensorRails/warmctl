@@ -50,8 +50,8 @@ func (t *dmtcpTree) launch(ctx context.Context, argv, env []string) ([]string, [
 	if err := os.MkdirAll(t.images(), 0o755); err != nil {
 		return nil, nil, err
 	}
-	if err := t.cfg.DMTCP.Coordinator(ctx); err != nil {
-		return nil, nil, fmt.Errorf("dmtcp coordinator: %w", err)
+	if err := t.coordinator(ctx); err != nil {
+		return nil, nil, err
 	}
 	if len(env) == 0 {
 		env = os.Environ()
@@ -59,6 +59,18 @@ func (t *dmtcpTree) launch(ctx context.Context, argv, env []string) ([]string, [
 	// Later entries win in exec.Cmd.Env.
 	env = append(append([]string(nil), env...), dmtcp.Env...)
 	return t.cfg.DMTCP.Wrap(argv, t.images()), env, nil
+}
+
+// coordinator starts this run's coordinator, on a port of its own unless
+// the config names one.
+func (t *dmtcpTree) coordinator(ctx context.Context) error {
+	port, err := t.cfg.DMTCP.Coordinator(ctx)
+	if err != nil {
+		return fmt.Errorf("dmtcp coordinator: %w", err)
+	}
+	t.cfg.DMTCP.Port = port
+	t.logf("dmtcp coordinator on port %d", port)
+	return nil
 }
 
 func (t *dmtcpTree) started(int) error { return nil }
@@ -133,11 +145,12 @@ func (t *dmtcpTree) restore(ctx context.Context) (RestoreResult, int, func() err
 	if err != nil {
 		return RestoreResult{}, 0, nil, err
 	}
-	if err := t.cfg.DMTCP.Coordinator(ctx); err != nil {
-		return RestoreResult{}, 0, nil, fmt.Errorf("dmtcp coordinator: %w", err)
+	if err := t.coordinator(ctx); err != nil {
+		return RestoreResult{}, 0, nil, err
 	}
 	cmd, err := t.cfg.DMTCP.Restart(images, os.Stderr)
 	if err != nil {
+		t.release()
 		return RestoreResult{}, 0, nil, err
 	}
 	done := make(chan struct{})
@@ -145,7 +158,7 @@ func (t *dmtcpTree) restore(ctx context.Context) (RestoreResult, int, func() err
 	go func() { waitErr = cmd.Wait(); close(done) }()
 	wait := func() error { <-done; return waitErr }
 	fail := func(err error) (RestoreResult, int, func() error, error) {
-		_ = cmd.Process.Kill()
+		t.kill(cmd.Process.Pid)
 		<-done
 		return RestoreResult{}, 0, nil, err
 	}
@@ -194,3 +207,31 @@ func (t *dmtcpTree) hostPIDs(_ context.Context, pids []int) ([]int, error) {
 }
 
 func (t *dmtcpTree) stop(root int) { _ = syscall.Kill(root, syscall.SIGTERM) }
+
+// kill ends a restart that failed: every process dmtcp_restart brought
+// back, not only its root, and the coordinator they joined.
+func (t *dmtcpTree) kill(root int) {
+	if visible, err := criu.VisibleTree(root); err == nil {
+		for _, p := range visible.Processes {
+			_ = syscall.Kill(p.PID, syscall.SIGKILL)
+		}
+	}
+	_ = syscall.Kill(root, syscall.SIGKILL)
+	t.release()
+}
+
+// release ends the coordinator with whatever is still connected to it. A
+// coordinator exits with the last process that joined it, but one that
+// none joined (dmtcp_launch or dmtcp_restart failed before) would wait
+// forever.
+func (t *dmtcpTree) release() {
+	if t.cfg.DMTCP.Port == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	// It fails when the coordinator is already gone, as it is after a dump
+	// or once the restored engine exits.
+	_ = t.cfg.DMTCP.Quit(ctx)
+	t.cfg.DMTCP.Port = 0
+}

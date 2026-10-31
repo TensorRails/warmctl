@@ -45,6 +45,9 @@ type tree interface {
 	hostPIDs(ctx context.Context, pids []int) ([]int, error)
 	// stop asks the tree rooted at root to exit.
 	stop(root int)
+	// release frees what launch or restore set up beside the tree, once the
+	// agent is done with it.
+	release()
 }
 
 func newTree(cfg Config, log func(string, ...any)) tree {
@@ -154,3 +157,5 @@ func (t *criuTree) stop(root int) {
 	}
 	_ = syscall.Kill(root, syscall.SIGTERM)
 }
+
+func (t *criuTree) release() {}

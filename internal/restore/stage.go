@@ -26,6 +26,11 @@ const stageWorkers = 32
 // open a weights part as soon as it shows up.
 const staging = ".staging"
 
+// stageStall is how long a stage may go without finishing a range before it
+// gives up: a read of a network file system can hang without failing, and
+// the engine's reload waits for the weights without a deadline of its own.
+var stageStall = 5 * time.Minute
+
 // arrivalWait bounds how long a stage waits for a file the manifest lists:
 // a RunPod Global Volume shows another pod's writes seconds late, and its
 // manifest.json may show before the files.
@@ -98,15 +103,18 @@ func prepare(ctx context.Context, dir, dst string, files []manifest.File, done f
 }
 
 // copyJobs runs jobs on stageWorkers workers and returns the bytes they read
-// from dir; the first error stops them all.
+// from dir; the first error stops them all. When no job finishes for
+// stageStall it fails at once, leaving the hung reads behind.
 func copyJobs(ctx context.Context, dir, dst string, jobs []prefetchJob, left map[string]*atomic.Int64,
 	done func(string)) (int64, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch := feed(ctx, jobs)
-	var read atomic.Int64
+	var read, last atomic.Int64 // last: when a job last finished, in Unix nanoseconds
 	var once sync.Once
 	var first error
+	fail := func(err error) { once.Do(func() { first = err; cancel() }) }
+	last.Store(time.Now().UnixNano())
 	var wg sync.WaitGroup
 	for range stageWorkers {
 		wg.Add(1)
@@ -115,27 +123,43 @@ func copyJobs(ctx context.Context, dir, dst string, jobs []prefetchJob, left map
 			w := &stager{buf: make([]byte, 8<<20)}
 			defer w.close()
 			for j := range ch {
-				got, err := w.stage(dir, dst, j, left[j.path], done)
+				got, err := w.stage(ctx, dir, dst, j, left[j.path], done)
 				read.Add(got)
+				last.Store(time.Now().UnixNano())
 				if err != nil {
-					once.Do(func() { first = err; cancel() })
+					fail(err)
 				}
 			}
 		}()
 	}
-	wg.Wait()
-	if first != nil {
-		return read.Load(), first
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
+	tick := time.NewTicker(stageStall / 10)
+	defer tick.Stop()
+	for {
+		select {
+		case <-finished:
+			if first != nil {
+				return read.Load(), first
+			}
+			return read.Load(), ctx.Err()
+		case <-tick.C:
+			if idle := time.Since(time.Unix(0, last.Load())); idle > stageStall {
+				fail(fmt.Errorf("no range of %s copied in %s: its reads hang", dir, idle.Round(time.Second)))
+				return read.Load(), first
+			}
+		}
 	}
-	return read.Load(), ctx.Err()
 }
 
 // stage does j; when j wrote the file's last bytes, the file takes its own
-// name and done hears of it. It returns the bytes it read.
-func (w *stager) stage(dir, dst string, j prefetchJob, left *atomic.Int64, done func(string)) (int64, error) {
+// name and done hears of it, unless the stage has failed meanwhile. It
+// returns the bytes it read.
+func (w *stager) stage(ctx context.Context, dir, dst string, j prefetchJob, left *atomic.Int64,
+	done func(string)) (int64, error) {
 	to := filepath.Join(dst, j.path)
 	n, got, err := w.run(filepath.Join(dir, j.path), to+staging, j)
-	if err != nil || left.Add(-n) != 0 {
+	if err != nil || left.Add(-n) != 0 || ctx.Err() != nil {
 		return got, err
 	}
 	if err := os.Rename(to+staging, to); err != nil {

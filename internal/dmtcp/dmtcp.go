@@ -30,9 +30,6 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/process"
 )
 
-// DefaultPort is the coordinator's port on loopback.
-const DefaultPort = 7779
-
 // Where the runtime image installs DMTCP and fdkeep. Donor and receiver must
 // run this very build, so a restore never takes another DMTCP from PATH.
 const (
@@ -61,7 +58,8 @@ type Tools struct {
 	Dir string `json:"dir,omitempty"`
 	// Plugin is libdmtcp_fdkeep.so.
 	Plugin string `json:"plugin"`
-	// Port is the coordinator's.
+	// Port is the coordinator's on loopback. 0 lets Coordinator take a free
+	// one, which a coordinator another run left behind cannot hold.
 	Port int `json:"port,omitempty"`
 	// TmpDir is DMTCP_TMPDIR, where the coordinator and the workers keep
 	// their own files: outside the trees a snapshot carries.
@@ -87,12 +85,7 @@ func (t Tools) path(name string) string {
 	return filepath.Join(t.Dir, name)
 }
 
-func (t Tools) port() string {
-	if t.Port == 0 {
-		return strconv.Itoa(DefaultPort)
-	}
-	return strconv.Itoa(t.Port)
-}
+func (t Tools) port() string { return strconv.Itoa(t.Port) }
 
 // Check finds every program and the plugin.
 func (t Tools) Check() error {
@@ -120,12 +113,30 @@ func (t Tools) Version(ctx context.Context) string {
 	return strings.TrimSpace(line)
 }
 
-// Coordinator starts a coordinator in the background; it exits with the
-// last process of its computation.
-func (t Tools) Coordinator(ctx context.Context) error {
-	_, err := process.Capture(ctx, 30*time.Second, t.path("dmtcp_coordinator"),
-		"--daemon", "--exit-on-last", "--port", t.port())
-	return err
+// Coordinator starts a coordinator in the background and returns its port:
+// Port, or the free one the system gave it when Port is 0, which it writes
+// to a file before it forks into the background. It exits with the last
+// process of its computation; one that no process joined waits for Quit.
+func (t Tools) Coordinator(ctx context.Context) (int, error) {
+	f, err := os.CreateTemp(t.TmpDir, "coordinator-*.port")
+	if err != nil {
+		return 0, err
+	}
+	_ = f.Close()
+	defer os.Remove(f.Name())
+	if _, err := process.Capture(ctx, 30*time.Second, t.path("dmtcp_coordinator"),
+		"--daemon", "--exit-on-last", "--port", t.port(), "--port-file", f.Name()); err != nil {
+		return 0, err
+	}
+	data, err := os.ReadFile(f.Name())
+	if err != nil {
+		return 0, err
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || port <= 0 {
+		return 0, fmt.Errorf("dmtcp: the coordinator wrote no port: %q", data)
+	}
+	return port, nil
 }
 
 // Wrap is argv under dmtcp_launch: raw images into dir, the plugin loaded.
@@ -145,6 +156,12 @@ func (t Tools) Checkpoint(ctx context.Context, timeout time.Duration) error {
 // Kill ends the computation.
 func (t Tools) Kill(ctx context.Context) error {
 	_, err := process.Capture(ctx, 30*time.Second, t.path("dmtcp_command"), "--coord-port", t.port(), "--kill")
+	return err
+}
+
+// Quit kills the processes connected to the coordinator and ends it.
+func (t Tools) Quit(ctx context.Context) error {
+	_, err := process.Capture(ctx, 10*time.Second, t.path("dmtcp_command"), "--coord-port", t.port(), "--quit")
 	return err
 }
 
@@ -224,6 +241,12 @@ func Images(dir string) ([]string, error) {
 // asserted never gets there, the others wait at a barrier for it, so it
 // fails as soon as a peer leaves or failed, checked on every poll, says so.
 func (t Tools) WaitPeers(ctx context.Context, n int, timeout time.Duration, failed func() error) ([]Peer, error) {
+	return waitPeers(ctx, t.List, n, timeout, failed)
+}
+
+func waitPeers(ctx context.Context, list func(context.Context) ([]Peer, error), n int, timeout time.Duration,
+	failed func() error,
+) ([]Peer, error) {
 	deadline := time.Now().Add(timeout)
 	w := peerWait{n: n}
 	for {
@@ -232,7 +255,7 @@ func (t Tools) WaitPeers(ctx context.Context, n int, timeout time.Duration, fail
 				return nil, err
 			}
 		}
-		peers, err := t.List(ctx)
+		peers, err := list(ctx)
 		if err == nil {
 			if err := w.left(peers); err != nil {
 				return nil, err

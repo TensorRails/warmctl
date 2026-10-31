@@ -299,6 +299,17 @@ func (b *bake) hardware() manifest.Hardware {
 	return h
 }
 
+// modelOpen is whether the frozen tree holds files of the model open: the
+// freeze step watches only the model's paths.
+func (b *bake) modelOpen() bool {
+	for _, n := range b.frozen.References {
+		if n > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *bake) process() manifest.Process {
 	rankOf := map[int]int{}
 	for _, w := range b.workers {
@@ -307,7 +318,7 @@ func (b *bake) process() manifest.Process {
 	p := manifest.Process{
 		Backend: b.backend,
 		RootPID: b.frozen.Tree.Root, MaxID: b.frozen.Tree.MaxID(), PIDFloor: criu.PIDFloor,
-		NeedsModel:          b.frozen.References[b.launch.Profile.Model.MountPath()] > 0,
+		NeedsModel:          b.modelOpen(),
 		CollectivesDetached: b.detached() || b.ipc.Interposed, EngineURL: EngineAddr,
 	}
 	if b.ipc.Interposed {

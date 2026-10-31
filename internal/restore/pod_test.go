@@ -204,6 +204,38 @@ func podManifest(needsModel bool, ipc string) manifest.Manifest {
 	}
 }
 
+// A DMTCP snapshot's model is the donor's directory, at its path: the one
+// --model-dir may name, and the one that must hold the model when the
+// processes kept its files open.
+func TestDMTCPModel(t *testing.T) {
+	donor := t.TempDir()
+	m := podManifest(true, "")
+	m.Launch.ModelDir = donor
+	if _, err := dmtcpModel("", m); err == nil || !strings.Contains(err.Error(), "put the model at that path") {
+		t.Fatalf("an empty donor directory accepted: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(donor, "config.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := dmtcpModel("", m); err != nil || got != donor {
+		t.Fatalf("the donor's directory: %q %v", got, err)
+	}
+	link := filepath.Join(t.TempDir(), "model")
+	if err := os.Symlink(donor, link); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := dmtcpModel(link, m); err != nil || got != donor {
+		t.Fatalf("given as a link to it: %q %v", got, err)
+	}
+	if _, err := dmtcpModel(t.TempDir(), m); err == nil || !strings.Contains(err.Error(), "--model-dir") {
+		t.Fatalf("another model directory accepted: %v", err)
+	}
+	m.Process.NeedsModel, m.Launch.ModelDir = false, "/nowhere"
+	if got, err := dmtcpModel("", m); err != nil || got != "" {
+		t.Fatalf("no model needed: %q %v", got, err)
+	}
+}
+
 func TestEngineMounts(t *testing.T) {
 	r := &restore{snapshot: "/snap", m: podManifest(true, interpose.Interpose)}
 	got := r.engineMounts("/models/x")
@@ -249,7 +281,8 @@ func TestPodModel(t *testing.T) {
 }
 
 // A donor's /dev/nvidiaN that this pod lacks becomes a link to this pod's GPU
-// of the same rank; one that is another GPU here is refused.
+// of the same rank, replacing an earlier restore's link; one that is another
+// GPU here is refused.
 func TestLinkDevices(t *testing.T) {
 	dir := t.TempDir()
 	mine, other := filepath.Join(dir, "nvidia1"), filepath.Join(dir, "nvidia2")
@@ -269,6 +302,16 @@ func TestLinkDevices(t *testing.T) {
 	// Linked already, or the same node: nothing to do.
 	if linked, err := linkDevices(donor, []string{mine}); err != nil || len(linked) != 0 {
 		t.Fatalf("again: %v %v", linked, err)
+	}
+	// The link an earlier restore made on this pod's other GPU is replaced.
+	if linked, err := linkDevices(donor, []string{other}); err != nil || len(linked) != 1 {
+		t.Fatalf("relinked %v: %v", linked, err)
+	}
+	if target, err := os.Readlink(donor[0].Device); err != nil || target != other {
+		t.Fatalf("link to %q, not %s: %v", target, other, err)
+	}
+	if _, err := os.Lstat(donor[0].Device + ".warmctl-link"); err == nil {
+		t.Fatal("the temporary link stayed")
 	}
 	if _, err := linkDevices([]manifest.GPU{{Device: other}}, []string{mine}); err == nil {
 		t.Fatal("another GPU's node was taken over")

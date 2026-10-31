@@ -3,6 +3,7 @@ package zframes
 import (
 	"bytes"
 	"context"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -41,6 +42,18 @@ func TestEncodeDecode(t *testing.T) {
 	}
 	if _, err := d.Decode(stored[:ends[0]], nil, Size+1, 1); err == nil {
 		t.Fatal("a frame of the wrong size decoded")
+	}
+	var whole bytes.Buffer
+	if err := DecodeFile(context.Background(), dst, ends, int64(len(body)), 1, &whole); err != nil ||
+		!bytes.Equal(whole.Bytes(), body) {
+		t.Fatalf("whole file: %v", err)
+	}
+	stored[ends[0]+10] ^= 0xff
+	if err := os.WriteFile(dst, stored, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := DecodeFile(context.Background(), dst, ends, int64(len(body)), 1, io.Discard); err == nil {
+		t.Fatal("a damaged frame decoded")
 	}
 }
 

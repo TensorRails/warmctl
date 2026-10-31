@@ -62,6 +62,7 @@ func Run(ctx context.Context, configPath string, log io.Writer) error {
 	cfg.CRIU, cfg.CUDACheckpoint = tool(cfg.CRIU), tool(cfg.CUDACheckpoint)
 	a := &agent{cfg: cfg, log: log, pos: -1, done: make(chan struct{}), exited: make(chan struct{})}
 	a.tree = newTree(cfg, a.logf)
+	defer a.tree.release()
 	if cfg.Backend == BackendDMTCP {
 		// The coordinator, the engine and dmtcp_restart inherit DMTCP_TMPDIR.
 		if err := cfg.DMTCP.Setenv(); err != nil {

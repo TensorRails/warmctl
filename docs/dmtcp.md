@@ -29,7 +29,7 @@ warmctl up /nv/snap/q8 --mode in-place        # or up NAME: the index entry this
 
 | | Decided by |
 |---|---|
-| bake | `--backend auto` (the default) in place takes CRIU when the container may run it, and DMTCP otherwise. It judges from the effective capabilities, a writable `ns_last_pid` and the seccomp mode (`host.ChooseBackend`). A donor container always runs CRIU. |
+| bake | `--backend auto` (the default): DMTCP in place (`--in-place`), CRIU in the donor container warmctl makes. An in-place CRIU bake is refused as not supported yet: the bake links the model in, so CRIU would record files under the link's target, which an in-place CRIU restore does not bring back. |
 | manifest | `process.backend` records the choice. Snapshots without the field are CRIU's. |
 | index | `io.warmctl.backend` on each entry. A DMTCP snapshot's tag ends in `-dmtcp`, and CRIU's tags are unchanged, so one platform and driver hold both. |
 | restore | `up NAME` takes the first entry `restore.CanRestore` accepts: CRIU through Docker or in a container that may checkpoint, DMTCP in place with DMTCP installed. Tags sort CRIU first. |
@@ -41,12 +41,18 @@ agent had before, unchanged; `dmtcpTree` (`dmtcp_linux.go`) is the new backend:
 
 | Step | criu | dmtcp |
 |---|---|---|
-| launch | PID allocator moved to 32768 | coordinator, engine under `dmtcp_launch --no-gzip --with-plugin libdmtcp_fdkeep.so` |
+| launch | PID allocator moved to 32768 | a coordinator of the run's own, on a free loopback port; engine under `dmtcp_launch --no-gzip --with-plugin libdmtcp_fdkeep.so` |
 | cuda | lock + checkpoint | the same; owners recorded as DMTCP's virtual PIDs, the ones vLLM's workers report |
 | freeze | SIGSTOP through pidfds | none: DMTCP stops the tree inside the dump |
 | dump | `criu dump` | `dmtcp_command --bcheckpoint`, then `--kill`; images in `criu/`, so publish, layers and prefetch are shared |
-| restore | `criu restore --leave-stopped` | `dmtcp_restart --no-strict-checking`, waiting until every peer runs; owners translated back to real PIDs. A peer that dies, or `dmtcp_restart` exiting, fails the restore at once. |
+| restore | `criu restore --leave-stopped` | a new coordinator, `dmtcp_restart --no-strict-checking`, waiting until every peer runs; owners translated back to real PIDs. A peer that dies, or `dmtcp_restart` exiting, fails the restore at once, killing every restarted process and the coordinator. |
 | in place | tmpfs and bind mounts, UTS namespace | trees claimed, model and adapter symlinked (`run.Place`); no mount, no namespace |
+
+Each run starts its own coordinator on a free port and ends it when the agent exits, so a coordinator
+left by a failed run (one no process joined waits forever) never blocks the next. A container still runs
+one in-place run at a time: the engine owns its `/tmp`, `/dev/shm` and `/workspace`. A second `up` or
+`build --in-place` is refused while the first holds `/run/warmctl.lock`; for two engines on a pod's two
+GPUs, run two containers.
 
 The engine keeps the profile's configuration, vLLM's mp executor included (API server, engine core,
 worker, resource tracker). It runs with the variables in `dmtcp.Env`:
@@ -69,6 +75,11 @@ A pod restores a snapshot another pod took when it runs the same image, GPU mode
   `5` and `0` on four RunPod pods. DMTCP reopens a descriptor by its path. So the manifest records each GPU's
   node (`hardware.gpus[].device`, from the driver's Device Minor), and a restore links a node this pod lacks
   to its own GPU of the same rank. CUDA itself moves by UUID (the device map).
+- **The model's path.** An in-place bake links the model in, so the processes hold its files under its real
+  directory, which the manifest records (`launch.model_dir`, symbolic links resolved). A restart reopens
+  them there: the receiving pod must have the model at that same path, as the same volume mounted at the
+  same place gives it. `up` checks that before anything else, and refuses a `--model-dir` that names
+  another directory.
 - **The engine's image.** An in-place bake records the runtime image's base (`/opt/warmctl/RUNTIME`) as the
   engine's image, which a receiver compares with its own.
 - **DMTCP.** Library text is mapped from the receiver's files (see the fork below), so DMTCP and every library
@@ -91,7 +102,9 @@ So `up` from a FUSE directory, or from any snapshot stored encoded, stages a loc
 - **Weights reloaded as they land.** A staged file takes its own name only once complete, as a pull links a
   blob in. The adapter waits for each part's file before it reads it. A snapshot whose adapter does that
   (`launch.reload_waits`, set by this bake) wakes the engine right after the process restore, and a failed
-  arrival ends the reload. Older snapshots wait for all the weights first.
+  arrival ends the reload. The adapter has no deadline of its own, as the last part comes only after all the
+  weights; the stage fails when no range has been copied for 5 minutes, a read that hangs. Older snapshots
+  wait for all the weights first.
 - **Late files.** A Global Volume is eventually consistent: a pod saw another pod's `manifest.json` before the
   weights next to it. The stage waits up to two minutes for every file the manifest lists, at its stored size.
   Writers should copy `manifest.json` last.

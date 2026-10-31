@@ -39,10 +39,10 @@ from .primitives import require
 
 SLOT_BYTES = 64 << 20
 THREADS = 4
-# How long a reload waits for a weights part that has not arrived: a restore
+# How often a reload looks for a weights part that has not arrived: a restore
 # wakes the engine while the snapshot is still staged or pulled, and a part's
 # file shows up only once it is complete.
-PART_WAIT = 600
+PART_POLL = 0.005
 
 
 def pipelined(device):
@@ -298,13 +298,13 @@ def _pipelined(device, threads, slot_bytes, jobs, stats, rows=0):
     return results
 
 
-def _arrived(path, timeout=PART_WAIT):
-    """Return path once its file exists: complete, as stage and pull put it."""
-    deadline = time.monotonic() + timeout
+def _arrived(path):
+    """Return path once its file exists: complete, as stage and pull put it.
+    There is no deadline here: the parts come in order, so the last one waits
+    as long as all the weights take, and warmctl ends the reload when the
+    stage or pull fails or stalls."""
     while not os.path.exists(path):
-        if time.monotonic() > deadline:
-            raise TimeoutError(f'{path} did not arrive in {timeout} s')
-        time.sleep(0.005)
+        time.sleep(PART_POLL)
     return path
 
 

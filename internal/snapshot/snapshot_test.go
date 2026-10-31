@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/store"
 	"github.com/TensorRails/warmctl/v2/internal/vllm"
@@ -77,5 +79,32 @@ func TestServedName(t *testing.T) {
 	}
 	if _, err := ServedName(map[string]any{}); err == nil {
 		t.Fatal("missing name accepted")
+	}
+}
+
+// A donor container runs CRIU, a bake in place DMTCP; CRIU in place is
+// refused until it is supported.
+func TestBakeBackend(t *testing.T) {
+	for _, c := range []struct {
+		want    string
+		inPlace bool
+		got     string
+	}{
+		{"", false, agent.BackendCRIU},
+		{"auto", false, agent.BackendCRIU},
+		{"criu", false, agent.BackendCRIU},
+		{"dmtcp", false, ""},
+		{"auto", true, agent.BackendDMTCP},
+		{"dmtcp", true, agent.BackendDMTCP},
+		{"criu", true, ""},
+		{"podman", true, ""},
+	} {
+		got, err := bakeBackend(c.want, c.inPlace)
+		if got != c.got || (err != nil) != (c.got == "") {
+			t.Errorf("bakeBackend(%q, %t) = %q %v", c.want, c.inPlace, got, err)
+		}
+	}
+	if _, err := bakeBackend("criu", true); err == nil || !strings.Contains(err.Error(), "not supported yet") {
+		t.Errorf("criu in place: %v", err)
 	}
 }
