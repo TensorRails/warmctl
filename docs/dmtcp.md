@@ -43,7 +43,7 @@ agent had before, unchanged; `dmtcpTree` (`dmtcp_linux.go`) is the new backend:
 
 The engine keeps the profile's configuration, vLLM's mp executor included (API server, engine core,
 worker, resource tracker). It runs with `VLLM_WORKER_MULTIPROC_METHOD=fork`, one-thread BLAS pools,
-`UV_USE_IO_URING=0`, `UCX_MEM_MMAP_HOOK_MODE=none` and `DMTCP_ZSTD=1` (`dmtcp.Env`). Tensor parallelism restarts too: the collectives are detached before
+`UV_USE_IO_URING=0` and `UCX_MEM_MMAP_HOOK_MODE=none` (`dmtcp.Env`). Tensor parallelism restarts too: the collectives are detached before
 the checkpoint and set up again after the restore, as under CRIU.
 
 ## DMTCP: the fork and the plugin
@@ -59,7 +59,6 @@ with these patches:
 | Name a forked child's connections with its own UniquePid | A forked child named its connections `0-0-0(n)` until its first checkpoint, so vLLM's engine core and worker gave different sockets the same name, and the restart waited forever at `Socket::Restart_Ns_Send_Queries`. With the fix, the mp executor restarts. |
 | Open the IPv4 restore listener for IPv6 connections | IPv6 connections are rewired through the IPv4 listener, which opened only in processes with an IPv4 socket. A TP worker whose sockets were all IPv6 (gloo, the TCPStore on `[::]`) published a zeroed address and its peer's `connect` failed. |
 | Reconnect a non-blocking socket blocking | A socket created with `SOCK_NONBLOCK` came back non-blocking, and the rewirer's `connect` returned `EINPROGRESS`. |
-| Compress images with zstd (`DMTCP_ZSTD=1`) | `zstd -1 -T0` in place of gzip, which was too slow to use: Qwen3-8B's images go from 7.3 to 2.6 GB, and `dmtcp_restart` decompresses through `zstd -d`. |
 | Pass through SysV shm ids DMTCP did not issue | UCX's memory hooks (in the vLLM image, for NIXL) create a test segment through `dlsym(RTLD_NEXT)`, past DMTCP's `shmget`, then remove it with the wrapped `shmctl`, which asserted: the engine core died at startup. |
 
 Library text now comes from the receiver's files, so donor and receiver need the same DMTCP build and

@@ -57,7 +57,7 @@ func (t *dmtcpTree) launch(ctx context.Context, argv, env []string) ([]string, [
 		env = os.Environ()
 	}
 	// Later entries win in exec.Cmd.Env.
-	env = t.cfg.DMTCP.WithPath(append(append([]string(nil), env...), dmtcp.Env...))
+	env = append(append([]string(nil), env...), dmtcp.Env...)
 	return t.cfg.DMTCP.Wrap(argv, t.images()), env, nil
 }
 
