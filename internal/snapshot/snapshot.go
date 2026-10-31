@@ -140,11 +140,6 @@ func (b *bake) resolve(context.Context) error {
 			return err
 		}
 	}
-	if b.backend == agent.BackendDMTCP {
-		if err := fitDMTCP(&p); err != nil {
-			return err
-		}
-	}
 	if b.o.NoVerify {
 		p.Canary.Mode = "warn"
 	}
@@ -224,15 +219,6 @@ func (b *bake) chooseBackend() error {
 	b.p.Printf("process snapshot backend: %s (%s)", backend, why)
 	if backend == agent.BackendDMTCP {
 		return b.o.DMTCP.Check()
-	}
-	return nil
-}
-
-// fitDMTCP checks a profile against the dmtcp backend: one GPU. Restoring
-// several ranks (NCCL, peer memory) under DMTCP is not verified yet.
-func fitDMTCP(p *profile.Profile) error {
-	if r := p.Parallel.Ranks(); r != 1 {
-		return fmt.Errorf("the dmtcp backend snapshots one GPU, and profile %s has %d ranks", p.ID, r)
 	}
 	return nil
 }

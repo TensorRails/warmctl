@@ -6,9 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TensorRails/warmctl/v2"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
-	"github.com/TensorRails/warmctl/v2/internal/profile"
 	"github.com/TensorRails/warmctl/v2/internal/store"
 	"github.com/TensorRails/warmctl/v2/internal/vllm"
 )
@@ -79,25 +77,5 @@ func TestServedName(t *testing.T) {
 	}
 	if _, err := ServedName(map[string]any{}); err == nil {
 		t.Fatal("missing name accepted")
-	}
-}
-
-// A dmtcp bake keeps the profile's engine (vLLM's mp executor restarts
-// under the fork) and refuses a profile of several ranks.
-func TestFitDMTCP(t *testing.T) {
-	l := profile.Loader{Assets: warmctl.Assets}
-	p, err := l.Load("qwen3-0.6b-tp1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fitDMTCP(&p); err != nil {
-		t.Fatal(err)
-	}
-	two, err := l.Load("qwen3-0.6b-fastcomm-tp2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fitDMTCP(&two); err == nil {
-		t.Fatal("a profile of two ranks was accepted")
 	}
 }

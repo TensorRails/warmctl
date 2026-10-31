@@ -43,8 +43,8 @@ agent had before, unchanged; `dmtcpTree` (`dmtcp_linux.go`) is the new backend:
 
 The engine keeps the profile's configuration, vLLM's mp executor included (API server, engine core,
 worker, resource tracker). It runs with `VLLM_WORKER_MULTIPROC_METHOD=fork`, one-thread BLAS pools and
-`UV_USE_IO_URING=0` (`dmtcp.Env`). A dmtcp bake refuses profiles of several ranks (`fitDMTCP`) until
-TP>1 is verified.
+`UV_USE_IO_URING=0` (`dmtcp.Env`). Tensor parallelism restarts too: the collectives are detached before
+the checkpoint and set up again after the restore, as under CRIU.
 
 ## DMTCP: the fork and the plugin
 
@@ -57,6 +57,8 @@ with these patches:
 | Restore `SO_REUSEADDR` before bind | A restart right after the donor died failed to bind its port while connections sat in TIME_WAIT. |
 | Find `_files` copies next to the moved image | Images published into the store restarted only if the donor's directory still existed. |
 | Name a forked child's connections with its own UniquePid | A forked child named its connections `0-0-0(n)` until its first checkpoint, so vLLM's engine core and worker gave different sockets the same name, and the restart waited forever at `Socket::Restart_Ns_Send_Queries`. With the fix, the mp executor restarts. |
+| Open the IPv4 restore listener for IPv6 connections | IPv6 connections are rewired through the IPv4 listener, which opened only in processes with an IPv4 socket. A TP worker whose sockets were all IPv6 (gloo, the TCPStore on `[::]`) published a zeroed address and its peer's `connect` failed. |
+| Reconnect a non-blocking socket blocking | A socket created with `SOCK_NONBLOCK` came back non-blocking, and the rewirer's `connect` returned `EINPROGRESS`. |
 
 Library text now comes from the receiver's files, so donor and receiver need the same DMTCP build and
 libraries, which the runtime image gives them. A mismatch stops the restart; it never maps other code.
@@ -85,11 +87,23 @@ RunPod A40 (Secure Cloud, EU-SE-1), Qwen3-0.6B, vLLM 0.32.0, profile `qwen3-0.6b
 Five restores in a row passed. A restore breaks down as: `dmtcp_restart` 1.7–2.1 s, CUDA 0.4–0.6 s,
 weights 0.5 s at 2.3 GiB/s, canary 0.3 s.
 
+Two A40s (RunPod, $1.18/h), Qwen3-0.6B with TP=2 (`qwen3-0.6b-a40-tp2`, mp executor: 5 processes, 4 CUDA
+owners). Images 9.24 GB, snapshot 11.16 GiB.
+
+| Start | Seconds to serving |
+|---|---|
+| warmctl, snapshot in the page cache | 5.0–5.3 |
+| warmctl, page cache evicted | 5.6–5.7 |
+
+Four restores in a row passed: `dmtcp_restart` 1.8–2.0 s, CUDA 0.7–0.8 s, weights 0.3 s per rank.
+
 ## Limits and open work
 
-- **One GPU only for now.** The mp executor restarts on one GPU, with 4 processes and 3 CUDA owners:
-  serving in 4.2–4.5 s, 4 of 4 runs. Several ranks (NCCL suspended around the checkpoint, peer memory)
-  are not verified under DMTCP yet.
+- **TP=2 is verified on Qwen3-0.6B only.** Larger models with several ranks, and NCCL's P2P transport,
+  are not verified yet. On RunPod's 2×A40 hosts P2P all-reduces hang with or without DMTCP, though the
+  driver reports peer access (ACS/IOMMU), so the TP=2 profile sets `NCCL_P2P_DISABLE=1` (SHM transport).
+- A restore warns that 3 sockets cannot bind their port again (`EADDRINUSE`); serving and the canary are
+  not affected. Which sockets these are is open.
 - No interposed IPC (cuInterpose).
 - RunPod mounts volumes at `/workspace`, which warmctl claims as a tree, and its image ships
   `/workspace/.cache`. Mount volumes elsewhere.
