@@ -189,12 +189,29 @@ func (b *bake) preflight(ctx context.Context) error {
 		return err
 	}
 	if b.o.InPlace {
-		return nil
+		return b.inPlaceImage()
 	}
 	if b.dk, err = docker.New(ctx, b.o.DockerSocket); err != nil {
 		return err
 	}
 	return b.dk.CheckInit(ctx)
+}
+
+// inPlaceImage names the image an in-place engine runs in: the runtime
+// image's base, which a receiver pod compares with its own. Without the
+// runtime image nothing names it, and the manifest keeps the profile's.
+func (b *bake) inPlaceImage() error {
+	rt, ok, err := run.ReadRuntime(run.RuntimeFile)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		b.p.Printf("warning: no %s: nothing names this container's image; the manifest records the profile's, %s",
+			run.RuntimeFile, b.launch.Profile.Image)
+		return nil
+	}
+	b.launch.Profile.Image = rt.Base
+	return nil
 }
 
 // chooseBackend decides how the tree is dumped: a donor container is made

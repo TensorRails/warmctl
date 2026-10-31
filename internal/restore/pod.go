@@ -367,13 +367,13 @@ func (r *restore) tmpfs(path string) (int64, bool) {
 }
 
 func (r *restore) checkBase() error {
-	rt, ok, err := ReadRuntime(RuntimeFile)
+	rt, ok, err := run.ReadRuntime(run.RuntimeFile)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		r.p.Printf("warning: no %s: this is not the warmctl runtime image, nothing says what it was built FROM",
-			RuntimeFile)
+			run.RuntimeFile)
 		return nil
 	}
 	return checkImage(rt.Base, r.m.Launch.Image)

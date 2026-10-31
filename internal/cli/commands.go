@@ -294,7 +294,7 @@ func registerUp(fs *flag.FlagSet, o *restore.Options) *string {
 // rather than no answer, and takes the GPUs the device plugin gave the pod.
 func chooseMode(ctx context.Context, fs *flag.FlagSet, o *restore.Options, mode, sock string) (*restore.Gate, error) {
 	inPlace, reason, err := restore.Choose(ctx, mode, restore.Probe{
-		Runtime: func() (restore.Runtime, bool, error) { return restore.ReadRuntime(restore.RuntimeFile) },
+		Runtime: func() (run.Runtime, bool, error) { return run.ReadRuntime(run.RuntimeFile) },
 		Docker: func(ctx context.Context) error {
 			_, err := docker.New(ctx, sock)
 			return err
