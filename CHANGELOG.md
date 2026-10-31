@@ -43,6 +43,14 @@ Restore
 
 Snapshots
 
+- `build` copies between the GPUs of a PCIe host before the engine starts.
+  Where the driver reports peer access but a copy does not finish (RunPod's
+  2×L40S and 2×A40 hosts: ACS or an IOMMU between the GPUs), it turns vLLM's
+  custom, FlashInfer and symmetric-memory all-reduce and NCCL P2P off for that
+  engine and says so. With the peer path on, Qwen3-32B at TP=2 on such a host
+  stalled at warmup, served 0.1–0.2 tokens/s, or faulted both GPUs until the
+  pod was replaced. Hosts whose peer path works keep the profile's
+  collectives; `up` does not probe.
 - `build --compress` stores the process images and runtime trees as
   independent 32 MiB zstd frames, and BF16 weights in two byte planes, for
   snapshots restored from network storage; `up` decodes the frames on its

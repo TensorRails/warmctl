@@ -215,15 +215,24 @@ runs at that pod's upload speed (0.22 GiB/s): geesefs uploads in the background 
 
 ## Limits and open work
 
-- **TP=2 is verified on Qwen3-0.6B only.** Larger models with several ranks, and NCCL's P2P transport, are not
-  verified yet. On RunPod's 2×A40 hosts P2P all-reduces hang with or without DMTCP, though the driver reports
-  peer access (ACS/IOMMU), so the TP=2 profile sets `NCCL_P2P_DISABLE=1` (SHM transport).
-- **Larger models under DMTCP, open:**
-  - Qwen3.8-27B-FP8 at TP=2 on 2×L40S stalls in vLLM's Qwen GDN Triton warmup under `dmtcp_launch`. Without
-    DMTCP the same command line passes it in 3.5 min. On RTX PRO 6000, Qwen3.8-Flash-Next at TEP4 passes the
-    same warmup under DMTCP in a minute.
-  - Qwen3-32B at TP=2 on L40S failed its first warmup with `CUBLAS_STATUS_INTERNAL_ERROR`. Whether DMTCP
-    causes it is not known yet.
+- **TP=2 is verified on Qwen3-0.6B (2×A40) and Qwen3-32B (2×L40S, the catalog profile `qwen3-32b-l40s-tp2`).**
+  The 32B bake took 4 min 24 s (DMTCP dump of 5 processes in 3.1 s, 72.6 GiB); two `up`s from the pod's disk,
+  page cache warm, served in 14.2 s each: restart 2.2–2.3 s, CUDA 0.7–0.8 s, 61.2 GiB of weights at 5.1–5.2
+  GiB/s per rank, fingerprints and canary matching. The engine took 105 s to start cold. Restores on another
+  pod are verified at TP=2 for 0.6B only; NCCL's P2P transport is not verified under DMTCP.
+- **A peer path the driver reports but the host does not carry.** On RunPod's 2×L40S hosts, as on its 2×A40
+  hosts, `cuDeviceCanAccessPeer` says yes and enabling peer access succeeds, but a 256 MiB peer copy does not
+  finish in 20 s (21.9 GB/s through host memory), and a 64 MiB one returned after a minute with other bytes. `NCCL_P2P_DISABLE=1` reaches only NCCL: vLLM's custom
+  all-reduce trusts the driver and maps the other rank's memory through CUDA IPC. Qwen3.8-27B-FP8 and Qwen3-32B
+  at TP=2 then stalled at warmup (both GPUs at 100%), generated 0.1–0.2 tokens/s, or failed with
+  `CUBLAS_STATUS_INTERNAL_ERROR` and left both GPUs in `ERR!` until the pod was replaced. This is not DMTCP's:
+  without it the engine crawls the same way. `build` now copies between the GPUs of a PCIe host before the engine
+  starts (`host.ProbePeers`, in a child process with a 10 s limit), and where a copy does not finish it turns
+  custom all-reduce, FlashInfer's and symmetric-memory all-reduce and NCCL P2P off for that engine and logs why
+  (`snapshot.PeerOff`). Hosts whose peer path works keep the profile's collectives. `up` does not probe: a
+  snapshot baked with the peer path on, restored on such a host, still hangs.
+- **CUDA IPC handles carry the exporter's PID**, which under DMTCP is the virtual one (40000 and up). Whether
+  cuda-IPC collectives work under DMTCP on a host whose peer path works is not verified.
 - **The checkpoint signal is DMTCP's default, SIGUSR2.**
   - vLLM installs a SIGUSR2 handler, which DMTCP refuses with a warning per process; serving is not affected.
   - Do not set `DMTCP_SIGCKPT` or `--ckpt-signal`. vLLM's, CUDA's, NCCL's and gloo's threads block every

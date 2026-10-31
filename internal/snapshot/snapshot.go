@@ -71,6 +71,9 @@ type bake struct {
 	loader profile.Loader
 	table  profile.HardwareTable
 	launch profile.Launch
+	// defaults and prof are what launch was resolved from, kept for
+	// checkPeers to resolve it again.
+	defaults, prof profile.Profile
 	// ipcDir holds the cuInterpose build the donor mounts, when ipc is not
 	// native; ipc is what the donor decided.
 	ipcDir string
@@ -153,6 +156,7 @@ func (b *bake) resolve(context.Context) error {
 	if b.launch, err = profile.Resolve(defaults, p); err != nil {
 		return err
 	}
+	b.defaults, b.prof = defaults, p
 	b.table, err = b.loader.Hardware()
 	b.p.Printf("profile %s: %d ranks, %d graph sizes, %d warmup cases", b.launch.Profile.ID,
 		b.launch.Profile.Parallel.Ranks(), len(b.launch.CaptureSizes), len(b.launch.WarmupCases()))
@@ -193,6 +197,9 @@ func (b *bake) preflight(ctx context.Context) error {
 		return err
 	}
 	if b.topology, b.topoSHA, err = host.Topology(ctx, b.gpus); err != nil {
+		return err
+	}
+	if err := b.checkPeers(ctx); err != nil {
 		return err
 	}
 	if b.o.InPlace {

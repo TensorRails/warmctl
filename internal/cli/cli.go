@@ -12,6 +12,7 @@ import (
 
 	"github.com/TensorRails/warmctl/v2"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
+	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/profile"
 )
 
@@ -69,6 +70,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, version s
 		err = runProfile(args[1:], stdout)
 	case "agent":
 		err = runAgent(ctx, args[1:], stderr)
+	case host.PeerProbeCommand:
+		// The child of host.ProbePeers (internal).
+		err = host.RunPeerProbe(args[1:], stdout)
 	case "build", "snapshot", "bake":
 		err = runBuild(ctx, args[1:], stdout, stderr, version)
 	case "help", "-h", "--help":
