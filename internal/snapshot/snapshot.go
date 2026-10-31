@@ -123,6 +123,9 @@ func Run(ctx context.Context, o Options) (manifest.Manifest, error) {
 }
 
 func (b *bake) resolve(context.Context) error {
+	if err := b.chooseBackend(); err != nil {
+		return err
+	}
 	b.loader = profile.Loader{Assets: warmctl.Assets, Dirs: b.o.ProfileDirs}
 	defaults, err := b.loader.Defaults()
 	if err != nil {
@@ -134,6 +137,11 @@ func (b *bake) resolve(context.Context) error {
 	}
 	for _, s := range b.o.Set {
 		if err := p.Set(s); err != nil {
+			return err
+		}
+	}
+	if b.backend == agent.BackendDMTCP {
+		if err := fitDMTCP(&p); err != nil {
 			return err
 		}
 	}
@@ -150,9 +158,6 @@ func (b *bake) resolve(context.Context) error {
 }
 
 func (b *bake) preflight(ctx context.Context) error {
-	if err := b.chooseBackend(); err != nil {
-		return err
-	}
 	if disabled, err := host.IOUringDisabled(); !b.o.CPUTest && (err != nil || disabled != 2) {
 		if b.backend != agent.BackendDMTCP {
 			return errors.New("kernel.io_uring_disabled must be 2 (sysctl -w kernel.io_uring_disabled=2): " +
@@ -221,6 +226,18 @@ func (b *bake) chooseBackend() error {
 		return b.o.DMTCP.Check()
 	}
 	return nil
+}
+
+// fitDMTCP fits a profile to the dmtcp backend: one GPU, and vLLM's engine
+// core running its worker in its own process (the uni executor, vLLM's own
+// choice for one GPU). DMTCP does not yet restart the mp executor's worker,
+// a third process that shares fds with both its ancestors: the restart
+// deadlocks passing them (docs/dmtcp.md).
+func fitDMTCP(p *profile.Profile) error {
+	if r := p.Parallel.Ranks(); r != 1 {
+		return fmt.Errorf("the dmtcp backend snapshots one GPU, and profile %s has %d ranks", p.ID, r)
+	}
+	return p.Set("vllm.distributed-executor-backend=uni")
 }
 
 // Hardware finds the hardware row of the selected GPUs: all of one model,

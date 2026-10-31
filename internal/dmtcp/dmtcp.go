@@ -168,8 +168,8 @@ func (t Tools) List(ctx context.Context) ([]Peer, error) {
 	return ParseList(out.Stdout + "\n" + out.Stderr)
 }
 
-// "1, python3[40000:31026]@host, 2fc1a63b5fe2930f-40000-38e0594b69c97, RUNNING, ..."
-var peerLine = regexp.MustCompile(`^\s*\d+,\s*(.*)\[(\d+):(\d+)\]@[^,]*,\s*[^,]*,\s*([A-Z_]+)`)
+// "1, python3.12[40000:47148]@b5266da1239b, 314ceaedf4104db7-40000-3941ee323f43e, WorkerState::RUNNING, "
+var peerLine = regexp.MustCompile(`^\s*\d+,\s*(.*)\[(\d+):(\d+)\]@[^,]*,\s*[^,]*,\s*(?:WorkerState::)?([A-Z_]+)`)
 
 // ParseList reads dmtcp_command --list: one peer per client line.
 func ParseList(text string) ([]Peer, error) {

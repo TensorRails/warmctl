@@ -8,12 +8,13 @@ import (
 	"testing"
 )
 
-// The coordinator's list of a restarted `vllm serve`: API server and engine
-// core, real PIDs of the new pod.
+// The coordinator's list of a restarted `vllm serve` as DMTCP 5.0 prints it:
+// API server and engine core, real PIDs of the new pod, the engine core
+// still at a restart barrier.
 const list = `Client List:
 #, PROG[virtPID:realPID]@HOST, DMTCP-UNIQUEPID, STATE, BARRIER
-2, VLLM::EngineCore[44000:59133]@c6e3625bc4a1, 2fc1a63b5fe2930f-44000-38f51f1b27a84, RUNNING,
-1, python3.12[40000:59128]@c6e3625bc4a1, 2fc1a63b5fe2930f-40000-38f4deb880205, RUNNING,
+2, VLLM::EngineCore[44000:59133]@b5266da1239b, 314ceaedf4104db7-44000-3942572dc4057, WorkerState::RESTARTING, Socket::Restart_Ns_Register_Data
+1, python3.12[40000:59128]@b5266da1239b, 314ceaedf4104db7-40000-3941ee323f43e, WorkerState::RUNNING,
 `
 
 func TestParseList(t *testing.T) {
@@ -23,7 +24,7 @@ func TestParseList(t *testing.T) {
 	}
 	want := []Peer{
 		{Name: "python3.12", Virtual: 40000, Real: 59128, State: "RUNNING"},
-		{Name: "VLLM::EngineCore", Virtual: 44000, Real: 59133, State: "RUNNING"},
+		{Name: "VLLM::EngineCore", Virtual: 44000, Real: 59133, State: "RESTARTING"},
 	}
 	if !reflect.DeepEqual(peers, want) {
 		t.Fatalf("got %+v", peers)
