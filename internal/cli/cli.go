@@ -28,6 +28,8 @@ const usage = `usage: warmctl <command> [flags]
   push|pull     move snapshots through an OCI registry or a directory (dir:PATH)
   mirror        copy models into another registry or a directory (a shared cache)
   verify        check a snapshot directory against its manifest
+  compress      copy a snapshot directory with its images and weights stored as
+                zstd frames, for network storage (as build --compress)
   gc            remove blobs no recorded snapshot uses
   doctor        check this host
   hardware      list the GPU models snapshots support and mark this host's
@@ -45,6 +47,7 @@ var commands = map[string]func(context.Context, []string, io.Writer, io.Writer) 
 	"stop":     runDown,
 	"ps":       runPs,
 	"verify":   runVerify,
+	"compress": runCompress,
 	"gc":       runGC,
 	"push":     runPush,
 	"pull":     runPull,

@@ -160,8 +160,9 @@ The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
 `deploy/kubernetes/Dockerfile` builds the fork at a pinned commit and fdkeep against it, on the base, into
 `/opt/warmctl/dmtcp`.
 
-- **Base.** For RunPod the base must run on its drivers: A40 and L40S hosts run 595.91 (CUDA 13.2), so
-  `BASE=vllm/vllm-openai:v0.32.0` (CUDA 13.0) rather than the cu134 default.
+- **Base.** The default base (vLLM's cu134 nightly, CUDA 13.4) runs on RunPod's 595.91 driver (CUDA 13.2)
+  through CUDA's minor-version compatibility: verified on 4×RTX PRO 6000 in EU-RO-1. The experimental image
+  below was built on `vllm/vllm-openai:v0.32.0` before that was checked.
 - **Published.** An experimental build, warmctl at `e5aebe7` (before `--compress`), is
   `registry.warmctl.io/warmctl/runtime:exp-dmtcp-e5aebe7` (`sha256:fc71c9bb…`).
 - **Pushing it.** registry.warmctl.io sits behind Cloudflare, which refuses request bodies over 100 MB. A base

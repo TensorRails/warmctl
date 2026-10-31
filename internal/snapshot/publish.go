@@ -87,24 +87,57 @@ func (b *bake) publish(ctx context.Context) error {
 // (16-bit weights). The links to the store's blobs make way for the encoded
 // files; the blobs, and each file's SHA256, stay the file's own bytes.
 func compress(ctx context.Context, output string, files []manifest.File) error {
+	return encode(ctx, output, output, files)
+}
+
+// Compress writes a copy of the snapshot in src to dst with its process
+// images, runtime trees and weights stored as zstd frames, as a build with
+// --compress would have: the same snapshot in fewer bytes, for network
+// storage. src keeps its files as they are, so it can still be pushed.
+func Compress(ctx context.Context, src, dst string) (manifest.Manifest, error) {
+	m, err := manifest.Read(filepath.Join(src, "manifest.json"))
+	if err != nil {
+		return m, err
+	}
+	if m.Encoded() {
+		return m, fmt.Errorf("%s is stored encoded already", src)
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return m, fmt.Errorf("%s already exists", dst)
+	}
+	if err := encode(ctx, src, dst, m.Files); err != nil {
+		return m, err
+	}
+	// manifest.json last: a reader takes it as the copy's commit point.
+	return m, m.Write(filepath.Join(dst, "manifest.json"))
+}
+
+// encode writes files from src to dst, the process images, runtime trees
+// and weights as zstd frames and the rest linked or copied as they are, and
+// records each encoding in files. With src and dst the same directory it
+// re-encodes in place.
+func encode(ctx context.Context, src, dst string, files []manifest.File) error {
 	// Several files at once, a few frames each: one file's encoder reads,
 	// compresses and writes in turn, which leaves the cores idle.
 	sem := make(chan struct{}, max(2, runtime.NumCPU()/4))
 	var wg sync.WaitGroup
 	errs := make([]error, len(files))
 	for i, f := range files {
-		if f.Role != manifest.RoleCRIU && f.Role != manifest.RoleRuntimeFS && f.Role != manifest.RoleWeights {
+		frames := f.Role == manifest.RoleCRIU || f.Role == manifest.RoleRuntimeFS || f.Role == manifest.RoleWeights
+		if !frames && src == dst {
 			continue
 		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
 			defer func() { <-sem; wg.Done() }()
-			p := filepath.Join(output, filepath.FromSlash(f.Path))
-			ends, split, err := zframes.Encode(ctx, p, p+".zst", 4, 0)
-			if err == nil {
-				err = os.Rename(p+".zst", p)
+			from := filepath.Join(src, filepath.FromSlash(f.Path))
+			to := filepath.Join(dst, filepath.FromSlash(f.Path))
+			if !frames {
+				errs[i] = linkOrCopy(from, to)
+				return
 			}
+			ends, split, err := encodeFile(ctx, from, to)
 			if err != nil {
 				errs[i] = err
 				return
@@ -114,6 +147,45 @@ func compress(ctx context.Context, output string, files []manifest.File) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// encodeFile writes src to dst as zstd frames, with src's mode; dst may be
+// src itself.
+func encodeFile(ctx context.Context, src, dst string) ([]int64, int, error) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return nil, 0, err
+	}
+	ends, split, err := zframes.Encode(ctx, src, dst+".zst", 4, 0)
+	if err == nil {
+		err = os.Chmod(dst+".zst", info.Mode().Perm())
+	}
+	if err == nil {
+		err = os.Rename(dst+".zst", dst)
+	}
+	if err != nil {
+		_ = os.Remove(dst + ".zst")
+	}
+	return ends, split, err
+}
+
+// linkOrCopy makes dst the file src: a hard link on the same file system,
+// else a copy with src's mode.
+func linkOrCopy(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	return run.CopyFile(src, dst, info.Mode().Perm())
 }
 
 // tree is a directory published under prefix; role names each file's role

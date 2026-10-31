@@ -444,6 +444,25 @@ func runVerify(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	return nil
 }
 
+func runCompress(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("compress", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("compress needs a snapshot directory and a new directory for the compressed copy")
+	}
+	start := time.Now()
+	m, err := snapshot.Compress(ctx, fs.Arg(0), fs.Arg(1))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "compressed %s into %s: %.2f GiB stored as %.2f GiB in %.1fs\n", fs.Arg(0), fs.Arg(1),
+		float64(m.Bytes())/(1<<30), float64(m.StoredBytes())/(1<<30), time.Since(start).Seconds())
+	return nil
+}
+
 // fileSum is the SHA-256 of f's own bytes, which name stores as they are or
 // encoded.
 func fileSum(ctx context.Context, name string, f manifest.File) (string, error) {
