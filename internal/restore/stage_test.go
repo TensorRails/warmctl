@@ -3,11 +3,11 @@ package restore
 import (
 	"bytes"
 	"context"
-	"errors"
-	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 )
@@ -46,7 +46,10 @@ func TestStage(t *testing.T) {
 	if n, err := Stage(ctx, src, dst, m); err != nil || n != 0 {
 		t.Fatalf("a complete copy was copied again: %d %v", n, err)
 	}
-	// A source shorter than the manifest says is an error, not a short copy.
+	// A source that stays shorter than the manifest says is an error, not a
+	// short copy.
+	defer func(wait time.Duration) { arrivalWait = wait }(arrivalWait)
+	arrivalWait = 300 * time.Millisecond
 	if err := os.WriteFile(filepath.Join(src, "manifest.json"), []byte(`{"id":"q06","v":2}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -55,11 +58,33 @@ func TestStage(t *testing.T) {
 			m.Files[i].Size = int64(len(image)) + 10
 		}
 	}
-	if _, err := Stage(ctx, src, dst, m); !errors.Is(err, io.ErrUnexpectedEOF) {
+	if _, err := Stage(ctx, src, dst, m); err == nil || !strings.Contains(err.Error(), "not there") {
 		t.Fatalf("short source: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "manifest.json")); err == nil {
 		t.Fatal("a failed copy looks complete")
+	}
+}
+
+// A file the manifest lists but the volume shows late, as a Global Volume
+// shows another pod's writes, is waited for.
+func TestStageWaitsForLateFiles(t *testing.T) {
+	src, dst := t.TempDir(), filepath.Join(t.TempDir(), "staged")
+	body := []byte("weights")
+	m := manifest.Manifest{Files: []manifest.File{{Path: "weights/part-0", Size: int64(len(body))}}}
+	if err := os.WriteFile(filepath.Join(src, "manifest.json"), []byte(`{"id":"late"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		os.MkdirAll(filepath.Join(src, "weights"), 0o755)
+		os.WriteFile(filepath.Join(src, "weights/part-0"), body, 0o444)
+	}()
+	if n, err := Stage(context.Background(), src, dst, m); err != nil || n != int64(len(body)) {
+		t.Fatalf("copied %d: %v", n, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "weights/part-0")); err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("staged %q: %v", got, err)
 	}
 }
 

@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 )
@@ -16,6 +19,11 @@ import (
 // stageWorkers is how many ranges a stage copies at once: object storage
 // behind FUSE reaches its bandwidth only with many requests in flight.
 const stageWorkers = 32
+
+// arrivalWait bounds how long a stage waits for a file the manifest lists:
+// a RunPod Global Volume shows another pod's writes seconds late, and its
+// manifest.json may show before the files.
+var arrivalWait = 2 * time.Minute
 
 // Stage copies the snapshot in dir to dst, every file of m and its
 // manifest.json, many ranges in flight, and returns how many bytes it
@@ -43,7 +51,11 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest) (int64, er
 		} else {
 			rest = append(rest, f)
 		}
-		if err := create(filepath.Join(dir, f.Path), filepath.Join(dst, f.Path), f.Size); err != nil {
+		info, err := arrived(ctx, filepath.Join(dir, f.Path), f.Size)
+		if err != nil {
+			return 0, err
+		}
+		if err := create(info, filepath.Join(dst, f.Path), f.Size); err != nil {
 			return 0, err
 		}
 	}
@@ -80,12 +92,32 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest) (int64, er
 	return copied.Load(), os.WriteFile(filepath.Join(dst, "manifest.json"), raw, 0o644)
 }
 
-// create makes dst at size, with src's mode.
-func create(src, dst string, size int64) error {
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
+// arrived waits, up to arrivalWait, until src exists with size bytes.
+func arrived(ctx context.Context, src string, size int64) (fs.FileInfo, error) {
+	deadline := time.Now().Add(arrivalWait)
+	for {
+		info, err := os.Stat(src)
+		switch {
+		case err == nil && info.Size() >= size:
+			return info, nil
+		case err != nil && !errors.Is(err, fs.ErrNotExist):
+			return nil, err
+		case time.Now().After(deadline):
+			if err == nil {
+				err = fmt.Errorf("%d of %d bytes", info.Size(), size)
+			}
+			return nil, fmt.Errorf("%s not there after %s: %w", src, arrivalWait, err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
+}
+
+// create makes dst at size, with src's mode.
+func create(info fs.FileInfo, dst string, size int64) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
