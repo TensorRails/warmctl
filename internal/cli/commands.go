@@ -59,7 +59,7 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.IntVar(&c.threads, "threads", 0, "pool copy threads per rank (default 4)")
 	fs.BoolVar(&c.cpuTest, "test-cpu", false, "end-to-end test on a CPU host: no GPU devices, no io_uring check")
 	fs.StringVar(&c.dmtcp.Dir, "dmtcp-dir", "", "directory of DMTCP's programs, for the dmtcp backend (default: PATH)")
-	fs.StringVar(&c.dmtcp.Plugin, "dmtcp-plugin", "/opt/warmctl/dmtcp/libdmtcp_fdkeep.so",
+	fs.StringVar(&c.dmtcp.Plugin, "dmtcp-plugin", "/opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so",
 		"warmctl's fdkeep DMTCP plugin, for the dmtcp backend")
 }
 

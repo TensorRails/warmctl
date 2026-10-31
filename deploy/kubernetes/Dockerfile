@@ -1,5 +1,6 @@
 # The warmctl runtime image: the vLLM image a snapshot's engine ran in,
-# with warmctl, its vLLM extension, NVIDIA's cuInterpose and tini on top.
+# with warmctl, its vLLM extension, NVIDIA's cuInterpose, DMTCP and tini on
+# top.
 # Nothing of the base changes, so every file the restored processes map is
 # where the donor had it. The command is the one a host runs; the marker
 # /opt/warmctl/RUNTIME makes `up` restore in place (docs/kubernetes.md):
@@ -25,6 +26,18 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-X main.version=${VERSION}" -o /out/warmctl ./cmd/warmctl
 
+# DMTCP for the dmtcp backend (docs/dmtcp.md): TensorRails' fork at a pinned
+# commit and warmctl's fdkeep plugin against it, built on the base so they
+# link the libc the engine runs with. A restore maps DMTCP's own text from
+# these files, so donor and receiver need this very build.
+FROM ${BASE} AS dmtcp
+ARG DMTCP_COMMIT=a786421af1f7e3b85a833c6762c6bd137cbc1f02
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git \
+    && git clone https://github.com/TensorRails/dmtcp /src/dmtcp && cd /src/dmtcp && git checkout ${DMTCP_COMMIT} \
+    && ./configure --prefix=/opt/warmctl/dmtcp && make -j"$(nproc)" && make install
+COPY internal/dmtcp/fdkeep/fdkeep.c /src/fdkeep.c
+RUN gcc -Wall -O2 -shared -fPIC -I/opt/warmctl/dmtcp/include -o /opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so /src/fdkeep.c
+
 # cuInterpose's build (make cuinterpose), passed as a named build context;
 # empty without one. A restore runs the snapshot's own copy, so only a bake
 # in a pod would need it.
@@ -40,6 +53,8 @@ ADD --chmod=0755 --checksum=sha256:c5b0666b4cb676901f90dfcb37106783c5fe2077b0459
 COPY --from=build /out/warmctl /usr/local/bin/warmctl
 # cuinterpose/ next to warmctl, where a release keeps it.
 COPY --from=cuinterpose / /usr/local/bin/cuinterpose/
+COPY --from=dmtcp /opt/warmctl/dmtcp /opt/warmctl/dmtcp
+ENV PATH=/opt/warmctl/dmtcp/bin:${PATH}
 # The extension for engines started from this image; a restore mounts the
 # snapshot's own copy over it.
 COPY python/warmctl_vllm /opt/warmctl/adapter/warmctl_vllm
