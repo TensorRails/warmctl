@@ -247,3 +247,34 @@ func TestPodModel(t *testing.T) {
 		t.Errorf("mounted model: %q %v", got, err)
 	}
 }
+
+// A donor's /dev/nvidiaN that this pod lacks becomes a link to this pod's GPU
+// of the same rank; one that is another GPU here is refused.
+func TestLinkDevices(t *testing.T) {
+	dir := t.TempDir()
+	mine, other := filepath.Join(dir, "nvidia1"), filepath.Join(dir, "nvidia2")
+	for _, p := range []string{mine, other} {
+		if err := os.WriteFile(p, nil, 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	donor := []manifest.GPU{{Rank: 0, Device: filepath.Join(dir, "nvidia3")}}
+	linked, err := linkDevices(donor, []string{mine})
+	if err != nil || len(linked) != 1 {
+		t.Fatalf("linked %v: %v", linked, err)
+	}
+	if target, err := os.Readlink(donor[0].Device); err != nil || target != mine {
+		t.Fatalf("link to %q: %v", target, err)
+	}
+	// Linked already, or the same node: nothing to do.
+	if linked, err := linkDevices(donor, []string{mine}); err != nil || len(linked) != 0 {
+		t.Fatalf("again: %v %v", linked, err)
+	}
+	if _, err := linkDevices([]manifest.GPU{{Device: other}}, []string{mine}); err == nil {
+		t.Fatal("another GPU's node was taken over")
+	}
+	// Old manifests name no device.
+	if linked, err := linkDevices([]manifest.GPU{{}}, []string{mine}); err != nil || len(linked) != 0 {
+		t.Fatalf("no device: %v %v", linked, err)
+	}
+}

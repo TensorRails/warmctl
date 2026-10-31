@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/criu"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
@@ -241,8 +242,13 @@ func (b *bake) hardware() manifest.Hardware {
 		h.DriverPortable, h.DriverFiles = true, b.driverPaths
 	}
 	for i, g := range b.gpus {
-		h.GPUs = append(h.GPUs, manifest.GPU{Rank: i, Index: g.Index, UUID: g.UUID, PCIBusID: g.PCIBusID, Name: g.Name,
-			MemoryMiB: g.MemoryMiB})
+		gpu := manifest.GPU{Rank: i, Index: g.Index, UUID: g.UUID, PCIBusID: g.PCIBusID, Name: g.Name, MemoryMiB: g.MemoryMiB}
+		if dev, err := host.DevicePath(g.PCIBusID); err == nil {
+			gpu.Device = dev
+		} else if b.backend == agent.BackendDMTCP {
+			b.p.Printf("warning: rank %d: %v; a pod whose GPU has another /dev/nvidiaN will not restore", i, err)
+		}
+		h.GPUs = append(h.GPUs, gpu)
 	}
 	return h
 }

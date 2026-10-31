@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -320,6 +321,52 @@ func (r *restore) checkPod() error {
 // dmtcp is whether the snapshot's tree restarts under DMTCP.
 func (r *restore) dmtcp() bool { return r.m.Process.Backend == agent.BackendDMTCP }
 
+// linkDevices names each donor GPU's device node after this pod's GPU of the
+// same rank: DMTCP reopens a descriptor by its path, and the host numbers
+// /dev/nvidiaN in its own order. CUDA itself moves by UUID (the device map).
+func (r *restore) linkDevices() error {
+	here := make([]string, len(r.gpus))
+	for i, g := range r.gpus {
+		dev, err := host.DevicePath(g.PCIBusID)
+		if err != nil {
+			return fmt.Errorf("rank %d: %w", i, err)
+		}
+		here[i] = dev
+	}
+	linked, err := linkDevices(r.m.Hardware.GPUs, here)
+	for _, l := range linked {
+		r.p.Printf("%s", l)
+	}
+	return err
+}
+
+// linkDevices links every donor device node this pod lacks to here[rank],
+// and refuses one that is another GPU here. It returns what it linked.
+func linkDevices(donor []manifest.GPU, here []string) ([]string, error) {
+	var linked []string
+	for i, d := range donor {
+		if d.Device == "" || d.Device == here[i] {
+			continue
+		}
+		info, err := os.Stat(d.Device)
+		switch {
+		case err == nil:
+			if mine, err := os.Stat(here[i]); err == nil && os.SameFile(info, mine) {
+				continue
+			}
+			return linked, fmt.Errorf("rank %d's GPU was %s, which is another GPU in this pod (rank %d is %s): "+
+				"the dmtcp backend cannot renumber it", i, d.Device, i, here[i])
+		case !errors.Is(err, fs.ErrNotExist):
+			return linked, err
+		}
+		if err := os.Symlink(here[i], d.Device); err != nil {
+			return linked, err
+		}
+		linked = append(linked, fmt.Sprintf("rank %d: %s links to this pod's %s", i, d.Device, here[i]))
+	}
+	return linked, nil
+}
+
 // checkUnprivileged is the pod half of the preflight for a snapshot the
 // dmtcp backend took: nothing is mounted, no namespace made and no PID
 // moved, so none of a receiver container's privileges is asked for; DMTCP
@@ -436,6 +483,11 @@ func (r *restore) startPod(ctx context.Context) error {
 	}
 	if len(drivers) == 0 && !r.o.CPUTest {
 		r.warnDriver()
+	}
+	if r.dmtcp() {
+		if err := r.linkDevices(); err != nil {
+			return err
+		}
 	}
 	for _, m := range append(r.engineMounts(model), drivers...) {
 		if r.dmtcp() {

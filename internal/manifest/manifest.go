@@ -59,6 +59,9 @@ type GPU struct {
 	PCIBusID  string `json:"pci_bus_id"`
 	Name      string `json:"name"`
 	MemoryMiB int64  `json:"memory_mib"`
+	// Device is the node the donor's processes opened, /dev/nvidiaN; a
+	// receiver's GPU of the same rank may have another number.
+	Device string `json:"device,omitempty"`
 }
 
 // Hardware is what a restore host has to match.
