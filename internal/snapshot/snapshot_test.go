@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/TensorRails/warmctl/v2"
@@ -83,27 +82,16 @@ func TestServedName(t *testing.T) {
 	}
 }
 
-// A dmtcp bake runs one GPU's engine core with its worker in process (uni);
-// a profile of several ranks is refused.
+// A dmtcp bake keeps the profile's engine (vLLM's mp executor restarts
+// under the fork) and refuses a profile of several ranks.
 func TestFitDMTCP(t *testing.T) {
 	l := profile.Loader{Assets: warmctl.Assets}
-	defaults, err := l.Defaults()
-	if err != nil {
-		t.Fatal(err)
-	}
 	p, err := l.Load("qwen3-0.6b-tp1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := fitDMTCP(&p); err != nil {
 		t.Fatal(err)
-	}
-	launch, err := profile.Resolve(defaults, p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if argv := strings.Join(launch.Argv, " "); !strings.Contains(argv, "--distributed-executor-backend=uni") {
-		t.Fatalf("argv keeps another executor: %s", argv)
 	}
 	two, err := l.Load("qwen3-0.6b-fastcomm-tp2")
 	if err != nil {

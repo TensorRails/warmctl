@@ -41,8 +41,10 @@ agent had before, unchanged; `dmtcpTree` (`dmtcp_linux.go`) is the new backend:
 | restore | `criu restore --leave-stopped` | `dmtcp_restart --no-strict-checking`, waiting until every peer runs; owners translated back to real PIDs |
 | in place | tmpfs and bind mounts, UTS namespace | trees claimed, model and adapter symlinked (`run.Place`); no mount, no namespace |
 
-A dmtcp bake fits the profile to one GPU and vLLM's uni executor (`fitDMTCP`). The engine runs with
-`VLLM_WORKER_MULTIPROC_METHOD=fork`, one-thread BLAS pools and `UV_USE_IO_URING=0` (`dmtcp.Env`).
+The engine keeps the profile's configuration, vLLM's mp executor included (API server, engine core,
+worker, resource tracker). It runs with `VLLM_WORKER_MULTIPROC_METHOD=fork`, one-thread BLAS pools and
+`UV_USE_IO_URING=0` (`dmtcp.Env`). A dmtcp bake refuses profiles of several ranks (`fitDMTCP`) until
+TP>1 is verified.
 
 ## DMTCP: the fork and the plugin
 
@@ -54,6 +56,7 @@ with these patches:
 | Map unmodified file areas from their file | A checkpoint wrote every library's text in full. A clean, private, unwritable mapping now gets a header only, and `mtcp_restart` maps the file again after checking its size and mtime. vLLM's images went from 12.3 to 4.4 GB. |
 | Restore `SO_REUSEADDR` before bind | A restart right after the donor died failed to bind its port while connections sat in TIME_WAIT. |
 | Find `_files` copies next to the moved image | Images published into the store restarted only if the donor's directory still existed. |
+| Name a forked child's connections with its own UniquePid | A forked child named its connections `0-0-0(n)` until its first checkpoint, so vLLM's engine core and worker gave different sockets the same name, and the restart waited forever at `Socket::Restart_Ns_Send_Queries`. With the fix, the mp executor restarts. |
 
 Library text now comes from the receiver's files, so donor and receiver need the same DMTCP build and
 libraries, which the runtime image gives them. A mismatch stops the restart; it never maps other code.
@@ -84,9 +87,9 @@ weights 0.5 s at 2.3 GiB/s, canary 0.3 s.
 
 ## Limits and open work
 
-- **One GPU only.** vLLM's mp executor puts a worker in a third process that shares fds with both its
-  ancestors, and DMTCP's restart deadlocks passing them: every peer waits at
-  `Socket::Restart_Ns_Register_Data`. TP>1 needs this fixed in the fork.
+- **One GPU only for now.** The mp executor restarts on one GPU, with 4 processes and 3 CUDA owners:
+  serving in 4.2–4.5 s, 4 of 4 runs. Several ranks (NCCL suspended around the checkpoint, peer memory)
+  are not verified under DMTCP yet.
 - No interposed IPC (cuInterpose).
 - RunPod mounts volumes at `/workspace`, which warmctl claims as a tree, and its image ships
   `/workspace/.cache`. Mount volumes elsewhere.

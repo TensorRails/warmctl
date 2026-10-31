@@ -228,16 +228,13 @@ func (b *bake) chooseBackend() error {
 	return nil
 }
 
-// fitDMTCP fits a profile to the dmtcp backend: one GPU, and vLLM's engine
-// core running its worker in its own process (the uni executor, vLLM's own
-// choice for one GPU). DMTCP does not yet restart the mp executor's worker,
-// a third process that shares fds with both its ancestors: the restart
-// deadlocks passing them (docs/dmtcp.md).
+// fitDMTCP checks a profile against the dmtcp backend: one GPU. Restoring
+// several ranks (NCCL, peer memory) under DMTCP is not verified yet.
 func fitDMTCP(p *profile.Profile) error {
 	if r := p.Parallel.Ranks(); r != 1 {
 		return fmt.Errorf("the dmtcp backend snapshots one GPU, and profile %s has %d ranks", p.ID, r)
 	}
-	return p.Set("vllm.distributed-executor-backend=uni")
+	return nil
 }
 
 // Hardware finds the hardware row of the selected GPUs: all of one model,
