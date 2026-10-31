@@ -18,9 +18,9 @@ Backends
   /opt/warmctl/dmtcp, which `--dmtcp-dir` and `--dmtcp-plugin` default to.
 - Each DMTCP run starts its own coordinator on a free port and ends it, with
   every restarted process, when the run fails or ends.
-- An in-place run holds /run/warmctl.lock: a second `up` or `build
-  --in-place` in the same container is refused instead of taking over the
-  first engine's /tmp, /dev/shm and /workspace.
+- An in-place run holds a flock on the container's root directory: a second
+  `up` or `build --in-place` in the same container is refused instead of
+  taking over the first engine's /tmp, /dev/shm and /workspace.
 - A DMTCP restore checks that the model is at the donor's path, where the
   restart reopens its files.
 - `verify` checks a `--compress` directory: stored sizes, and with `--deep`

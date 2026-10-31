@@ -51,8 +51,8 @@ agent had before, unchanged; `dmtcpTree` (`dmtcp_linux.go`) is the new backend:
 Each run starts its own coordinator on a free port and ends it when the agent exits, so a coordinator
 left by a failed run (one no process joined waits forever) never blocks the next. A container still runs
 one in-place run at a time: the engine owns its `/tmp`, `/dev/shm` and `/workspace`. A second `up` or
-`build --in-place` is refused while the first holds `/run/warmctl.lock`; for two engines on a pod's two
-GPUs, run two containers.
+`build --in-place` is refused while the first runs (it holds a flock on the container's `/`, which a
+read-only root allows); for two engines on a pod's two GPUs, run two containers.
 
 The engine keeps the profile's configuration, vLLM's mp executor included (API server, engine core,
 worker, resource tracker). It runs with the variables in `dmtcp.Env`:
