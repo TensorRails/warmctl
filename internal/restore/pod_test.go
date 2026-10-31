@@ -3,6 +3,7 @@ package restore
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -348,8 +349,13 @@ func TestLinkDevices(t *testing.T) {
 	if _, err := os.Lstat(donor[0].Device + ".warmctl-link"); err == nil {
 		t.Fatal("the temporary link stayed")
 	}
-	if _, err := linkDevices([]manifest.GPU{{Device: other}}, []string{mine}); err == nil {
-		t.Fatal("another GPU's node was taken over")
+	// Another GPU's node keeps its name: the CUDA restore opens each GPU's
+	// own nodes.
+	if linked, err := linkDevices([]manifest.GPU{{Device: other}}, []string{mine}); err != nil || len(linked) != 0 {
+		t.Fatalf("another GPU's node: %v %v", linked, err)
+	}
+	if info, err := os.Lstat(other); err != nil || info.Mode()&fs.ModeSymlink != 0 {
+		t.Fatalf("another GPU's node was replaced: %v", err)
 	}
 	// Old manifests name no device.
 	if linked, err := linkDevices([]manifest.GPU{{}}, []string{mine}); err != nil || len(linked) != 0 {

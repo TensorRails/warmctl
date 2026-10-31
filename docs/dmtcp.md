@@ -88,7 +88,10 @@ A pod restores a snapshot another pod took when it runs the same image, GPU mode
 - **GPU device nodes.** Hosts number `/dev/nvidiaN` in their own order: the same rank was `/dev/nvidia3`, `1`,
   `5` and `0` on four RunPod pods. DMTCP reopens a descriptor by its path. So the manifest records each GPU's
   node (`hardware.gpus[].device`, from the driver's Device Minor), and a restore links a node this pod lacks
-  to its own GPU of the same rank. CUDA itself moves by UUID (the device map).
+  to its own GPU of the same rank, so that DMTCP finds a node to reopen. A donor name that is another GPU here
+  stays as it is (Qwen3.8-Flash-Next's rank 2 was `/dev/nvidia7` on the bake pod, rank 3's GPU on the replica):
+  the CUDA restore moves each GPU by UUID (the device map) and opens its nodes itself, and the weights'
+  fingerprints and the canary matched. The nodes cannot be renamed instead: each is a bind mount of its own.
 - **The model's path.** An in-place bake links the model in, so the processes hold its files under its real
   directory, which the manifest records (`launch.model_dir`, symbolic links resolved). A restart reopens
   them there: the receiving pod must have the model at that same path, as the same volume mounted at the

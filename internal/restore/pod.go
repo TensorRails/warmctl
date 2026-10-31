@@ -373,7 +373,12 @@ func (r *restore) linkDevices() error {
 }
 
 // linkDevices links every donor device node this pod lacks to here[rank],
-// and refuses one that is another GPU here. It returns what it linked.
+// so that DMTCP finds a node to reopen, and returns what it linked. A donor
+// name that is another GPU here stays as it is: the CUDA restore moves each
+// GPU's state by UUID (the device map) and opens that GPU's nodes itself, so
+// the descriptor DMTCP reopened by the name is never the one it uses. On a
+// RunPod pod where Qwen3.8-Flash-Next's rank 2 had been /dev/nvidia7, this
+// pod's rank 3, the weights' fingerprints and the canary matched.
 func linkDevices(donor []manifest.GPU, here []string) ([]string, error) {
 	var linked []string
 	for i, d := range donor {
@@ -388,11 +393,8 @@ func linkDevices(donor []manifest.GPU, here []string) ([]string, error) {
 				continue
 			}
 		case err == nil:
-			if mine, err := os.Stat(here[i]); err == nil && os.SameFile(info, mine) {
-				continue
-			}
-			return linked, fmt.Errorf("rank %d's GPU was %s, which is another GPU in this pod (rank %d is %s): "+
-				"the dmtcp backend cannot renumber it", i, d.Device, i, here[i])
+			// A node of this pod: the rank's own GPU by another name, or another GPU.
+			continue
 		case !errors.Is(err, fs.ErrNotExist):
 			return linked, err
 		}
