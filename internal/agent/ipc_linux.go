@@ -27,7 +27,7 @@ func (a *agent) chooseIPC(ctx context.Context) (bool, string, error) {
 	if a.cfg.IPC == "" || a.cfg.IPC == interpose.Native {
 		return false, "ipc native", nil
 	}
-	if a.dmtcp() {
+	if a.cfg.Backend == BackendDMTCP {
 		return false, "ipc native: the dmtcp backend does not run under cuInterpose", nil
 	}
 	devices, err := interpose.Devices(ctx)

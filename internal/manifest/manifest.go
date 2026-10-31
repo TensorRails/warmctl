@@ -120,6 +120,21 @@ type Process struct {
 	IPCProcesses []int `json:"ipc_processes,omitempty"`
 }
 
+// Snapshot backends, as Process.Backend names them.
+const (
+	BackendCRIU  = "criu"
+	BackendDMTCP = "dmtcp"
+)
+
+// BackendName is the backend that dumped the tree; snapshots older than the
+// field are CRIU's.
+func (p Process) BackendName() string {
+	if p.Backend == "" {
+		return BackendCRIU
+	}
+	return p.Backend
+}
+
 // File is one member of the snapshot directory, relative to it.
 type File struct {
 	Path   string `json:"path"`

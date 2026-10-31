@@ -159,10 +159,44 @@ func (r *restore) read(context.Context) error {
 	return nil
 }
 
+// CanRestore says whether this host brings back a tree m's backend dumped,
+// in place or through Docker, before anything is pulled. A receiver
+// container gets CRIU's capabilities from Docker; in place, CRIU needs a
+// container that may checkpoint. A DMTCP snapshot restarts only in place,
+// in a container like the one it was taken in, with DMTCP installed.
+func CanRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools) error {
+	return canRestore(m, inPlace, tools, host.ProbeBackend)
+}
+
+func canRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools, probeHost func() (host.BackendProbe, error)) error {
+	switch b := m.Process.BackendName(); b {
+	case manifest.BackendCRIU:
+		if !inPlace {
+			return nil
+		}
+		probe, err := probeHost()
+		if err != nil {
+			return err
+		}
+		if why := probe.CRIUReason(); why != "" {
+			return fmt.Errorf("a CRIU snapshot, and this container cannot run CRIU (%s): it restores a dmtcp "+
+				"snapshot", why)
+		}
+		return nil
+	case manifest.BackendDMTCP:
+		if !inPlace {
+			return errors.New("a DMTCP snapshot restarts in place (--mode in-place), in a container like the " +
+				"one it was taken in")
+		}
+		return tools.Check()
+	default:
+		return fmt.Errorf("unknown snapshot backend %q", b)
+	}
+}
+
 func (r *restore) preflight(ctx context.Context) error {
-	if r.dmtcp() && !r.o.InPlace {
-		return errors.New("the dmtcp backend took this snapshot: it restarts in place (--mode in-place), " +
-			"in a container like the one it was taken in")
+	if err := CanRestore(r.m, r.o.InPlace, r.o.DMTCP); err != nil {
+		return err
 	}
 	if r.o.InPlace {
 		if err := r.checkPod(); err != nil {

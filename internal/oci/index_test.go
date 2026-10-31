@@ -79,6 +79,39 @@ func TestIndexChoose(t *testing.T) {
 	}
 }
 
+// A CRIU and a DMTCP snapshot of one platform and driver are two entries,
+// the CRIU one under the tag CRIU snapshots always had; a host that cannot
+// run CRIU passes it over for the DMTCP one.
+func TestIndexBackends(t *testing.T) {
+	ctx := context.Background()
+	reg := memory.New()
+	criuDir, mc := platformSnapshot(t, "a40-48gb", "595.91.07")
+	dmtcpDir, md := platformSnapshot(t, "a40-48gb", "595.91.07")
+	md.Process.Backend = manifest.BackendDMTCP
+	if err := md.Write(filepath.Join(dmtcpDir, "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	if PlatformTag(mc) != "1xa40-48gb-595.91.07" || PlatformTag(md) != "1xa40-48gb-595.91.07-dmtcp" {
+		t.Fatalf("tags %q %q", PlatformTag(mc), PlatformTag(md))
+	}
+	pushIndexed(t, reg, criuDir, mc)
+	if n := pushIndexed(t, reg, dmtcpDir, md); n != 2 {
+		t.Fatalf("the DMTCP snapshot replaced the CRIU one: %d entries", n)
+	}
+	if tag, err := Choose(ctx, reg, IndexTag, nil); err != nil || tag != PlatformTag(mc) {
+		t.Fatalf("a host that runs both chose %q, %v", tag, err)
+	}
+	unprivileged := func(m manifest.Manifest) error {
+		if m.Process.BackendName() != manifest.BackendDMTCP {
+			return errors.New("this container cannot run CRIU")
+		}
+		return nil
+	}
+	if tag, err := Choose(ctx, reg, IndexTag, unprivileged); err != nil || tag != PlatformTag(md) {
+		t.Fatalf("a container without CRIU chose %q, %v", tag, err)
+	}
+}
+
 func TestCatalog(t *testing.T) {
 	ctx := context.Background()
 	reg := memory.New()

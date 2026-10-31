@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/profile"
@@ -280,5 +281,45 @@ func TestReloadSummary(t *testing.T) {
 	split[1].Fused = true
 	if got := reloadSummary(split); !strings.Contains(got, "pipelined, fingerprinted as it landed, 4 threads") {
 		t.Fatalf("%q", got)
+	}
+}
+
+// A host restores the snapshots its backend can bring back: CRIU's through
+// Docker or in a container that may checkpoint, DMTCP's in place only.
+func TestCanRestore(t *testing.T) {
+	privileged := func() (host.BackendProbe, error) {
+		return host.BackendProbe{CapEff: 1<<21 | 1<<40, LastPIDWritable: true}, nil
+	}
+	runpod := func() (host.BackendProbe, error) { return host.ParseStatus("CapEff:\ta80425fb\nSeccomp:\t2\n"), nil }
+	dir := t.TempDir()
+	plugin := dir + "/libdmtcp_fdkeep.so"
+	if err := os.WriteFile(plugin, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"dmtcp_launch", "dmtcp_command", "dmtcp_restart", "dmtcp_coordinator"} {
+		if err := os.WriteFile(dir+"/"+name, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	installed, missing := dmtcp.Tools{Dir: dir, Plugin: plugin}, dmtcp.Tools{Dir: dir + "/none", Plugin: plugin}
+	criuSnap, dmtcpSnap := manifest.Manifest{}, manifest.Manifest{Process: manifest.Process{Backend: "dmtcp"}}
+	for _, c := range []struct {
+		name    string
+		m       manifest.Manifest
+		inPlace bool
+		tools   dmtcp.Tools
+		probe   func() (host.BackendProbe, error)
+		ok      bool
+	}{
+		{"criu through Docker", criuSnap, false, missing, runpod, true},
+		{"criu in a privileged pod", criuSnap, true, missing, privileged, true},
+		{"criu in a RunPod pod", criuSnap, true, installed, runpod, false},
+		{"dmtcp in a RunPod pod", dmtcpSnap, true, installed, runpod, true},
+		{"dmtcp without DMTCP", dmtcpSnap, true, missing, runpod, false},
+		{"dmtcp through Docker", dmtcpSnap, false, installed, privileged, false},
+	} {
+		if err := canRestore(c.m, c.inPlace, c.tools, c.probe); (err == nil) != c.ok {
+			t.Errorf("%s: %v", c.name, err)
+		}
 	}
 }

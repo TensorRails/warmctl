@@ -334,6 +334,11 @@ func pullForUp(ctx context.Context, ref string, o *restore.Options, state string
 		o.ID = repoName(ref)
 	}
 	po.Check = func(m manifest.Manifest) error {
+		// Of an index's entries, the first this host can restore: CRIU's
+		// where CRIU runs, else DMTCP's.
+		if err := restore.CanRestore(m, o.InPlace, o.DMTCP); err != nil {
+			return err
+		}
 		gpus, err := restore.CheckHost(ctx, m.Hardware, o.GPUs, filepath.Join(state, "locks"))
 		if err == nil && o.GPUs == "" {
 			o.GPUs = indices(gpus)

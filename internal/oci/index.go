@@ -37,6 +37,9 @@ const (
 	AnnotationProfile = "io.warmctl.profile"
 	AnnotationVLLM    = "io.warmctl.vllm"
 	AnnotationSize    = "io.warmctl.size"
+	// AnnotationBackend is how the process tree was dumped: criu, or dmtcp
+	// for a container without the privileges CRIU needs.
+	AnnotationBackend = "io.warmctl.backend"
 )
 
 func platform(m manifest.Manifest) string {
@@ -51,14 +54,28 @@ func gpuName(m manifest.Manifest) string {
 }
 
 // PlatformTag is the tag a snapshot is pushed under next to the index: its
-// platform and driver, since a snapshot restores only on the same driver.
+// platform and driver, since a snapshot restores only on the same driver,
+// and its backend when that is not CRIU (CRIU's tags predate backends).
 func PlatformTag(m manifest.Manifest) string {
-	return platform(m) + "-" + m.Hardware.Driver
+	tag := platform(m) + "-" + m.Hardware.Driver
+	if b := m.Process.BackendName(); b != manifest.BackendCRIU {
+		tag += "-" + b
+	}
+	return tag
+}
+
+// entryBackend is an index entry's backend; entries older than the
+// annotation are CRIU's.
+func entryBackend(e ocispec.Descriptor) string {
+	if b := e.Annotations[AnnotationBackend]; b != "" {
+		return b
+	}
+	return manifest.BackendCRIU
 }
 
 // AddToIndex records the snapshot m, pushed as desc under tag, in the
-// repository's index, in place of an entry of the same platform and
-// driver, and returns how many entries the index lists. Two pushes racing
+// repository's index, in place of an entry of the same platform, driver and
+// backend, and returns how many entries the index lists. Two pushes racing
 // on one repository may lose an entry; the last write wins.
 func AddToIndex(ctx context.Context, target oras.Target, desc ocispec.Descriptor, m manifest.Manifest,
 	tag string) (int, error) {
@@ -72,10 +89,12 @@ func AddToIndex(ctx context.Context, target oras.Target, desc ocispec.Descriptor
 			AnnotationGPU: gpuName(m), AnnotationGPUs: strconv.Itoa(m.Launch.Ranks),
 			AnnotationProfile: m.Profile.ID, AnnotationVLLM: m.Hardware.VLLM,
 			AnnotationSize: strconv.FormatInt(m.Bytes(), 10), ocispec.AnnotationCreated: m.CreatedAt.UTC().Format(time.RFC3339),
+			AnnotationBackend: m.Process.BackendName(),
 		}}
 	kept := []ocispec.Descriptor{entry}
 	for _, e := range idx.Manifests {
-		if e.Annotations[AnnotationPlatform] != platform(m) || e.Annotations[AnnotationDriver] != m.Hardware.Driver {
+		if e.Annotations[AnnotationPlatform] != platform(m) || e.Annotations[AnnotationDriver] != m.Hardware.Driver ||
+			entryBackend(e) != m.Process.BackendName() {
 			kept = append(kept, e)
 		}
 	}
