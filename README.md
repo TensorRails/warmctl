@@ -7,12 +7,18 @@
   <a href="https://github.com/TensorRails/warmctl/actions/workflows/ci.yml"><img alt="ci" src="https://img.shields.io/github/actions/workflow/status/TensorRails/warmctl/ci.yml?branch=main&label=ci&style=flat-square&labelColor=0a0a0a"></a>
   <a href="LICENSE"><img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-ededed?style=flat-square&labelColor=0a0a0a"></a>
   <img alt="engine vLLM" src="https://img.shields.io/badge/engine-vLLM-7aa7d9?style=flat-square&labelColor=0a0a0a">
-  <img alt="GPUs H100, H200, B200, B300, L40S" src="https://img.shields.io/badge/GPUs-H100%20%C2%B7%20H200%20%C2%B7%20B200%20%C2%B7%20B300%20%C2%B7%20L40S-6dbb9a?style=flat-square&labelColor=0a0a0a">
+  <img alt="GPUs H100, H200, B200, B300, L40S, RTX PRO 6000" src="https://img.shields.io/badge/GPUs-H100%20%C2%B7%20H200%20%C2%B7%20B200%20%C2%B7%20B300%20%C2%B7%20L40S%20%C2%B7%20RTX%20PRO%206000-6dbb9a?style=flat-square&labelColor=0a0a0a">
 </p>
 
-warmctl snapshots a warmed-up vLLM engine and restores it in seconds on any
-host with the same GPUs and NVIDIA driver branch. GLM-5.3-Flash on 8×H100:
-vLLM cold start 650 s, `warmctl up` 37 s, then stock serving speed.
+warmctl is GPU checkpoint/restore for vLLM. It snapshots a warmed-up engine
+and restores it in seconds on any host with the same GPUs and NVIDIA driver
+branch, so a new replica skips weight loading, torch.compile, kernel
+autotuning and CUDA graph capture. GLM-5.3-Flash on 8×H100: vLLM cold start
+650 s, `warmctl up` 37 s, then stock serving speed. That makes scale to zero,
+fast autoscaling and spot GPU replacement practical for large models.
+
+[Docs](https://warmctl.io/docs/) · [Catalog](https://warmctl.io/catalog/) ·
+[Blog](https://warmctl.io/blog/) · [Status and limits](#status-and-limits)
 
 <p align="center">
   <img src="docs/assets/build-scale.svg" width="100%" alt="vLLM and GLM-5.3-Flash warm up once on 8×H100 (650 s cold start), warmctl build snapshots them into an OCI image, warmctl up restores it on as many matching hosts as you need, each serving in 37 s">
@@ -30,8 +36,9 @@ warmctl catalog                                # models this host can restore
 warmctl up qwen3-8b --listen 0.0.0.0:8000      # pull, restore, serve
 ```
 
-The public catalog has 17 models on H100, H200, B200, B300 and L40S. Any other
-model vLLM serves with sleep mode, build yourself:
+The [public catalog](https://warmctl.io/catalog/) has 21 models on H100, H200,
+B200, B300, L40S and RTX PRO 6000. Any other model vLLM serves with sleep mode,
+build yourself ([tutorial](https://warmctl.io/docs/tutorials/build-your-own/)):
 
 ```bash
 warmctl build --profile qwen3-8b-tp1 --model-dir /models/qwen3-8b --gpus 0 --output /snaps/qwen3-8b
@@ -83,14 +90,32 @@ weights. `push` stores the snapshot as an OCI artifact, one per platform.
 canary against the original engine and opens an OpenAI-compatible API.
 Multi-GPU engines keep NCCL and symmetric memory through NVIDIA cuInterpose.
 
-Details: [architecture](docs/architecture.md),
+Details: [how a restore works](https://warmctl.io/docs/explanation/how-it-works/),
+[architecture](docs/architecture.md),
 [shared GPU memory](docs/interpose.md),
 [registries and caches](docs/distribution.md).
+
+## Status and limits
+
+warmctl is in beta: releases are GitHub pre-releases, and every user-facing
+change is in the [CHANGELOG](CHANGELOG.md). Each restore is checked before it
+serves: the host must match the snapshot before anything is downloaded, every
+file carries its SHA-256, every weights allocation is compared by a GPU
+fingerprint, and a canary prompt must get the original engine's answer
+(bitwise for large models).
+
+| Works today | Not yet |
+|---|---|
+| vLLM | SGLang, TensorRT-LLM, TGI, LMDeploy (planned) |
+| 1 to 8 GPUs on one node, tensor and expert parallel | Engines that span several nodes |
+| H100, H200, B200, B300, L40S, RTX PRO 6000 | Another GPU model or count, or another driver branch: build a snapshot for that platform |
+| Docker hosts, Kubernetes, KServe | GPUs in confidential-computing mode (cuda-checkpoint does not support it) |
+| Any OCI registry, or a shared file system | |
 
 ## Kubernetes
 
 The warmctl runtime image, `registry.warmctl.io/warmctl/runtime:latest`
-(anonymous pull; pin a release tag such as `:v2.0.0-beta.5` for a cluster
+(anonymous pull; pin a release tag such as `:v2.0.0-beta.15` for a cluster
 that must not change under you), is the catalog's vLLM image with warmctl on
 top (`make pod-image` builds it).
 In a privileged pod it runs the same `warmctl up NAME` and restores in place,
@@ -101,8 +126,13 @@ kubectl apply -f deploy/kubernetes/warmctl.yaml
 ```
 
 [deploy/kubernetes](deploy/kubernetes) also holds node preparation, a KEDA
-autoscaler and a KServe LLMInferenceService preset; details in [docs/kubernetes.md](docs/kubernetes.md). Prototype:
-tested in pod-like containers on CPU, not yet on a GPU cluster.
+autoscaler and a KServe LLMInferenceService preset; details in [docs/kubernetes.md](docs/kubernetes.md).
+Tutorials: [Kubernetes](https://warmctl.io/docs/tutorials/kubernetes/),
+[KServe](https://warmctl.io/docs/tutorials/kserve/). Measured on GPU clusters:
+GLM-5.3-Flash on 8×H100 restores in 58 s from a shared file system
+([post](https://warmctl.io/blog/boosting-dedicated-inference/)), and a new
+KServe replica of Qwen3-8B on an L40S serves in 14 s
+([post](https://warmctl.io/blog/kserve-llm-replicas-in-seconds/)).
 
 ## Profiles
 
@@ -122,8 +152,8 @@ vllm: {max-model-len: 8192, kv-cache-memory-bytes: 21474836480}
 
 Linux x86-64 with glibc, Docker with the NVIDIA runtime, root, driver 580+,
 `kernel.io_uring_disabled=2`. A snapshot restores under any release of the
-driver branch it was built on (580.x, 610.x). Proven on H100 SXM, H200, B200
-and L40S. `warmctl hardware` lists the GPU models warmctl knows and marks this
+driver branch it was built on (580.x, 610.x). Proven on H100 SXM, H200, B200,
+B300, L40S and RTX PRO 6000. `warmctl hardware` lists the GPU models warmctl knows and marks this
 host's; another model is a row in a `hardware.yaml` next to your profiles
 (`--profile-dir`).
 Keep `warmctl` and `cuinterpose/` from the linux-amd64 archive side by side,
