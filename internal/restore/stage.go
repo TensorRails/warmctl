@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
+	"github.com/TensorRails/warmctl/v2/internal/zframes"
 )
 
 // stageWorkers is how many ranges a stage copies at once: object storage
@@ -26,8 +27,9 @@ const stageWorkers = 32
 var arrivalWait = 2 * time.Minute
 
 // Stage copies the snapshot in dir to dst, every file of m and its
-// manifest.json, many ranges in flight, and returns how many bytes it
-// copied. It is for a snapshot directory on a FUSE file system (an S3
+// manifest.json, many ranges in flight, and returns how many bytes it read
+// from dir. A file stored as zstd frames is decoded frame by frame on the
+// workers, so dst always holds the files as they are. It is for a snapshot directory on a FUSE file system (an S3
 // bucket behind geesefs, as a RunPod Global Volume, or MooseFS, as its
 // network volumes): FUSE keeps no page cache the prefetch could fill for
 // later readers, and the restore's readers (CRIU or dmtcp_restart, the
@@ -35,7 +37,8 @@ var arrivalWait = 2 * time.Minute
 // the receiver starts with, those the process restore reads, the weights,
 // and done, when set, hears of each file once it is complete: the restore
 // runs while the weights still come. A copy whose manifest.json matches is
-// complete and is reused: manifest.json is written last.
+// complete and is reused: manifest.json is written last. An encoded
+// snapshot is staged wherever it is.
 func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(path string)) (int64, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
 	if err != nil {
@@ -53,7 +56,7 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(
 	first, weights := lanes(m)
 	left := map[string]*atomic.Int64{}
 	for _, f := range append(append([]manifest.File(nil), first...), weights...) {
-		info, err := arrived(ctx, filepath.Join(dir, f.Path), f.Size)
+		info, err := arrived(ctx, filepath.Join(dir, f.Path), f.Stored())
 		if err != nil {
 			return 0, err
 		}
@@ -67,12 +70,12 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(
 		left[f.Path] = new(atomic.Int64)
 		left[f.Path].Store(f.Size)
 	}
-	jobs := prefetchPlan(first, weights, prefetchChunk, 0)
+	jobs := stagePlan(first, weights)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch := feed(ctx, jobs)
-	var copied atomic.Int64
+	var read atomic.Int64
 	var once sync.Once
 	var firstErr error
 	var wg sync.WaitGroup
@@ -80,10 +83,11 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			buf := make([]byte, 8<<20)
+			w := &stager{buf: make([]byte, 8<<20)}
+			defer w.close()
 			for j := range ch {
-				n, err := copyRange(filepath.Join(dir, j.path), filepath.Join(dst, j.path), j.offset, j.size, buf)
-				copied.Add(n)
+				n, got, err := w.run(filepath.Join(dir, j.path), filepath.Join(dst, j.path), j)
+				read.Add(got)
 				if err != nil {
 					once.Do(func() { firstErr = err; cancel() })
 					continue
@@ -96,12 +100,84 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return copied.Load(), firstErr
+		return read.Load(), firstErr
 	}
 	if err := ctx.Err(); err != nil {
-		return copied.Load(), err
+		return read.Load(), err
 	}
-	return copied.Load(), os.WriteFile(filepath.Join(dst, "manifest.json"), raw, 0o644)
+	return read.Load(), os.WriteFile(filepath.Join(dst, "manifest.json"), raw, 0o644)
+}
+
+// stagePlan is prefetchPlan's order, an encoded file cut at its frames.
+func stagePlan(first, weights []manifest.File) []prefetchJob {
+	var jobs []prefetchJob
+	for _, f := range append(append([]manifest.File(nil), first...), byRankRoundRobin(weights)...) {
+		if f.Encoding == "" {
+			jobs = append(jobs, prefetchPlan([]manifest.File{f}, nil, prefetchChunk, 0)...)
+			continue
+		}
+		for i := range f.Frames {
+			at, n, offset, size := zframes.Frame(f.Frames, f.Size, i)
+			jobs = append(jobs, prefetchJob{path: f.Path, offset: offset, size: size, stored: at, storedSize: n})
+		}
+	}
+	return jobs
+}
+
+// stager is one stage worker's buffers and frame decoder.
+type stager struct {
+	buf, frame, out []byte
+	dec             *zframes.Decoder
+}
+
+// run does j and returns how many bytes of the file it wrote and how many
+// it read from src.
+func (w *stager) run(src, dst string, j prefetchJob) (int64, int64, error) {
+	if j.storedSize == 0 {
+		n, err := copyRange(src, dst, j.offset, j.size, w.buf)
+		return n, n, err
+	}
+	if w.dec == nil {
+		var err error
+		if w.dec, err = zframes.NewDecoder(); err != nil {
+			return 0, 0, err
+		}
+	}
+	if int64(cap(w.frame)) < j.storedSize {
+		w.frame = make([]byte, j.storedSize)
+	}
+	frame := w.frame[:j.storedSize]
+	in, err := os.Open(src)
+	if err != nil {
+		return 0, 0, err
+	}
+	n, err := in.ReadAt(frame, j.stored)
+	in.Close()
+	if errors.Is(err, io.EOF) && int64(n) == j.storedSize {
+		err = nil
+	} else if errors.Is(err, io.EOF) {
+		err = io.ErrUnexpectedEOF
+	}
+	if err != nil {
+		return 0, int64(n), err
+	}
+	if w.out, err = w.dec.Decode(frame, w.out, j.size); err != nil {
+		return 0, int64(n), fmt.Errorf("%s at %d: %w", src, j.stored, err)
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY, 0)
+	if err != nil {
+		return 0, int64(n), err
+	}
+	if _, err := out.WriteAt(w.out, j.offset); err != nil {
+		return 0, int64(n), errors.Join(err, out.Close())
+	}
+	return j.size, int64(n), out.Close()
+}
+
+func (w *stager) close() {
+	if w.dec != nil {
+		w.dec.Close()
+	}
 }
 
 // staged is whether dst holds a complete copy of the snapshot whose

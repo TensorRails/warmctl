@@ -19,6 +19,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/run"
 	"github.com/TensorRails/warmctl/v2/internal/store"
+	"github.com/TensorRails/warmctl/v2/internal/zframes"
 )
 
 // source is one file to publish: where it is, where it goes in the
@@ -57,6 +58,11 @@ func (b *bake) publish(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if b.o.Compress {
+		if err := compress(ctx, b.o.Output, files); err != nil {
+			return fmt.Errorf("compress: %w", err)
+		}
+	}
 	b.manifest = b.assemble(files)
 	if err := b.manifest.Write(filepath.Join(b.o.Output, "manifest.json")); err != nil {
 		return err
@@ -65,8 +71,34 @@ func (b *bake) publish(ctx context.Context) error {
 		return err
 	}
 	published = true
-	b.p.Printf("published %s: %d files, %.2f GiB (weights %.2f GiB) in %.1fs", b.o.Output, len(files),
-		float64(b.manifest.Bytes())/(1<<30), float64(b.manifest.WeightBytes())/(1<<30), time.Since(started).Seconds())
+	stored := ""
+	if b.manifest.Encoded() {
+		stored = fmt.Sprintf(", %.2f GiB stored", float64(b.manifest.StoredBytes())/(1<<30))
+	}
+	b.p.Printf("published %s: %d files, %.2f GiB (weights %.2f GiB)%s in %.1fs", b.o.Output, len(files),
+		float64(b.manifest.Bytes())/(1<<30), float64(b.manifest.WeightBytes())/(1<<30), stored,
+		time.Since(started).Seconds())
+	return nil
+}
+
+// compress stores the process images and runtime trees in output as zstd
+// frames. The links to the store's blobs make way for the encoded files;
+// the blobs, and each file's SHA256, stay the file's own bytes.
+func compress(ctx context.Context, output string, files []manifest.File) error {
+	for i, f := range files {
+		if f.Role != manifest.RoleCRIU && f.Role != manifest.RoleRuntimeFS {
+			continue
+		}
+		p := filepath.Join(output, filepath.FromSlash(f.Path))
+		ends, err := zframes.Encode(ctx, p, p+".zst", 8)
+		if err != nil {
+			return err
+		}
+		if err := os.Rename(p+".zst", p); err != nil {
+			return err
+		}
+		files[i].Encoding, files[i].Frames = manifest.EncodingZframes, ends
+	}
 	return nil
 }
 

@@ -157,16 +157,17 @@ func (r *restore) read(ctx context.Context) error {
 	}
 	r.p.Printf("snapshot %s: profile %s, %d ranks, %.2f GiB", r.m.ID, r.m.Profile.ID, r.m.Launch.Ranks,
 		float64(r.m.Bytes())/(1<<30))
-	if onFUSE(r.snapshot) {
+	if onFUSE(r.snapshot) || r.m.Encoded() {
 		return r.stage(ctx)
 	}
 	return nil
 }
 
-// stage restores a snapshot on a FUSE file system from a local copy that
-// Stage makes while the restore runs: the copy is the restore's Arrival, as
-// a pull is, so the process restore starts once its files are in and the
-// weights keep coming. A complete copy from an earlier up is reused.
+// stage restores a snapshot on a FUSE file system, or one stored encoded,
+// from a local copy that Stage makes while the restore runs: the copy is the
+// restore's Arrival, as a pull is, so the process restore starts once its
+// files are in and the weights keep coming. A complete copy from an earlier
+// up is reused.
 func (r *restore) stage(ctx context.Context) error {
 	dst := filepath.Join(r.o.StateDir, "staged", r.m.ID)
 	raw, err := os.ReadFile(filepath.Join(r.snapshot, "manifest.json"))
@@ -174,7 +175,7 @@ func (r *restore) stage(ctx context.Context) error {
 		return err
 	}
 	if staged(dst, raw) {
-		r.p.Printf("snapshot on FUSE: restoring from the complete copy in %s", dst)
+		r.p.Printf("snapshot staged: restoring from the complete copy in %s", dst)
 		r.snapshot = dst
 		return nil
 	}
@@ -184,15 +185,19 @@ func (r *restore) stage(ctx context.Context) error {
 	go func() {
 		n, err := Stage(ctx, src, dst, r.m, a.Arrived)
 		if err != nil {
-			err = fmt.Errorf("copy from FUSE to %s: %w", dst, err)
+			err = fmt.Errorf("copy to %s: %w", dst, err)
 		} else {
 			seconds := time.Since(start).Seconds()
-			r.p.Printf("snapshot on FUSE: copied %.2f GiB to %s in %.1fs (%.2f GiB/s)", float64(n)/(1<<30), dst,
-				seconds, float64(n)/(1<<30)/seconds)
+			decoded := ""
+			if r.m.Encoded() {
+				decoded = fmt.Sprintf(", %.2f GiB decoded", float64(r.m.Bytes())/(1<<30))
+			}
+			r.p.Printf("snapshot staged: read %.2f GiB in %.1fs (%.2f GiB/s)%s into %s", float64(n)/(1<<30), seconds,
+				float64(n)/(1<<30)/seconds, decoded, dst)
 		}
 		a.End(err)
 	}()
-	r.p.Printf("snapshot on FUSE: copying it to %s while it restores", dst)
+	r.p.Printf("snapshot staged in %s while it restores", dst)
 	r.o.Arrival, r.snapshot = a, dst
 	return nil
 }

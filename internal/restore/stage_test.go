@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
+	"github.com/TensorRails/warmctl/v2/internal/zframes"
 )
 
 func TestStage(t *testing.T) {
@@ -101,4 +102,39 @@ func withFile(m map[string][]byte, k string, v []byte) map[string][]byte {
 		out[p] = b
 	}
 	return out
+}
+
+// A file stored as zstd frames is staged as the file itself, the frames
+// decoded on the workers, and the stage counts the bytes it read.
+func TestStageDecodesFrames(t *testing.T) {
+	src, dst := t.TempDir(), filepath.Join(t.TempDir(), "staged")
+	image := bytes.Repeat([]byte("dmtcp-image-"), 6_000_000) // 72 MB: three frames
+	raw := filepath.Join(t.TempDir(), "raw")
+	if err := os.WriteFile(raw, image, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "criu"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ends, err := zframes.Encode(context.Background(), raw, filepath.Join(src, "criu/ckpt_a.dmtcp"), 2)
+	if err != nil || len(ends) != 3 {
+		t.Fatalf("ends %v: %v", ends, err)
+	}
+	m := manifest.Manifest{Files: []manifest.File{{Path: "criu/ckpt_a.dmtcp", Size: int64(len(image)),
+		Role: manifest.RoleCRIU, Encoding: manifest.EncodingZframes, Frames: ends}}}
+	if !m.Encoded() || m.StoredBytes() != ends[2] {
+		t.Fatalf("encoded %t, stored %d", m.Encoded(), m.StoredBytes())
+	}
+	if err := os.WriteFile(filepath.Join(src, "manifest.json"), []byte(`{"id":"z"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var done []string
+	n, err := Stage(context.Background(), src, dst, m, func(p string) { mu.Lock(); done = append(done, p); mu.Unlock() })
+	if err != nil || n != ends[2] || len(done) != 1 {
+		t.Fatalf("read %d of %d, done %v: %v", n, ends[2], done, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "criu/ckpt_a.dmtcp")); err != nil || !bytes.Equal(got, image) {
+		t.Fatalf("staged image differs: %v", err)
+	}
 }

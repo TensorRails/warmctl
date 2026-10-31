@@ -145,6 +145,23 @@ type File struct {
 	SHA256 string `json:"sha256"`
 	Role   string `json:"role"`
 	Root   string `json:"root,omitempty"`
+	// Encoding is how the snapshot directory stores the file: "" as it is,
+	// or EncodingZframes, zstd frames (internal/zframes) whose end offsets
+	// are Frames. Size and SHA256 are always the file's own.
+	Encoding string  `json:"encoding,omitempty"`
+	Frames   []int64 `json:"frames,omitempty"`
+}
+
+// EncodingZframes stores a file as independent zstd frames of zframes.Size
+// bytes of it each.
+const EncodingZframes = "zstd-frames-32m"
+
+// Stored is how many bytes the snapshot directory holds of f.
+func (f File) Stored() int64 {
+	if f.Encoding == "" || len(f.Frames) == 0 {
+		return f.Size
+	}
+	return f.Frames[len(f.Frames)-1]
 }
 
 // File roles.
@@ -394,6 +411,26 @@ func (m Manifest) Bytes() int64 {
 		n += f.Size
 	}
 	return n
+}
+
+// StoredBytes is how many bytes the snapshot directory holds.
+func (m Manifest) StoredBytes() int64 {
+	var n int64
+	for _, f := range m.Files {
+		n += f.Stored()
+	}
+	return n
+}
+
+// Encoded says whether any file is stored encoded: such a snapshot restores
+// from a decoded local copy (restore.Stage).
+func (m Manifest) Encoded() bool {
+	for _, f := range m.Files {
+		if f.Encoding != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // WeightBytes is the size of the exported pools.

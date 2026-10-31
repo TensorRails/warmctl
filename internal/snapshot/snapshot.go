@@ -57,7 +57,11 @@ type Options struct {
 	// Backend snapshots the process tree in place: auto, criu or dmtcp. A
 	// donor container always runs CRIU.
 	Backend string
-	DMTCP   dmtcp.Tools
+	// Compress stores the process images and runtime trees in Output as zstd
+	// frames, for a snapshot restored from network storage: about 2.8x fewer
+	// bytes of them to read, decoded in parallel as up stages its copy.
+	Compress bool
+	DMTCP    dmtcp.Tools
 }
 
 type bake struct {
