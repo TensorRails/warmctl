@@ -266,11 +266,14 @@ func (a *agent) startEngine(ctx context.Context) error {
 		return err
 	}
 	argv, env := a.cfg.Argv, a.cfg.Env
-	if a.interposed {
-		argv = interpose.Wrap(a.ipcBuild(), argv)
-	}
 	if argv, env, err = a.tree.launch(ctx, argv, env); err != nil {
 		return err
+	}
+	// The launcher goes outside dmtcp_launch, which keeps the LD_PRELOAD it
+	// was started with for every program the tree execs: one started inside
+	// would lose the interposer in a spawned process.
+	if a.interposed {
+		argv = interpose.Wrap(a.ipcBuild(), argv)
 	}
 	if err := os.MkdirAll(filepath.Dir(a.cfg.Log), 0o755); err != nil {
 		return err

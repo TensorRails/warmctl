@@ -60,7 +60,7 @@ worker, resource tracker). It runs with the variables in `dmtcp.Env`:
 
 | Variable | Why |
 |---|---|
-| `VLLM_WORKER_MULTIPROC_METHOD=fork` | With spawn, the engine core inherits a pipe that DMTCP turned into a socketpair and never drains it, so the checkpoint never ends. |
+| `VLLM_WORKER_MULTIPROC_METHOD=fork` | Fewer processes: spawn adds multiprocessing's resource tracker. vLLM still spawns when its API server has initialized CUDA, which the fork's `fcntl64` wrapper made work. |
 | `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`, `MKL_NUM_THREADS=1` | A fork while OpenBLAS or OpenMP thread pools are running hangs the child. |
 | `UV_USE_IO_URING=0` | libuv must not batch `epoll_ctl` through io_uring, which DMTCP cannot see. |
 | `UCX_MEM_MMAP_HOOK_MODE=none` | UCX, which the vLLM image ships for NIXL, hooks `mmap` and `shmat` and calls the originals past DMTCP's wrappers. |
@@ -163,6 +163,8 @@ with these patches:
 | Open the IPv4 restore listener for IPv6 connections | IPv6 connections are rewired through the IPv4 listener, which opened only in processes with an IPv4 socket. A TP worker whose sockets were all IPv6 (gloo, the TCPStore on `[::]`) published a zeroed address and its peer's `connect` failed. |
 | Reconnect a non-blocking socket blocking | A socket created with `SOCK_NONBLOCK` came back non-blocking, and the rewirer's `connect` returned `EINPROGRESS`. |
 | Pass through SysV shm ids DMTCP did not issue | UCX's memory hooks (in the vLLM image, for NIXL) create a test segment through `dlsym(RTLD_NEXT)`, past DMTCP's `shmget`, then remove it with the wrapped `shmctl`, which asserted: the engine core died at startup. |
+| Expand `$ORIGIN` in a dlopen path for the wrapper's caller | glibc expands `$ORIGIN` for the object that called `dlopen`, which was DMTCP's wrapper. cuInterpose loads `$ORIGIN/libcuinterpose_core.so`, found nothing, and every `cuInit` it intercepted failed. |
+| Wrap `fcntl64` as `fcntl` | glibc 2.28 and later compile `fcntl` into `fcntl64` under 64-bit file offsets, as CPython is built, so DMTCP missed its `os.dup`. The child of multiprocessing's spawn keeps its parent sentinel only as such a duplicate, and the parent drained its end of the pipe forever at checkpoint. vLLM spawns whenever its API server initialized CUDA, which Qwen3.8-Flash-Next's model class does at import. |
 
 The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
 
