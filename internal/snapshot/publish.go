@@ -395,7 +395,7 @@ func (b *bake) process() manifest.Process {
 	}
 	if b.ipc.Interposed {
 		// After the coordinator's prepare no process maps another's memory.
-		p.IPC, p.IPCProcesses = interpose.Interpose, b.ipc.Participants
+		p.IPC, p.IPCProcesses, p.IPCBuild = interpose.Interpose, b.ipc.Participants, b.cfg.IPCBuild
 	}
 	if len(b.prepared) > 0 {
 		p.NCCLMode = b.prepared[0].NCCLMode

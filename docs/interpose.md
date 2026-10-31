@@ -61,6 +61,10 @@ The libraries are mounted read-only and with the store's file mode in donor
 and receiver: CRIU maps a library back only onto a file of the same path,
 size and mode.
 
+Under the dmtcp backend nothing is mounted: the engine maps the runtime
+image's own build, and the snapshot's copy is its record
+([dmtcp.md](dmtcp.md#how-it-runs)).
+
 ## Driver requirement for multicast
 
 A restored process re-creates its multicast objects (NVLS, symmetric memory,

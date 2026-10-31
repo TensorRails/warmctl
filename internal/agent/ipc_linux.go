@@ -27,9 +27,6 @@ func (a *agent) chooseIPC(ctx context.Context) (bool, string, error) {
 	if a.cfg.IPC == "" || a.cfg.IPC == interpose.Native {
 		return false, "ipc native", nil
 	}
-	if a.cfg.Backend == BackendDMTCP {
-		return false, "ipc native: the dmtcp backend does not run under cuInterpose", nil
-	}
 	devices, err := interpose.Devices(ctx)
 	if err != nil {
 		return false, "", err
@@ -43,9 +40,18 @@ func (a *agent) chooseIPC(ctx context.Context) (bool, string, error) {
 	return true, fmt.Sprintf("ipc %s: %d GPUs with VMM", a.cfg.IPC, len(devices)), nil
 }
 
+// ipcBuild is the cuInterpose build the engine maps.
+func (a *agent) ipcBuild() string {
+	if a.cfg.IPCBuild != "" {
+		return a.cfg.IPCBuild
+	}
+	return interpose.GuestDir
+}
+
 // ipcPrepare has the coordinator save the bytes of every cross-process
 // allocation into host memory and release the sharing, every address kept,
-// so each process can be checkpointed on its own.
+// so each process can be checkpointed on its own. A process names its
+// socket after the PID it sees, which under DMTCP is the virtual one.
 func (a *agent) ipcPrepare(ctx context.Context) (any, error) {
 	if !a.interposed {
 		return IPCResult{Reason: a.ipcReason}, nil
@@ -57,6 +63,9 @@ func (a *agent) ipcPrepare(ctx context.Context) (any, error) {
 	}
 	owners, err := cuda.Owners(tree.PIDs())
 	if err != nil {
+		return nil, err
+	}
+	if owners, err = a.tree.snapshotPIDs(ctx, owners); err != nil {
 		return nil, err
 	}
 	res := IPCResult{Interposed: true, Reason: a.ipcReason}
@@ -84,8 +93,12 @@ func (a *agent) ipcRestore(ctx context.Context, raw json.RawMessage) (any, error
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, err
 	}
+	dir := args.Dir
+	if dir == "" {
+		dir = interpose.GuestDir
+	}
 	start := time.Now()
-	if err := a.coordinate(ctx, "restore", interpose.GuestDir, args.Processes); err != nil {
+	if err := a.coordinate(ctx, "restore", dir, args.Processes); err != nil {
 		return nil, err
 	}
 	return IPCResult{Interposed: true, Seconds: time.Since(start).Seconds()}, nil

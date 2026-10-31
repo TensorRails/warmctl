@@ -27,6 +27,11 @@ Backends
   the decoded files' digests.
 - `warmctl compress SRC DST` writes a compressed copy of a built snapshot,
   as `build --compress` would have; SRC stays pushable.
+- A DMTCP engine runs under cuInterpose with `ipc: auto` or `interpose`, so
+  collectives that share memory through CUDA IPC (FlashInfer's PCIe
+  all-reduce, custom all-reduce) survive the checkpoint at their addresses.
+  It maps the runtime image's own build; fdkeep binds cuInterpose's control
+  sockets again on restart.
 
 Restore
 

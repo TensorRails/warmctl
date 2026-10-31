@@ -66,7 +66,20 @@ worker, resource tracker). It runs with the variables in `dmtcp.Env`:
 | `UCX_MEM_MMAP_HOOK_MODE=none` | UCX, which the vLLM image ships for NIXL, hooks `mmap` and `shmat` and calls the originals past DMTCP's wrappers. |
 
 Tensor parallelism restarts too: the collectives are detached before the checkpoint and set up again after
-the restore, as under CRIU.
+the restore, as under CRIU. Collectives that share GPU memory between processes through CUDA IPC (FlashInfer's
+PCIe all-reduce, custom all-reduce) cannot be detached and keep their addresses in CUDA graphs; with `ipc: auto`
+the engine runs under cuInterpose, which takes the sharing apart before the checkpoint and puts it back at the
+same addresses after the restore ([interpose.md](interpose.md)). Under DMTCP:
+
+- The engine maps the runtime image's own build, `/usr/local/bin/cuinterpose`. Nothing is mounted for a DMTCP
+  engine, and a restart maps a library again from its file only when its size and mtime match, so donor and
+  receiver both use the image's copy. The manifest records the path (`process.ipc_build`), and a restore checks
+  that the libraries there are the snapshot's.
+- A process names its control socket after the PID it sees, the virtual one, and so does the coordinator.
+- cuInterpose makes the socket with raw syscalls, which DMTCP never sees, so a restart would lose it. fdkeep
+  records every listening Unix socket bound to a path and binds a missing one again at its descriptor, with
+  its flags and the path's permissions.
+- The coordinator's state is read from the snapshot's `ipc/`.
 
 ### Another pod
 
@@ -235,8 +248,9 @@ runs at that pod's upload speed (0.22 GiB/s): geesefs uploads in the background 
   custom all-reduce, FlashInfer's and symmetric-memory all-reduce and NCCL P2P off for that engine and logs why
   (`snapshot.PeerOff`). Hosts whose peer path works keep the profile's collectives. `up` does not probe: a
   snapshot baked with the peer path on, restored on such a host, still hangs.
-- **CUDA IPC handles carry the exporter's PID**, which under DMTCP is the virtual one (40000 and up). Whether
-  cuda-IPC collectives work under DMTCP on a host whose peer path works is not verified.
+- **CUDA IPC without cuInterpose fails the checkpoint.** A TEP4 engine with FlashInfer's PCIe all-reduce
+  (`VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=1`) on 4×RTX PRO 6000 failed at `cuCheckpointProcessCheckpoint` with
+  error 304: cuda-checkpoint refuses a process holding another's memory. Hence cuInterpose under DMTCP, above.
 - **The checkpoint signal is DMTCP's default, SIGUSR2.**
   - vLLM installs a SIGUSR2 handler, which DMTCP refuses with a warning per process; serving is not affected.
   - Do not set `DMTCP_SIGCKPT` or `--ckpt-signal`. vLLM's, CUDA's, NCCL's and gloo's threads block every
@@ -244,7 +258,6 @@ runs at that pod's upload speed (0.22 GiB/s): geesefs uploads in the background 
     ends (the processes stay PRESUSPEND).
 - A restore warns that 3 sockets cannot bind their port again (`EADDRINUSE`); serving and the canary are not
   affected. Which sockets these are is open.
-- No interposed IPC (cuInterpose).
 - RunPod mounts volumes at `/workspace`, which warmctl claims as a tree, and its image ships
   `/workspace/.cache`. Mount volumes elsewhere.
 - A Global Volume cannot hold an OCI layout: oras-go `chmod`s blobs and geesefs has no permission bits. It

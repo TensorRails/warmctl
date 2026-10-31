@@ -84,9 +84,16 @@ func TestConfigValidate(t *testing.T) {
 	if err := dm.Validate(); err != nil {
 		t.Fatalf("dmtcp backend without criu: %v", err)
 	}
+	ipc := dm
+	ipc.IPC, ipc.IPCBuild = "interpose", "/usr/local/bin/cuinterpose"
+	ipc.IPCCoordinator = ipc.IPCBuild + "/cuinterpose-coordinator"
+	if err := ipc.Validate(); err != nil {
+		t.Fatalf("dmtcp engine under the image's cuInterpose: %v", err)
+	}
 	for _, mutate := range []func(*Config){
 		func(c *Config) { c.DMTCP.Plugin = "" },
-		func(c *Config) { c.IPC, c.IPCCoordinator = "interpose", "/opt/warmctl/ipc/coordinator" },
+		func(c *Config) { c.IPC, c.IPCCoordinator = "interpose", "" },
+		func(c *Config) { c.IPCBuild = "cuinterpose" },
 		func(c *Config) { c.Backend = "podman" },
 		func(c *Config) { c.Backend = BackendCRIU },
 	} {

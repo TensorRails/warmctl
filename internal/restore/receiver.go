@@ -240,8 +240,13 @@ func (r *restore) processes(ctx context.Context) error {
 	if !r.interposed() || len(r.m.Process.IPCProcesses) == 0 {
 		return nil
 	}
+	ipcArgs := agent.IPCRestoreArgs{Processes: r.m.Process.IPCProcesses}
+	if r.dmtcp() {
+		// The coordinator's state, read where the snapshot is: nothing mounts it.
+		ipcArgs.Dir = filepath.Join(r.snapshot, "ipc")
+	}
 	var ipc agent.IPCResult
-	if err := r.c.Step(ctx, "ipc", agent.IPCRestoreArgs{Processes: r.m.Process.IPCProcesses}, &ipc); err != nil {
+	if err := r.c.Step(ctx, "ipc", ipcArgs, &ipc); err != nil {
 		return err
 	}
 	r.p.Printf("cross-process memory restored in %.1fs", ipc.Seconds)

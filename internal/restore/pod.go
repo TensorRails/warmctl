@@ -25,6 +25,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/pyext"
 	"github.com/TensorRails/warmctl/v2/internal/run"
 	"github.com/TensorRails/warmctl/v2/internal/snapshot"
+	"github.com/TensorRails/warmctl/v2/internal/store"
 )
 
 // Pod defaults.
@@ -250,7 +251,8 @@ func podEnv(base []string, launch map[string]string) []string { return run.Merge
 // interposed process) and the model directory, when there is one to mount.
 func (r *restore) engineMounts(model string) []docker.Mount {
 	mounts := []docker.Mount{{Source: filepath.Join(r.snapshot, "adapter"), Target: pyext.GuestPath, ReadOnly: true}}
-	if r.interposed() {
+	// A DMTCP engine maps the image's own build (checkIPCBuild).
+	if r.interposed() && !r.dmtcp() {
 		mounts = append(mounts, docker.Mount{Source: filepath.Join(r.snapshot, "ipc"), Target: interpose.GuestDir,
 			ReadOnly: true})
 	}
@@ -428,8 +430,37 @@ func (r *restore) checkUnprivileged() error {
 	if _, err := dmtcpModel(r.o.ModelDir, r.m); err != nil {
 		return err
 	}
+	if err := checkIPCBuild(r.m); err != nil {
+		return err
+	}
 	r.warnPod()
 	return r.checkBase()
+}
+
+// checkIPCBuild checks that a DMTCP snapshot's processes find the
+// cuInterpose libraries they mapped where the donor had them, the same
+// bytes (the snapshot's ipc/ copy is their record): the restart maps them
+// again from there.
+func checkIPCBuild(m manifest.Manifest) error {
+	if m.Process.IPCBuild == "" {
+		return nil
+	}
+	want := map[string]string{}
+	for _, f := range m.Files {
+		want[f.Path] = f.SHA256
+	}
+	for _, name := range []string{interpose.Frontend, interpose.Core} {
+		path := filepath.Join(m.Process.IPCBuild, name)
+		sum, _, err := store.HashFile(context.Background(), path)
+		if err == nil && sum != want["ipc/"+name] {
+			err = errors.New("another build")
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %v; the snapshot's processes map the cuInterpose build of the donor's runtime "+
+				"image there: restore with that image", path, err)
+		}
+	}
+	return nil
 }
 
 // checkTrees checks the trees warmctl does not mount itself: /workspace,

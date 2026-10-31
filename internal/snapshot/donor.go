@@ -114,13 +114,6 @@ func (b *bake) interposer() error {
 	if mode == interpose.Native || b.o.CPUTest {
 		return nil
 	}
-	if b.backend == agent.BackendDMTCP {
-		// The agent runs a DMTCP engine native: ipc auto needs no build.
-		if mode == interpose.Interpose {
-			return errors.New("ipc interpose: the dmtcp backend does not run under cuInterpose; use ipc auto or native")
-		}
-		return nil
-	}
 	src := b.o.Cuinterpose
 	if src == "" {
 		src = interpose.DefaultDir()
@@ -144,6 +137,20 @@ func (b *bake) interposer() error {
 		}
 	}
 	b.cfg.IPC, b.cfg.IPCCoordinator = mode, interpose.GuestDir+"/"+interpose.Coordinator
+	if b.backend == agent.BackendDMTCP {
+		// Nothing is mounted for a DMTCP engine: it maps the build where it
+		// is, and a restart maps those files again, by their real path, only
+		// if they are the same size and mtime. The runtime image's own build
+		// is the same on every pod; the copy above is the snapshot's record.
+		dir, err := filepath.Abs(src)
+		if err == nil {
+			dir, err = filepath.EvalSymlinks(dir)
+		}
+		if err != nil {
+			return err
+		}
+		b.cfg.IPCBuild, b.cfg.IPCCoordinator = dir, filepath.Join(dir, interpose.Coordinator)
+	}
 	return nil
 }
 

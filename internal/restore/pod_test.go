@@ -1,6 +1,8 @@
 package restore
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,6 +238,34 @@ func TestDMTCPModel(t *testing.T) {
 	}
 }
 
+func TestCheckIPCBuild(t *testing.T) {
+	build := t.TempDir()
+	var m manifest.Manifest
+	if err := checkIPCBuild(m); err != nil {
+		t.Fatalf("no build recorded: %v", err)
+	}
+	m.Process.IPCBuild = build
+	for _, name := range []string{interpose.Frontend, interpose.Core} {
+		body := []byte("build of " + name)
+		if err := os.WriteFile(filepath.Join(build, name), body, 0o444); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(body)
+		m.Files = append(m.Files, manifest.File{Path: "ipc/" + name, SHA256: hex.EncodeToString(sum[:]), Role: manifest.RoleIPC})
+	}
+	if err := checkIPCBuild(m); err != nil {
+		t.Fatalf("the donor's build: %v", err)
+	}
+	m.Files[1].SHA256 = strings.Repeat("0", 64)
+	if err := checkIPCBuild(m); err == nil || !strings.Contains(err.Error(), "another build") {
+		t.Fatalf("another build accepted: %v", err)
+	}
+	m.Process.IPCBuild = filepath.Join(build, "missing")
+	if err := checkIPCBuild(m); err == nil || !strings.Contains(err.Error(), "runtime image") {
+		t.Fatalf("a missing build accepted: %v", err)
+	}
+}
+
 func TestEngineMounts(t *testing.T) {
 	r := &restore{snapshot: "/snap", m: podManifest(true, interpose.Interpose)}
 	got := r.engineMounts("/models/x")
@@ -251,6 +281,11 @@ func TestEngineMounts(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("mount %d: %+v, want %+v", i, got[i], want[i])
 		}
+	}
+	// A DMTCP engine maps the image's build: no ipc mount.
+	r.m.Process.Backend = agent.BackendDMTCP
+	if got := r.engineMounts("/models/x"); len(got) != 2 || got[1].Target != "/model" {
+		t.Errorf("dmtcp mounts %+v", got)
 	}
 	// A pod that mounts the model where the profile wants it needs no bind.
 	r.m = podManifest(true, "")

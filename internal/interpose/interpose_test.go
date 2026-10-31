@@ -11,8 +11,12 @@ import (
 )
 
 func TestCommands(t *testing.T) {
-	got := strings.Join(Wrap([]string{"vllm", "serve", "/model"}), " ")
+	got := strings.Join(Wrap(GuestDir, []string{"vllm", "serve", "/model"}), " ")
 	if got != "/opt/warmctl/ipc/cuinterpose-launch --library /opt/warmctl/ipc/libcuinterpose.so -- vllm serve /model" {
+		t.Fatal(got)
+	}
+	got = strings.Join(Wrap("/usr/local/bin/cuinterpose", []string{"vllm"}), " ")
+	if got != "/usr/local/bin/cuinterpose/cuinterpose-launch --library /usr/local/bin/cuinterpose/libcuinterpose.so -- vllm" {
 		t.Fatal(got)
 	}
 	got = strings.Join(Command("/work/cuinterpose-coordinator", "restore", GuestDir, []int{40001, 40007}), " ")

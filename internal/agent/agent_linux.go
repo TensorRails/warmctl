@@ -267,7 +267,7 @@ func (a *agent) startEngine(ctx context.Context) error {
 	}
 	argv, env := a.cfg.Argv, a.cfg.Env
 	if a.interposed {
-		argv = interpose.Wrap(argv)
+		argv = interpose.Wrap(a.ipcBuild(), argv)
 	}
 	if argv, env, err = a.tree.launch(ctx, argv, env); err != nil {
 		return err

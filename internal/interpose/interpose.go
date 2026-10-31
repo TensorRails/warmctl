@@ -34,8 +34,10 @@ var Files = []string{Frontend, Core, Launcher, Coordinator}
 
 // Container paths: the build (and, in a receiver, the snapshot's state) is
 // mounted at GuestDir in donor and receiver alike, because the restored
-// processes have the libraries mapped from there. Every interposed process
-// listens on a control socket in SocketDir, a tree the snapshot carries.
+// processes have the libraries mapped from there. A DMTCP engine, which
+// nothing mounts for, maps the runtime image's own build instead. Every
+// interposed process listens on a control socket in SocketDir, a tree the
+// snapshot carries.
 const (
 	GuestDir  = "/opt/warmctl/ipc"
 	SocketDir = "/tmp"
@@ -61,10 +63,10 @@ func Check(dir string) error {
 	return nil
 }
 
-// Wrap runs argv under the launcher, which checks the libraries' digests
-// and preloads the frontend.
-func Wrap(argv []string) []string {
-	return append([]string{GuestDir + "/" + Launcher, "--library", GuestDir + "/" + Frontend, "--"}, argv...)
+// Wrap runs argv under the launcher of the build in dir, which checks the
+// libraries' digests and preloads the frontend.
+func Wrap(dir string, argv []string) []string {
+	return append([]string{filepath.Join(dir, Launcher), "--library", filepath.Join(dir, Frontend), "--"}, argv...)
 }
 
 // Socket is where the interposed process pid listens for the coordinator.

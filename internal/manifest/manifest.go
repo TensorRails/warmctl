@@ -124,6 +124,10 @@ type Process struct {
 	IPC string `json:"ipc,omitempty"`
 	// IPCProcesses are the processes the coordinator prepared and restores.
 	IPCProcesses []int `json:"ipc_processes,omitempty"`
+	// IPCBuild is where a DMTCP engine mapped the cuInterpose build from:
+	// nothing mounts the snapshot's copy for it, so the restoring pod must
+	// have the same build there.
+	IPCBuild string `json:"ipc_build,omitempty"`
 }
 
 // Snapshot backends, as Process.Backend names them.

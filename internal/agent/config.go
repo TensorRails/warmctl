@@ -63,8 +63,10 @@ type Config struct {
 	// IPC is the profile's resolved ipc: native, interpose or auto. Under
 	// interpose or auto the snapshot agent may start the engine under
 	// cuInterpose (docs/interpose.md); IPCCoordinator runs its checkpoints.
+	// IPCBuild is the build the engine maps, interpose.GuestDir when empty.
 	IPC            string `json:"ipc,omitempty"`
 	IPCCoordinator string `json:"ipc_coordinator,omitempty"`
+	IPCBuild       string `json:"ipc_build,omitempty"`
 	// Hostname, when set, is the host name the agent gives the UTS
 	// namespace of its own it was started in, before anything runs: a
 	// restore in place, where the container's host name is the pod's (or,
@@ -145,6 +147,9 @@ func (c Config) Validate() error {
 	if c.IPC != "" && c.IPC != interpose.Native && !abs(c.IPCCoordinator) {
 		return fmt.Errorf("agent: ipc %s needs the coordinator's path", c.IPC)
 	}
+	if c.IPCBuild != "" && !abs(c.IPCBuild) {
+		return errors.New("agent: the cuInterpose build needs an absolute path")
+	}
 	return c.validateMode()
 }
 
@@ -158,9 +163,6 @@ func (c Config) validateBackend() error {
 	case BackendDMTCP:
 		if !abs(c.DMTCP.Plugin) {
 			return errors.New("agent: the dmtcp backend needs the fdkeep plugin's absolute path")
-		}
-		if c.IPC == interpose.Interpose {
-			return errors.New("agent: the dmtcp backend does not run under cuInterpose")
 		}
 	default:
 		return fmt.Errorf("agent: unknown backend %q", c.Backend)
@@ -243,9 +245,11 @@ type (
 		Seconds      float64 `json:"seconds"`
 	}
 	// IPCRestoreArgs drive the restore's ipc step: the processes the
-	// coordinator prepared.
+	// coordinator prepared, and the directory with its state,
+	// interpose.GuestDir when empty.
 	IPCRestoreArgs struct {
-		Processes []int `json:"processes"`
+		Processes []int  `json:"processes"`
+		Dir       string `json:"dir,omitempty"`
 	}
 	// RestoreResult reports the CRIU restore.
 	RestoreResult struct {

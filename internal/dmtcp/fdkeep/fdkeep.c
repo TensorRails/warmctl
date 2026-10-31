@@ -4,6 +4,8 @@
 // and cuda-checkpoint can no longer find the restore thread. Before a checkpoint
 // we record every eventfd and pipe end; on restart we recreate the ones that are
 // missing at the same fd numbers, with the same flags, counter and pipe bytes.
+// Listening Unix sockets bound to a path are kept the same way: cuInterpose
+// makes its control socket with raw syscalls, which DMTCP never sees.
 #define _GNU_SOURCE
 #include <dirent.h>
 #include <fcntl.h>
@@ -17,6 +19,7 @@
 #include <sys/stat.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 #include "dmtcp.h"
 
@@ -33,6 +36,9 @@ struct rec {
   unsigned long inode;      // pipe inode, pairs read and write ends
   int len;                  // pipe bytes pending (read end only)
   char *data;
+  char *path;               // a listening Unix socket's path
+  int type;                 // its socket type
+  mode_t mode;              // and the path's permissions
 };
 
 static struct rec recs[MAXFD];
@@ -68,8 +74,32 @@ static int fdinfo(int fd, int *flags, unsigned long long *count)
 static int nwatches;
 static void record_epoll(int epfd);
 
+// A listening Unix socket's path, type and permissions, kept in case DMTCP does not restore it.
+static void record_unix(int fd, struct rec *r)
+{
+  int domain = 0;
+  socklen_t len = sizeof domain;
+  struct sockaddr_un a;
+  socklen_t alen = sizeof a;
+  struct stat st;
+  if (getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &len) != 0 || domain != AF_UNIX) return;
+  len = sizeof r->type;
+  if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &r->type, &len) != 0) return;
+  memset(&a, 0, sizeof a);
+  // An abstract name starts with a NUL and has no file to bind again.
+  if (getsockname(fd, (struct sockaddr *)&a, &alen) != 0 || a.sun_path[0] == 0) return;
+  a.sun_path[sizeof a.sun_path - 1] = 0;
+  if (lstat(a.sun_path, &st) != 0 || !S_ISSOCK(st.st_mode)) return;
+  r->path = strdup(a.sun_path);
+  r->mode = st.st_mode & 07777;
+}
+
 static void record(void)
 {
+  for (int fd = 0; fd < MAXFD; fd++) {
+    free(recs[fd].data);
+    free(recs[fd].path);
+  }
   memset(recs, 0, sizeof recs);
   nwatches = 0;
   DIR *d = opendir("/proc/self/fd");
@@ -96,7 +126,11 @@ static void record(void)
       // DMTCP sometimes misses listen() and restores the socket bound but not listening.
       int on = 0;
       socklen_t len = sizeof on;
-      if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &on, &len) == 0 && on) r->kind = LISTEN;
+      if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &on, &len) != 0 || !on) continue;
+      r->kind = LISTEN;
+      record_unix(fd, r);
+      fdinfo(fd, &r->flags, &r->count);
+      r->cloexec = (fcntl(fd, F_GETFD) & FD_CLOEXEC) != 0;
       continue;
     } else {
       continue;
@@ -200,6 +234,13 @@ static long raw_listen(int fd, int backlog)
   return ret;
 }
 
+static long raw3(long nr, long a, long b, long c)
+{
+  long ret;
+  __asm__ volatile("syscall" : "=a"(ret) : "0"(nr), "D"(a), "S"(b), "d"(c) : "rcx", "r11", "memory");
+  return ret;
+}
+
 // Move a fresh fd above every slot we may fill, so placing one never clobbers another.
 static int high(int fd)
 {
@@ -229,6 +270,34 @@ static int same_kind(int fd, enum kind kind)
   return strncmp(target, "pipe:", 5) == 0;
 }
 
+// Bind a Unix listener DMTCP did not restore again at its path, as its process made it (cuInterpose:
+// nonblocking, the path 0600 before listen). The path left by the process checkpointed is removed only
+// when it is a socket of ours that nothing listens on.
+static int relisten(int fd, const struct rec *r)
+{
+  struct sockaddr_un a = {.sun_family = AF_UNIX};
+  struct stat st;
+  strncpy(a.sun_path, r->path, sizeof a.sun_path - 1);
+  if (lstat(r->path, &st) == 0) {
+    long probe = raw3(41 /* SYS_socket */, AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    long c = probe < 0 ? probe : raw3(42 /* SYS_connect */, probe, (long)&a, sizeof a);
+    if (probe >= 0) close((int)probe);
+    if (!S_ISSOCK(st.st_mode) || st.st_uid != geteuid() || c != -111 /* ECONNREFUSED */) return -1;
+    if (unlink(r->path) != 0) return -1;
+  }
+  long s = raw3(41 /* SYS_socket */, AF_UNIX, r->type | SOCK_CLOEXEC, 0);
+  if (s < 0) return -1;
+  int h = high((int)s);
+  if (h < 0 || raw3(49 /* SYS_bind */, h, (long)&a, sizeof a) != 0 || chmod(r->path, r->mode) != 0 ||
+      raw_listen(h, SOMAXCONN) != 0) {
+    if (h >= 0) close(h);
+    return -1;
+  }
+  place(h, fd, r);
+  close(h);
+  return 0;
+}
+
 static void recreate(void)
 {
   int made = 0, kept = 0;
@@ -248,9 +317,15 @@ static void recreate(void)
     if (r->kind == LISTEN) {
       int on = 0;
       socklen_t len = sizeof on;
-      if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &on, &len) == 0 && !on) {
-        logf_("  fd %d was listening, restored without listen: listen -> %ld\n", fd, raw_listen(fd, 4096));
-        made++;
+      if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &on, &len) == 0) {
+        if (!on) {
+          logf_("  fd %d was listening, restored without listen: listen -> %ld\n", fd, raw_listen(fd, 4096));
+          made++;
+        }
+      } else if (r->path && fcntl(fd, F_GETFD) == -1) {
+        int ok = relisten(fd, r);
+        logf_("  fd %d listened on %s, not restored: %s\n", fd, r->path, ok == 0 ? "bound again" : "FAILED");
+        if (ok == 0) made++;
       }
       continue;
     }
