@@ -18,7 +18,8 @@ autotuning and CUDA graph capture. GLM-5.3-Flash on 8×H100: vLLM cold start
 fast autoscaling and spot GPU replacement practical for large models.
 
 [Docs](https://warmctl.io/docs/) · [Catalog](https://warmctl.io/catalog/) ·
-[Blog](https://warmctl.io/blog/) · [Status and limits](#status-and-limits)
+[Blog](https://warmctl.io/blog/) · [Status and limits](#status-and-limits) ·
+[Alternatives](https://warmctl.io/docs/explanation/alternatives/)
 
 <p align="center">
   <img src="docs/assets/build-scale.svg" width="100%" alt="vLLM and GLM-5.3-Flash warm up once on 8×H100 (650 s cold start), warmctl build snapshots them into an OCI image, warmctl up restores it on as many matching hosts as you need, each serving in 37 s">
