@@ -139,10 +139,18 @@ func (t Tools) Kill(ctx context.Context) error {
 	return err
 }
 
+// RestartArgs are dmtcp_restart's arguments. --no-strict-checking drops its
+// one check, that each image's owner is this user: warmctl checks every file
+// of a snapshot against its SHA-256 instead, and a network file system
+// reports another owner (nobody under geesefs or NFS root_squash).
+func (t Tools) RestartArgs(images []string) []string {
+	return append([]string{"--coord-port", t.port(), "--no-strict-checking"}, images...)
+}
+
 // Restart starts dmtcp_restart on images. Its process becomes the first
 // restored process, the root of the tree; the caller waits on it.
 func (t Tools) Restart(images []string, log io.Writer) (*exec.Cmd, error) {
-	args := append([]string{"--coord-port", t.port()}, images...)
+	args := t.RestartArgs(images)
 	cmd := exec.Command(t.path("dmtcp_restart"), args...)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {

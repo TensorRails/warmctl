@@ -1,79 +1,103 @@
 # The dmtcp backend: snapshots in containers without privileges
 
-Status: experimental (branch `exp/dmtcp-backend`). The backend is meant for GPU clouds that rent a Docker
-container instead of a machine, such as RunPod Pods. There CRIU cannot run at all
-([#57](https://github.com/TensorRails/warmctl/issues/57)):
+Status: experimental (branch `exp/dmtcp-backend`), proven end to end on a RunPod A40 Pod.
 
-- the effective capabilities are Docker's defaults, with no `SYS_ADMIN` and no `CHECKPOINT_RESTORE`;
+GPU clouds such as RunPod Pods rent a Docker container rather than a machine
+([#57](https://github.com/TensorRails/warmctl/issues/57)). CRIU cannot run in one:
+
+- its capabilities are Docker's defaults, with no `SYS_ADMIN` or `CHECKPOINT_RESTORE`;
 - seccomp refuses `unshare` and `clone3`;
 - `/proc/sys` is read-only.
 
-DMTCP checkpoints a process tree entirely in user space. NVIDIA's `cuda-checkpoint` works in such a
-container, and it moves the CUDA state exactly as it does under CRIU.
+[DMTCP](https://github.com/TensorRails/dmtcp/tree/warmctl) checkpoints a process tree in user space.
+NVIDIA's `cuda-checkpoint` works in such a container. Together they take the place of CRIU, and nothing
+else in warmctl changes: weights export and reload, fingerprints, canary, trees, OCI distribution.
 
-## What changes, and what does not
+```bash
+warmctl build --in-place --profile qwen3-0.6b-tp1 --model-dir /models/qwen3-0.6b --output /snap/q06
+warmctl up /snap/q06 --mode in-place          # or up NAME: the index entry this host can restore
+```
 
-`build --in-place` bakes in the current container: the agent runs as a child of `warmctl`, and the
-engine runs as a child of the agent. There is no Docker. `--backend auto` picks CRIU when the container
-may run it, and DMTCP when it may not. It decides from the effective capabilities, a writable
-`ns_last_pid` and the seccomp mode (`host.ChooseBackend`). The manifest records the choice in
-`process.backend`. `up --mode in-place` reads it from there: a dmtcp snapshot restarts under DMTCP and
-asks for no privileges.
+## Choosing the backend
+
+| | Decided by |
+|---|---|
+| bake | `--backend auto` (the default) in place takes CRIU when the container may run it, and DMTCP otherwise. It judges from the effective capabilities, a writable `ns_last_pid` and the seccomp mode (`host.ChooseBackend`). A donor container always runs CRIU. |
+| manifest | `process.backend` records the choice. Snapshots without the field are CRIU's. |
+| index | `io.warmctl.backend` on each entry. A DMTCP snapshot's tag ends in `-dmtcp`, and CRIU's tags are unchanged, so one platform and driver hold both. |
+| restore | `up NAME` takes the first entry `restore.CanRestore` accepts: CRIU through Docker or in a container that may checkpoint, DMTCP in place with DMTCP installed. Tags sort CRIU first. |
+
+## How it runs
+
+The agent's steps call one interface, `tree` (`internal/agent/tree_linux.go`). `criuTree` is the code the
+agent had before, unchanged; `dmtcpTree` (`dmtcp_linux.go`) is the new backend:
 
 | Step | criu | dmtcp |
 |---|---|---|
-| start | PID allocator moved to 32768, engine started | coordinator started; engine under `dmtcp_launch --no-gzip --with-plugin libdmtcp_fdkeep.so` |
-| warm up, export, sleep, canary | unchanged | unchanged |
-| cuda | lock + checkpoint per owner | the same; owners reported as DMTCP's virtual PIDs |
-| freeze | SIGSTOP through pidfds | none (DMTCP stops the tree inside the dump); the tree is reported in virtual PIDs |
-| dump | `criu dump` | `dmtcp_command --bcheckpoint`, then `--kill`; images land in `criu/`, so publish, OCI layers and the restore's prefetch are unchanged |
-| install-fs | trees into tmpfs (mounted) | trees into claimed directories (no mounts) |
-| criu | `criu restore --leave-stopped` | `dmtcp_restart` on every image; waits until every peer runs |
-| thaw | SIGCONT | none |
-| cuda | restore + unlock | the same, after virtual-to-real PID translation (`dmtcp_command --list`) |
-| mounts in place | bind mounts of the adapter and the model; UTS namespace | symlinks (`run.Place`); no namespace |
+| launch | PID allocator moved to 32768 | coordinator, engine under `dmtcp_launch --no-gzip --with-plugin libdmtcp_fdkeep.so` |
+| cuda | lock + checkpoint | the same; owners recorded as DMTCP's virtual PIDs, the ones vLLM's workers report |
+| freeze | SIGSTOP through pidfds | none: DMTCP stops the tree inside the dump |
+| dump | `criu dump` | `dmtcp_command --bcheckpoint`, then `--kill`; images in `criu/`, so publish, layers and prefetch are shared |
+| restore | `criu restore --leave-stopped` | `dmtcp_restart --no-strict-checking`, waiting until every peer runs; owners translated back to real PIDs |
+| in place | tmpfs and bind mounts, UTS namespace | trees claimed, model and adapter symlinked (`run.Place`); no mount, no namespace |
 
-Paths must match on both sides, because DMTCP reopens files by their real path. In place, the model,
-the state directory and the snapshot therefore live at the same paths on the donor and the receiver: a
-network volume mounted at the same place on every pod.
+A dmtcp bake fits the profile to one GPU and vLLM's uni executor (`fitDMTCP`). The engine runs with
+`VLLM_WORKER_MULTIPROC_METHOD=fork`, one-thread BLAS pools and `UV_USE_IO_URING=0` (`dmtcp.Env`).
 
-## What DMTCP needed
+## DMTCP: the fork and the plugin
 
-Each problem below was found on a RunPod A40 with `vllm serve` (API server and engine core in separate
-processes) and vLLM 0.32.0:
+Branch `warmctl` of [TensorRails/dmtcp](https://github.com/TensorRails/dmtcp/tree/warmctl) is DMTCP 5.0
+with these patches:
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `cuda-checkpoint`: "Could not find restore thread" | DMTCP drops the eventfds and pipes `cuInit` makes, renames threads `DMTCP:<name>`, and restores pipes as socketpairs (`/proc/PID/fd/N` reopen gives `ENXIO`) | fdkeep recreates the missing eventfds and pipes (real pipes, raw syscall) and restores thread names, in `DMTCP_EVENT_THREAD_RESUME` |
-| `import torch` hangs under `dmtcp_launch` | a fork (ldconfig for `find_library`) while 63 OpenBLAS threads live | `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1` (`dmtcp.Env`) |
-| `--bcheckpoint` never returns, API server in `SocketConnList::drain` | `spawn` hands the engine core `os.dup(pipe_handle)` of a DMTCP socketpair; the child's DMTCP does not drain it | `VLLM_WORKER_MULTIPROC_METHOD=fork` |
-| `--bcheckpoint` never returns with `DMTCP_SIGCKPT=40` | ZMQ's background threads block every signal; DMTCP's sigmask wrappers unblock only SIGUSR2 | keep the default SIGUSR2 (vLLM's own SIGUSR2 handler is refused, with a warning) |
-| after a restart `/health` times out, the listen queue fills | the forked engine core shares the API server's epoll fd and listening socket; DMTCP restores a shared fd in the "leader" process, and when the child leads, its fork-time `epoll_ctl` table refills the epoll (uvloop's later watches gone), sometimes without `listen` | fdkeep records each epoll's watches from `/proc/self/fdinfo` (those whose fd in this process is the watched file) and every `SO_ACCEPTCONN` socket; after the restart it adds back the missing watches and listens again (raw syscalls). It fired in 3 of 4 restarts |
-
-## Numbers (A40, Qwen2.5-0.5B, plain `vllm serve`, before the warmctl integration)
-
-The image is 18 GB: API server 5.3 GB and engine core 13.9 GB, with weights and KV cache not exported.
-Four restarts in a row all gave the same answer at temperature 0.
-
-| Start | Seconds to `/health` |
+| Patch | Why |
 |---|---|
-| vLLM, empty caches | 133–155 (80 of them FlashInfer's JIT sampling build, 13 torch.compile) |
-| vLLM, warm caches (warmctl's cache env) | 34 |
-| `dmtcp_restart`, image on disk, page cache evicted | 14.8–18.4 (restart 12.5–14.1, CUDA 2.3–4.3) |
-| `dmtcp_restart`, image in the page cache | 10.5–13.8 (restart 8.5–11.3, CUDA 2.0–2.5) |
+| Map unmodified file areas from their file | A checkpoint wrote every library's text in full. A clean, private, unwritable mapping now gets a header only, and `mtcp_restart` maps the file again after checking its size and mtime. vLLM's images went from 12.3 to 4.4 GB. |
+| Restore `SO_REUSEADDR` before bind | A restart right after the donor died failed to bind its port while connections sat in TIME_WAIT. |
+| Find `_files` copies next to the moved image | Images published into the store restarted only if the donor's directory still existed. |
 
-`dmtcp_restart` reads each image with buffered single-stream reads. On RunPod's network volume (NFS 4.1
-on VAST) that is about 1 GB/s, against 5.7 GB/s for parallel direct reads. The restore's prefetch reads
-the `criu/` files in parallel first, and it covers DMTCP's images too.
+Library text now comes from the receiver's files, so donor and receiver need the same DMTCP build and
+libraries, which the runtime image gives them. A mismatch stops the restart; it never maps other code.
 
-## Limits
+The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
 
-- Interposed IPC (cuInterpose) is not supported, and neither is TP>1: NCCL sockets, `/dev/shm` queues
-  and anonymous shared memory are untested. DMTCP warns that it cannot restore anonymous shared memory.
-- `io_uring` cannot be disabled by a pod's sysctl. The engine runs with `UV_USE_IO_URING=0`.
-- DMTCP 5.0 must be built from source (`internal/dmtcp/fdkeep/` holds the plugin):
+- the CUDA driver's eventfds and pipes, recreated as real pipes;
+- thread names, which `cuda-checkpoint` uses to find the restore thread;
+- `listen` on sockets DMTCP brought back unbound;
+- epoll watches lost when a forked child was elected the leader of a shared epoll fd.
+
+## Numbers
+
+RunPod A40 (Secure Cloud, EU-SE-1), Qwen3-0.6B, vLLM 0.32.0, profile `qwen3-0.6b-tp1`. The snapshot is
+5.33 GiB: 4.4 GB of process images and 1.2 GiB of weights.
+
+| Start | Seconds to serving |
+|---|---|
+| vLLM, empty compile caches | 133–155 |
+| vLLM, warm compile caches | 34 |
+| warmctl, snapshot on local disk, page cache evicted | 4.0–4.3 |
+| warmctl, snapshot in the page cache | 3.8–4.1 |
+| warmctl, snapshot on a Global Volume (S3 behind FUSE), first `up` | 9.8 (5.2 of it copying 5.33 GiB at 1.03 GiB/s) |
+| warmctl, same, later `up` (the local copy is reused) | 4.4 |
+
+Five restores in a row passed. A restore breaks down as: `dmtcp_restart` 1.7–2.1 s, CUDA 0.4–0.6 s,
+weights 0.5 s at 2.3 GiB/s, canary 0.3 s.
+
+## Limits and open work
+
+- **One GPU only.** vLLM's mp executor puts a worker in a third process that shares fds with both its
+  ancestors, and DMTCP's restart deadlocks passing them: every peer waits at
+  `Socket::Restart_Ns_Register_Data`. TP>1 needs this fixed in the fork.
+- No interposed IPC (cuInterpose).
+- RunPod mounts volumes at `/workspace`, which warmctl claims as a tree, and its image ships
+  `/workspace/.cache`. Mount volumes elsewhere.
+- A Global Volume is S3 behind geesefs (FUSE). It cannot hold an OCI layout, because oras-go `chmod`s
+  blobs. It serves a plain snapshot directory, at about 124 MB/s from one stream. FUSE keeps no page cache
+  the prefetch could fill for `dmtcp_restart` and the weights reload, which read one stream each: 61 s
+  to serving. So `up` from a FUSE directory first copies it to `<state>/staged/<id>`, 32 ranges in
+  flight (`restore.Stage`), and reuses a complete copy.
+- DMTCP is built from the fork:
 
 ```bash
-git clone --depth 1 https://github.com/dmtcp/dmtcp && cd dmtcp && ./configure --prefix=/usr/local && make -j && make install
-gcc -shared -fPIC -O2 -I/usr/local/include -o libdmtcp_fdkeep.so internal/dmtcp/fdkeep/fdkeep.c
+./configure --prefix=/opt/dmtcp && make -j && make install
+gcc -shared -fPIC -O2 -I/opt/dmtcp/include -o /opt/dmtcp/lib/libdmtcp_fdkeep.so internal/dmtcp/fdkeep/fdkeep.c
 ```

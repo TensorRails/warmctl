@@ -141,7 +141,7 @@ func Run(ctx context.Context, o Options) error {
 	return r.serve(ctx)
 }
 
-func (r *restore) read(context.Context) error {
+func (r *restore) read(ctx context.Context) error {
 	r.snapshot = r.o.Snapshot
 	if r.o.Arrival != nil {
 		r.m = r.o.Arrival.Manifest()
@@ -156,6 +156,28 @@ func (r *restore) read(context.Context) error {
 	}
 	r.p.Printf("snapshot %s: profile %s, %d ranks, %.2f GiB", r.m.ID, r.m.Profile.ID, r.m.Launch.Ranks,
 		float64(r.m.Bytes())/(1<<30))
+	if onFUSE(r.snapshot) {
+		return r.stage(ctx)
+	}
+	return nil
+}
+
+// stage restores a snapshot on a FUSE file system from a local copy (Stage).
+func (r *restore) stage(ctx context.Context) error {
+	dst := filepath.Join(r.o.StateDir, "staged", r.m.ID)
+	start := time.Now()
+	n, err := Stage(ctx, r.snapshot, dst, r.m)
+	if err != nil {
+		return fmt.Errorf("copy from FUSE to %s: %w", dst, err)
+	}
+	seconds := time.Since(start).Seconds()
+	if n == 0 {
+		r.p.Printf("snapshot on FUSE: restoring from the complete copy in %s", dst)
+	} else {
+		r.p.Printf("snapshot on FUSE: copied %.2f GiB to %s in %.1fs (%.2f GiB/s)", float64(n)/(1<<30), dst,
+			seconds, float64(n)/(1<<30)/seconds)
+	}
+	r.snapshot = dst
 	return nil
 }
 

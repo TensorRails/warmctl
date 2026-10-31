@@ -55,6 +55,10 @@ func TestWrap(t *testing.T) {
 	if got != want {
 		t.Fatalf("wrap\n got %s\nwant %s", got, want)
 	}
+	restart := strings.Join(tools.RestartArgs([]string{"/capture/criu/ckpt_a.dmtcp"}), " ")
+	if restart != "--coord-port 7779 --no-strict-checking /capture/criu/ckpt_a.dmtcp" {
+		t.Fatalf("restart args %s", restart)
+	}
 	tools.Dir, tools.Port = "", 7790
 	if got := tools.Wrap([]string{"x"}, "/d")[0:3]; got[0] != "dmtcp_launch" || got[2] != "7790" {
 		t.Fatalf("PATH and port: %v", got)
