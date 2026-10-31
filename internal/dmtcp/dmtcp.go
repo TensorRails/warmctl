@@ -33,6 +33,13 @@ import (
 // DefaultPort is the coordinator's port on loopback.
 const DefaultPort = 7779
 
+// Where the runtime image installs DMTCP and fdkeep. Donor and receiver must
+// run this very build, so a restore never takes another DMTCP from PATH.
+const (
+	DefaultDir    = "/opt/warmctl/dmtcp/bin"
+	DefaultPlugin = "/opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so"
+)
+
 // Env is what an engine needs to run under DMTCP:
 //   - fork with live OpenBLAS/OpenMP thread pools hangs the child (torch's
 //     import runs ldconfig in a subprocess), so the pools get one thread;
