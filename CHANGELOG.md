@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+Backends
+
+- A dmtcp backend snapshots and restores engines in containers without
+  privileges, where CRIU cannot run (#57): RunPod Pods and other
+  container-only GPU clouds give Docker's default capabilities, seccomp and a
+  read-only /proc/sys. DMTCP (TensorRails' fork, with seven fixes) checkpoints
+  the tree in user space, cuda-checkpoint the GPUs, and the rest of warmctl is
+  unchanged. `build --in-place --backend auto` picks it when CRIU cannot run;
+  the manifest records `process.backend`, index entries `io.warmctl.backend`,
+  and DMTCP tags end in `-dmtcp`. CRIU snapshots and the CRIU path do not
+  change. Verified on RunPod A40 and L40S Pods: one GPU, the mp executor,
+  TP=2, and restores on another pod and host. See docs/dmtcp.md.
+- The runtime image ships the fork and its fdkeep plugin in
+  /opt/warmctl/dmtcp, which `--dmtcp-dir` and `--dmtcp-plugin` default to.
+
+Restore
+
+- `up` from a FUSE directory (a RunPod Global Volume, a MooseFS network
+  volume) or from an encoded snapshot stages a local copy with 32 readers and
+  restores while it copies: the process restore starts once its files are
+  in. Qwen3-8B on a new pod, from a network volume: 35.9 → 28–30 s.
+- Snapshots built by this version reload each weights part as it lands, during
+  a stage or a registry pull, instead of after the last one
+  (`launch.reload_waits`). Older snapshots wait for all weights, as before.
+- The stage waits up to two minutes for files a Global Volume shows late
+  (eventually consistent across pods).
+
+Snapshots
+
+- `build --compress` stores the process images and runtime trees as
+  independent 32 MiB zstd frames, and BF16 weights in two byte planes, for
+  snapshots restored from network storage; `up` decodes the frames on its
+  workers while it stages. Qwen3-8B: 23.11 → 13.35 GiB (images 2.84×,
+  weights 1.46×); first `up` from a RunPod network volume 20.2–22.9 s, where
+  warm vLLM takes 83 s. `push` refuses an encoded directory; compressed
+  registry blobs are #60.
+
 ## v2.0.0-beta.15 — 2026-10-30
 
 Profiles
