@@ -1,6 +1,7 @@
 # The dmtcp backend: snapshots in containers without privileges
 
-Status: experimental. Verified end to end on RunPod Pods (A40 and L40S, Secure Cloud). This covers:
+Status: experimental. Verified end to end on RunPod Pods (A40 and L40S, Secure Cloud), and on a Nebius
+RTX PRO 6000 host in Docker containers given RunPod's privileges (none). This covers:
 
 - one GPU, the mp executor and TP=2;
 - restores on another pod and another host;
@@ -217,6 +218,17 @@ runs at that pod's upload speed (0.22 GiB/s): geesefs uploads in the background 
 - **TP=2 is verified on Qwen3-0.6B only.** Larger models with several ranks, and NCCL's P2P transport, are not
   verified yet. On RunPod's 2×A40 hosts P2P all-reduces hang with or without DMTCP, though the driver reports
   peer access (ACS/IOMMU), so the TP=2 profile sets `NCCL_P2P_DISABLE=1` (SHM transport).
+- **Larger models under DMTCP, open:**
+  - Qwen3.8-27B-FP8 at TP=2 on 2×L40S stalls in vLLM's Qwen GDN Triton warmup under `dmtcp_launch`. Without
+    DMTCP the same command line passes it in 3.5 min. On RTX PRO 6000, Qwen3.8-Flash-Next at TEP4 passes the
+    same warmup under DMTCP in a minute.
+  - Qwen3-32B at TP=2 on L40S failed its first warmup with `CUBLAS_STATUS_INTERNAL_ERROR`. Whether DMTCP
+    causes it is not known yet.
+- **The checkpoint signal is DMTCP's default, SIGUSR2.**
+  - vLLM installs a SIGUSR2 handler, which DMTCP refuses with a warning per process; serving is not affected.
+  - Do not set `DMTCP_SIGCKPT` or `--ckpt-signal`. vLLM's, CUDA's, NCCL's and gloo's threads block every
+    signal, and the fork's `pthread_sigmask` wrapper unblocks only SIGUSR2. With another signal the dump never
+    ends (the processes stay PRESUSPEND).
 - A restore warns that 3 sockets cannot bind their port again (`EADDRINUSE`); serving and the canary are not
   affected. Which sockets these are is open.
 - No interposed IPC (cuInterpose).
