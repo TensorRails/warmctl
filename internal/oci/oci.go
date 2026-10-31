@@ -135,6 +135,12 @@ func Push(ctx context.Context, target oras.Target, dir, tag string, o Options) (
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
+	if m.Encoded() {
+		// Blobs are the files' own bytes, named by their digests: an encoded
+		// directory would push other bytes under them.
+		return ocispec.Descriptor{}, fmt.Errorf("%s stores files encoded (build --compress), for network storage: "+
+			"push a snapshot built without --compress", dir)
+	}
 	src := newSources(dir, m.Files)
 	layers, err := describe(ctx, src, o)
 	if err != nil {

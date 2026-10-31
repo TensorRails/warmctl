@@ -131,3 +131,17 @@ func TestCatalog(t *testing.T) {
 		t.Fatal("Find")
 	}
 }
+
+// A directory build --compress wrote holds encoded files, which push would
+// name by the digests of the files' own bytes: it refuses.
+func TestPushRefusesEncoded(t *testing.T) {
+	dir, m := platformSnapshot(t, "l40s-48gb", "595.91.07")
+	m.Files[0].Encoding, m.Files[0].Frames = manifest.EncodingZframes, []int64{m.Files[0].Size / 2}
+	if err := m.Write(filepath.Join(dir, "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Push(context.Background(), memory.New(), dir, "x", Options{}); err == nil ||
+		!strings.Contains(err.Error(), "--compress") {
+		t.Fatalf("pushed an encoded directory: %v", err)
+	}
+}
