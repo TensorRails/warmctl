@@ -140,12 +140,24 @@ func (t *dmtcpTree) restore(ctx context.Context) (RestoreResult, int, func() err
 	if err != nil {
 		return RestoreResult{}, 0, nil, err
 	}
+	done := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = cmd.Wait(); close(done) }()
+	wait := func() error { <-done; return waitErr }
 	fail := func(err error) (RestoreResult, int, func() error, error) {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-done
 		return RestoreResult{}, 0, nil, err
 	}
-	peers, err := t.cfg.DMTCP.WaitPeers(ctx, len(images), dmtcpRestartTimeout)
+	exited := func() error {
+		select {
+		case <-done:
+			return fmt.Errorf("dmtcp_restart exited during the restart: %v; the log above says why", waitErr)
+		default:
+			return nil
+		}
+	}
+	peers, err := t.cfg.DMTCP.WaitPeers(ctx, len(images), dmtcpRestartTimeout, exited)
 	if err != nil {
 		return fail(err)
 	}
@@ -159,7 +171,7 @@ func (t *dmtcpTree) restore(ctx context.Context) (RestoreResult, int, func() err
 		return fail(err)
 	}
 	t.logf("dmtcp restarted %d processes in %.2fs", len(peers), time.Since(start).Seconds())
-	return RestoreResult{Tree: virtual, Seconds: time.Since(start).Seconds()}, cmd.Process.Pid, cmd.Wait, nil
+	return RestoreResult{Tree: virtual, Seconds: time.Since(start).Seconds()}, cmd.Process.Pid, wait, nil
 }
 
 // thaw has nothing to do: the restarted tree runs, and its CUDA calls wait

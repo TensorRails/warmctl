@@ -220,13 +220,25 @@ func Images(dir string) ([]string, error) {
 	return images, nil
 }
 
-// WaitPeers polls the coordinator until n peers run.
-func (t Tools) WaitPeers(ctx context.Context, n int, timeout time.Duration) ([]Peer, error) {
+// WaitPeers polls the coordinator until n peers run. A restart whose process
+// asserted never gets there, the others wait at a barrier for it, so it
+// fails as soon as a peer leaves or failed, checked on every poll, says so.
+func (t Tools) WaitPeers(ctx context.Context, n int, timeout time.Duration, failed func() error) ([]Peer, error) {
 	deadline := time.Now().Add(timeout)
+	most := 0
 	var last error
 	for {
+		if failed != nil {
+			if err := failed(); err != nil {
+				return nil, err
+			}
+		}
 		peers, err := t.List(ctx)
 		if err == nil {
+			if len(peers) < most {
+				return nil, fmt.Errorf("dmtcp: %d of %d restarted processes left; the log above says why", most-len(peers), most)
+			}
+			most = len(peers)
 			running := 0
 			for _, p := range peers {
 				if p.State == "RUNNING" {
