@@ -25,6 +25,8 @@ Backends
   restart reopens its files.
 - `verify` checks a `--compress` directory: stored sizes, and with `--deep`
   the decoded files' digests.
+- `warmctl compress SRC DST` writes a compressed copy of a built snapshot,
+  as `build --compress` would have; SRC stays pushable.
 
 Restore
 

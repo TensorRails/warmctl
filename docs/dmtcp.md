@@ -124,6 +124,9 @@ records each file's encoding, frame ends and byte-plane split; sizes and SHA-256
 - **Decoding.** The stage reads and decodes every frame on its own worker, and writes the raw file. On a
   9-vCPU pod it decodes 7 GiB/s of images and 3.1–3.4 GiB/s of weights with 8 workers, more than any volume
   delivers.
+- **After the bake.** `warmctl compress SRC DST` writes a compressed copy of a snapshot built without
+  `--compress`. The source keeps its files, so one bake gives both: a snapshot `push` publishes, and a smaller
+  copy for a network volume.
 
 Compression stays out of the restore itself. The fork can pipe its images through zstd (`DMTCP_ZSTD=1`,
 commit `fbbaf3f`, after the one warmctl pins), but `mtcp_restart` then reads one decoded stream through a
