@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -86,21 +87,33 @@ func (b *bake) publish(ctx context.Context) error {
 // (16-bit weights). The links to the store's blobs make way for the encoded
 // files; the blobs, and each file's SHA256, stay the file's own bytes.
 func compress(ctx context.Context, output string, files []manifest.File) error {
+	// Several files at once, a few frames each: one file's encoder reads,
+	// compresses and writes in turn, which leaves the cores idle.
+	sem := make(chan struct{}, max(2, runtime.NumCPU()/4))
+	var wg sync.WaitGroup
+	errs := make([]error, len(files))
 	for i, f := range files {
 		if f.Role != manifest.RoleCRIU && f.Role != manifest.RoleRuntimeFS && f.Role != manifest.RoleWeights {
 			continue
 		}
-		p := filepath.Join(output, filepath.FromSlash(f.Path))
-		ends, split, err := zframes.Encode(ctx, p, p+".zst", 8, 0)
-		if err != nil {
-			return err
-		}
-		if err := os.Rename(p+".zst", p); err != nil {
-			return err
-		}
-		files[i].Encoding, files[i].Frames, files[i].Split = manifest.EncodingZframes, ends, split
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			p := filepath.Join(output, filepath.FromSlash(f.Path))
+			ends, split, err := zframes.Encode(ctx, p, p+".zst", 4, 0)
+			if err == nil {
+				err = os.Rename(p+".zst", p)
+			}
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			files[i].Encoding, files[i].Frames, files[i].Split = manifest.EncodingZframes, ends, split
+		}()
 	}
-	return nil
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 // tree is a directory published under prefix; role names each file's role
