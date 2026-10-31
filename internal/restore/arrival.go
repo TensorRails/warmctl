@@ -65,7 +65,10 @@ func (r *restore) arrive(ctx context.Context) error {
 
 // arrived waits for the weights lane before the engine wakes, which reloads
 // every part. The pull may still be syncing them to disk; the engine reads
-// the checked bytes from memory.
+// the checked bytes from memory. An adapter that waits for each part
+// (Launch.ReloadWaits) wakes at once instead and reloads the parts as they
+// land, a part's file showing up only complete; the wait goes on beside it
+// and wake ends the restore if the arrival fails.
 func (r *restore) arrived(ctx context.Context) error {
 	if r.o.Arrival == nil {
 		return nil
@@ -75,10 +78,18 @@ func (r *restore) arrived(ctx context.Context) error {
 	for _, f := range r.m.WeightLane() {
 		paths = append(paths, f.Path)
 	}
-	if err := r.o.Arrival.Wait(ctx, paths); err != nil {
-		return err
+	wait := func() error {
+		if err := r.o.Arrival.Wait(ctx, paths); err != nil {
+			return err
+		}
+		r.p.Printf("the weights arrived, %.1fs after the process restore", time.Since(start).Seconds())
+		return nil
 	}
-	r.p.Printf("the weights arrived, %.1fs after the process restore", time.Since(start).Seconds())
+	if !r.m.Launch.ReloadWaits {
+		return wait()
+	}
+	r.weights = make(chan error, 1)
+	go func() { r.weights <- wait() }()
 	return nil
 }
 

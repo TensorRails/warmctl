@@ -39,6 +39,10 @@ from .primitives import require
 
 SLOT_BYTES = 64 << 20
 THREADS = 4
+# How long a reload waits for a weights part that has not arrived: a restore
+# wakes the engine while the snapshot is still staged or pulled, and a part's
+# file shows up only once it is complete.
+PART_WAIT = 600
 
 
 def pipelined(device):
@@ -294,6 +298,16 @@ def _pipelined(device, threads, slot_bytes, jobs, stats, rows=0):
     return results
 
 
+def _arrived(path, timeout=PART_WAIT):
+    """Return path once its file exists: complete, as stage and pull put it."""
+    deadline = time.monotonic() + timeout
+    while not os.path.exists(path):
+        if time.monotonic() > deadline:
+            raise TimeoutError(f'{path} did not arrive in {timeout} s')
+        time.sleep(0.005)
+    return path
+
+
 def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SLOT_BYTES, verify=False, stats=None,
            pipeline=True):
     """Copy every listed allocation back from the part files; return the
@@ -309,7 +323,7 @@ def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SL
         def lane_job(index):
             def work(lane):
                 part = parts[index]
-                with open(os.path.join(directory, part['path']), 'rb', buffering=0) as f:
+                with open(_arrived(os.path.join(directory, part['path'])), 'rb', buffering=0) as f:
                     for allocation, inner, offset, length in layout[index]:
                         target = int(allocations[allocation]['ptr'], 16) + inner
                         for done in range(0, length, lane.size):
@@ -326,7 +340,7 @@ def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SL
     def job(index):
         def work(slot):
             part = parts[index]
-            with open(os.path.join(directory, part['path']), 'rb', buffering=0) as f:
+            with open(_arrived(os.path.join(directory, part['path'])), 'rb', buffering=0) as f:
                 if verify:
                     _reload_verified(device, slot, f, part, layout[index], allocations)
                 else:

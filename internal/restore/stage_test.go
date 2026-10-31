@@ -3,6 +3,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
+	"github.com/TensorRails/warmctl/v2/internal/vllm"
 	"github.com/TensorRails/warmctl/v2/internal/zframes"
 )
 
@@ -44,6 +46,9 @@ func TestStage(t *testing.T) {
 	}
 	if len(done) != len(files) {
 		t.Fatalf("done heard of %v", done)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dst, "*", "*"+staging)); len(left) != 0 {
+		t.Fatalf("still staging: %v", left)
 	}
 	for p, body := range withFile(files, "manifest.json", []byte(`{"id":"q06"}`)) {
 		if got, err := os.ReadFile(filepath.Join(dst, p)); err != nil || !bytes.Equal(got, body) {
@@ -136,5 +141,28 @@ func TestStageDecodesFrames(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(dst, "criu/ckpt_a.dmtcp")); err != nil || !bytes.Equal(got, image) {
 		t.Fatalf("staged image differs: %v", err)
+	}
+}
+
+// While the weights arrive the reload runs beside the wait: a failed arrival
+// ends it, a finished one lets it end on its own.
+func TestReloadWhileArriving(t *testing.T) {
+	ctx := context.Background()
+	block := func(ctx context.Context) ([]vllm.Reloaded, error) { <-ctx.Done(); return nil, ctx.Err() }
+	r := &restore{weights: make(chan error, 1)}
+	r.weights <- errors.New("blob 3 failed")
+	ctx2, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if _, err := r.reload(ctx2, block); err == nil || !strings.Contains(err.Error(), "blob 3 failed") {
+		t.Fatalf("failed arrival: %v", err)
+	}
+	r = &restore{weights: make(chan error, 1)}
+	r.weights <- nil
+	rows, err := r.reload(ctx, func(context.Context) ([]vllm.Reloaded, error) {
+		time.Sleep(20 * time.Millisecond)
+		return []vllm.Reloaded{{}}, nil
+	})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("finished arrival: %v %v", rows, err)
 	}
 }

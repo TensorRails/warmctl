@@ -49,6 +49,9 @@ type Launch struct {
 	Env          map[string]string `json:"env"`
 	CaptureSizes []int             `json:"capture_sizes"`
 	Ranks        int               `json:"ranks"`
+	// ReloadWaits says the engine's adapter waits for a weights part whose
+	// file is not there yet, so up wakes it while the snapshot still arrives.
+	ReloadWaits bool `json:"reload_waits,omitempty"`
 }
 
 // GPU is one device of the donor, in rank order.

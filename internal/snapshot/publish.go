@@ -249,7 +249,7 @@ func (b *bake) assemble(files []manifest.File) manifest.Manifest {
 		Launch: manifest.Launch{
 			Image: b.launch.Profile.Image, Model: b.served, ModelDir: b.o.ModelDir, ModelSHA256: b.model,
 			Argv: b.cfg.Argv, Env: b.launch.Env,
-			CaptureSizes: b.launch.CaptureSizes, Ranks: len(b.workers),
+			CaptureSizes: b.launch.CaptureSizes, Ranks: len(b.workers), ReloadWaits: true,
 		},
 		Hardware: b.hardware(),
 		Process:  b.process(),

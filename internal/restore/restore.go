@@ -98,6 +98,9 @@ type restore struct {
 	// pulling is the engine image's pull that runs while the snapshot
 	// still arrives.
 	pulling chan imagePull
+	// weights ends the wait for the weights lane while the engine already
+	// reloads the parts that have arrived (Launch.ReloadWaits).
+	weights chan error
 	// mounts are a pod restore's bind mounts.
 	mounts []string
 }

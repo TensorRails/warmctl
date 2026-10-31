@@ -259,3 +259,16 @@ class CheckReadsTest(unittest.TestCase):
         shifted.bind()
         with self.assertRaises(ValueError):
             transfer.check_reads(shifted, self.allocation, 0)
+
+
+class ArrivedTest(unittest.TestCase):
+    def test_waits_for_the_part(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'part-00000.bin')
+            threading.Timer(0.05, lambda: open(path, 'wb').close()).start()
+            self.assertEqual(transfer._arrived(path, timeout=5), path)
+
+    def test_gives_up(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(TimeoutError):
+                transfer._arrived(os.path.join(directory, 'never.bin'), timeout=0.05)

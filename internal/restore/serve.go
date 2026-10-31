@@ -25,6 +25,34 @@ func parseSize(s string) (int64, error) {
 // wake runs the engine side: vLLM's and warmctl's restore hooks on the
 // sleeping engine, the weights back to their addresses and checked, then
 // the KV cache.
+// reload runs the engine's pool reload; while the weights still arrive
+// (r.weights), an arrival that fails ends it.
+func (r *restore) reload(ctx context.Context, fn func(context.Context) ([]vllm.Reloaded, error)) ([]vllm.Reloaded, error) {
+	if r.weights == nil {
+		return fn(ctx)
+	}
+	type result struct {
+		rows []vllm.Reloaded
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		rows, err := fn(ctx)
+		done <- result{rows, err}
+	}()
+	for {
+		select {
+		case res := <-done:
+			return res.rows, res.err
+		case err := <-r.weights:
+			if err != nil {
+				return nil, fmt.Errorf("weights did not arrive: %w", err)
+			}
+			r.weights = nil
+		}
+	}
+}
+
 func (r *restore) wake(ctx context.Context) error {
 	e := r.c.Engine
 	if asleep, err := e.Sleeping(ctx); err != nil || !asleep {
@@ -40,8 +68,9 @@ func (r *restore) wake(ctx context.Context) error {
 	if threads == 0 {
 		threads = 4
 	}
-	reloaded, err := e.ReloadPool(ctx, r.manifestPath(), r.guest().capture, threads, r.o.VerifyWeights,
-		r.o.SyncWeights)
+	reloaded, err := r.reload(ctx, func(ctx context.Context) ([]vllm.Reloaded, error) {
+		return e.ReloadPool(ctx, r.manifestPath(), r.guest().capture, threads, r.o.VerifyWeights, r.o.SyncWeights)
+	})
 	if err != nil {
 		return err
 	}

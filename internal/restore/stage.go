@@ -21,6 +21,11 @@ import (
 // behind FUSE reaches its bandwidth only with many requests in flight.
 const stageWorkers = 32
 
+// staging names a file a stage is still writing: it takes its own name only
+// once complete, as a pull links a file in, so the engine's reload may
+// open a weights part as soon as it shows up.
+const staging = ".staging"
+
 // arrivalWait bounds how long a stage waits for a file the manifest lists:
 // a RunPod Global Volume shows another pod's writes seconds late, and its
 // manifest.json may show before the files.
@@ -60,12 +65,15 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(
 		if err != nil {
 			return 0, err
 		}
-		if err := create(info, filepath.Join(dst, f.Path), f.Size); err != nil {
-			return 0, err
-		}
 		if f.Size == 0 {
+			if err := create(info, filepath.Join(dst, f.Path), 0); err != nil {
+				return 0, err
+			}
 			done(f.Path)
 			continue
+		}
+		if err := create(info, filepath.Join(dst, f.Path)+staging, f.Size); err != nil {
+			return 0, err
 		}
 		left[f.Path] = new(atomic.Int64)
 		left[f.Path].Store(f.Size)
@@ -86,14 +94,16 @@ func Stage(ctx context.Context, dir, dst string, m manifest.Manifest, done func(
 			w := &stager{buf: make([]byte, 8<<20)}
 			defer w.close()
 			for j := range ch {
-				n, got, err := w.run(filepath.Join(dir, j.path), filepath.Join(dst, j.path), j)
+				to := filepath.Join(dst, j.path)
+				n, got, err := w.run(filepath.Join(dir, j.path), to+staging, j)
 				read.Add(got)
+				if err == nil && left[j.path].Add(-n) == 0 {
+					if err = os.Rename(to+staging, to); err == nil {
+						done(j.path)
+					}
+				}
 				if err != nil {
 					once.Do(func() { firstErr = err; cancel() })
-					continue
-				}
-				if left[j.path].Add(-n) == 0 {
-					done(j.path)
 				}
 			}
 		}()
