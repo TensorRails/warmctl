@@ -27,14 +27,16 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-X main.version=${VERSION}" -o /out/warmctl ./cmd/warmctl
 
 # DMTCP for the dmtcp backend (docs/dmtcp.md): TensorRails' fork at a pinned
-# commit and warmctl's fdkeep plugin against it, built on the base so they
-# link the libc the engine runs with. A restore maps DMTCP's own text from
+# commit, warmctl's fdkeep plugin against it and the zstd that compresses the
+# images (it links the base's libzstd), built on the base so they link the
+# libc the engine runs with. A restore maps DMTCP's own text from
 # these files, so donor and receiver need this very build.
 FROM ${BASE} AS dmtcp
-ARG DMTCP_COMMIT=807057a8cbc6ea8558fab84f53009d2efedee0fc
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git \
+ARG DMTCP_COMMIT=fbbaf3fff6006f0c5eca4c987d7974c614196d1e
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git zstd \
     && git clone https://github.com/TensorRails/dmtcp /src/dmtcp && cd /src/dmtcp && git checkout ${DMTCP_COMMIT} \
-    && ./configure --prefix=/opt/warmctl/dmtcp && make -j"$(nproc)" && make install
+    && ./configure --prefix=/opt/warmctl/dmtcp && make -j"$(nproc)" && make install \
+    && cp /usr/bin/zstd /opt/warmctl/dmtcp/bin/zstd
 COPY internal/dmtcp/fdkeep/fdkeep.c /src/fdkeep.c
 RUN gcc -Wall -O2 -shared -fPIC -I/opt/warmctl/dmtcp/include -o /opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so /src/fdkeep.c
 

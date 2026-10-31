@@ -83,3 +83,17 @@ func TestImages(t *testing.T) {
 		t.Fatalf("%v %v", images, err)
 	}
 }
+
+func TestWithPath(t *testing.T) {
+	tools := Tools{Dir: "/opt/warmctl/dmtcp/bin"}
+	env := tools.WithPath([]string{"HOME=/root", "PATH=/usr/bin:/bin"})
+	if got := env[len(env)-1]; got != "PATH=/opt/warmctl/dmtcp/bin:/usr/bin:/bin" {
+		t.Fatalf("PATH %q", got)
+	}
+	if got := tools.WithPath([]string{"HOME=/root"}); got[len(got)-1] != "PATH=/opt/warmctl/dmtcp/bin" {
+		t.Fatalf("no PATH: %v", got)
+	}
+	if got := (Tools{}).WithPath([]string{"PATH=/bin"}); len(got) != 1 {
+		t.Fatalf("no Dir: %v", got)
+	}
+}

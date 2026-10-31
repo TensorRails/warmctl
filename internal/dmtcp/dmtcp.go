@@ -48,10 +48,13 @@ const (
 //     ends: the engine core is forked instead;
 //   - libuv must not batch epoll_ctl through io_uring, which DMTCP cannot see;
 //   - UCX (NIXL's transport, in the vLLM image) must not hook mmap and shmat:
-//     its hooks call the originals past DMTCP's wrappers.
+//     its hooks call the originals past DMTCP's wrappers;
+//   - the images go through zstd -1 (the fork's DMTCP_ZSTD): about 2.8x
+//     less for a restore to read from network storage.
 var Env = []string{
 	"OMP_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1", "MKL_NUM_THREADS=1",
 	"VLLM_WORKER_MULTIPROC_METHOD=fork", "UV_USE_IO_URING=0", "UCX_MEM_MMAP_HOOK_MODE=none",
+	"DMTCP_ZSTD=1",
 }
 
 // Tools are DMTCP's programs and the fdkeep plugin.
@@ -78,6 +81,25 @@ func (t Tools) Setenv() error {
 		return err
 	}
 	return os.Setenv("DMTCP_TMPDIR", t.TmpDir)
+}
+
+// WithPath is env with Dir first on PATH: DMTCP runs the zstd the runtime
+// image keeps beside it, and a shell in a pod does not have the image's PATH.
+func (t Tools) WithPath(env []string) []string {
+	if t.Dir == "" {
+		return env
+	}
+	path := ""
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			path = v
+		}
+	}
+	if path != "" {
+		path = ":" + path
+	}
+	// Later entries win in exec.Cmd.Env.
+	return append(append([]string(nil), env...), "PATH="+t.Dir+path)
 }
 
 func (t Tools) path(name string) string {
@@ -161,6 +183,7 @@ func (t Tools) RestartArgs(images []string) []string {
 func (t Tools) Restart(images []string, log io.Writer) (*exec.Cmd, error) {
 	args := t.RestartArgs(images)
 	cmd := exec.Command(t.path("dmtcp_restart"), args...)
+	cmd.Env = t.WithPath(os.Environ())
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		return nil, err
