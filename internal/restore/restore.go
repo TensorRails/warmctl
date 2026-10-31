@@ -226,8 +226,9 @@ func canRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools,
 			return err
 		}
 		if why := probe.CRIUReason(); why != "" {
-			return fmt.Errorf("a CRIU snapshot, and this container cannot run CRIU (%s): it restores a dmtcp "+
-				"snapshot", why)
+			// The guidance a pod gets from checkPod too (docs/kubernetes.md).
+			return fmt.Errorf("a CRIU snapshot restores in place only in a privileged container (%s): "+
+				"CRIU and the mounts need privileged: true", why)
 		}
 		return nil
 	case manifest.BackendDMTCP:

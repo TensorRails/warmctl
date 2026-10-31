@@ -322,4 +322,9 @@ func TestCanRestore(t *testing.T) {
 			t.Errorf("%s: %v", c.name, err)
 		}
 	}
+	// A pod gets the guidance docs/kubernetes.md names (and the e2e pod leg expects).
+	if err := canRestore(criuSnap, true, installed, runpod); err == nil ||
+		!strings.Contains(err.Error(), "need privileged: true") {
+		t.Errorf("criu in an unprivileged pod: %v", err)
+	}
 }
