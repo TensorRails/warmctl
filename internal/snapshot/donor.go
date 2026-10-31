@@ -114,6 +114,13 @@ func (b *bake) interposer() error {
 	if mode == interpose.Native || b.o.CPUTest {
 		return nil
 	}
+	if b.backend == agent.BackendDMTCP {
+		// The agent runs a DMTCP engine native: ipc auto needs no build.
+		if mode == interpose.Interpose {
+			return errors.New("ipc interpose: the dmtcp backend does not run under cuInterpose; use ipc auto or native")
+		}
+		return nil
+	}
 	src := b.o.Cuinterpose
 	if src == "" {
 		src = interpose.DefaultDir()

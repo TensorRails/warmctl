@@ -3,10 +3,12 @@ package run
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/TensorRails/warmctl/v2/internal/runtimefs"
 )
@@ -64,7 +66,7 @@ func Place(dir, path string) error {
 			if _, err := os.Lstat(path + SetAside); err == nil {
 				return fmt.Errorf("%s exists and %s is taken: remove one", path, path+SetAside)
 			}
-			if err := os.Rename(path, path+SetAside); err != nil {
+			if err := setAside(path); err != nil {
 				return err
 			}
 		}
@@ -75,6 +77,53 @@ func Place(dir, path string) error {
 		return err
 	}
 	return os.Symlink(dir, path)
+}
+
+// rename is os.Rename; a test makes it fail as overlayfs does.
+var rename = os.Rename
+
+// setAside moves path to path+SetAside. Overlayfs without redirect_dir,
+// Docker's and containerd's default, refuses to rename a directory of an
+// image's layer (EXDEV): it is copied aside and removed instead.
+func setAside(path string) error {
+	err := rename(path, path+SetAside)
+	if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	if err := copyTree(path, path+SetAside); err != nil {
+		return fmt.Errorf("set %s aside: %w", path, err)
+	}
+	return os.RemoveAll(path)
+}
+
+// copyTree copies the directories, files and links under src to dst.
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		to := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(to, info.Mode().Perm())
+		case d.Type()&fs.ModeSymlink != 0:
+			target, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(target, to)
+		default:
+			return CopyFile(p, to, info.Mode().Perm())
+		}
+	})
 }
 
 // ClaimDir makes dir a tree of this run in a container warmctl did not make:
@@ -93,8 +142,15 @@ func ClaimDir(dir string) error {
 		marked = marked || e.Name() == runtimefs.Mark
 	}
 	if len(entries) > 0 && !marked {
-		return fmt.Errorf("%s holds files no warmctl run left there (no %s): mount an emptyDir at %s, "+
-			"or leave it to the container's layer", dir, runtimefs.Mark, dir)
+		var names []string
+		for _, e := range entries[:min(len(entries), 3)] {
+			names = append(names, e.Name())
+		}
+		if len(entries) > 3 {
+			names = append(names, "...")
+		}
+		return fmt.Errorf("%s holds files no warmctl run left there (%s; no %s): remove them, mount an emptyDir "+
+			"at %s, or leave it to the container's layer", dir, strings.Join(names, ", "), runtimefs.Mark, dir)
 	}
 	for _, e := range entries {
 		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {

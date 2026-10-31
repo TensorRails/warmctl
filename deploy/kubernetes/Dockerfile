@@ -60,8 +60,11 @@ ENV PATH=/opt/warmctl/dmtcp/bin:${PATH}
 COPY python/warmctl_vllm /opt/warmctl/adapter/warmctl_vllm
 # Mount points of a read-only root: the restore bind-mounts the snapshot's
 # cuInterpose build at /opt/warmctl/ipc, the pod mounts its volumes on the
-# others. Last, the marker: this is the runtime image, built FROM BASE_REF.
+# others. /tmp starts empty: the base leaves its build files there, and an
+# in-place run claims /tmp only empty or as an earlier run left it. Last,
+# the marker: this is the runtime image, built FROM BASE_REF.
 RUN mkdir -p /opt/warmctl/ipc /workspace /run/warmctl /var/lib/warmctl \
+    && rm -rf /tmp/* /tmp/.[!.]* \
     && printf 'warmctl=%s\nbase=%s\n' "${VERSION}" "${BASE_REF}" > /opt/warmctl/RUNTIME
 ENTRYPOINT ["/usr/local/bin/tini", "--", "/usr/local/bin/warmctl"]
 CMD ["up"]
