@@ -147,9 +147,11 @@ type File struct {
 	Root   string `json:"root,omitempty"`
 	// Encoding is how the snapshot directory stores the file: "" as it is,
 	// or EncodingZframes, zstd frames (internal/zframes) whose end offsets
-	// are Frames. Size and SHA256 are always the file's own.
+	// are Frames, their bytes in Split planes (2 for 16-bit weights). Size
+	// and SHA256 are always the file's own.
 	Encoding string  `json:"encoding,omitempty"`
 	Frames   []int64 `json:"frames,omitempty"`
+	Split    int     `json:"split,omitempty"`
 }
 
 // EncodingZframes stores a file as independent zstd frames of zframes.Size

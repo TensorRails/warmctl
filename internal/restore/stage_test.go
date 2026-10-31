@@ -116,12 +116,12 @@ func TestStageDecodesFrames(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(src, "criu"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ends, err := zframes.Encode(context.Background(), raw, filepath.Join(src, "criu/ckpt_a.dmtcp"), 2)
-	if err != nil || len(ends) != 3 {
-		t.Fatalf("ends %v: %v", ends, err)
+	ends, split, err := zframes.Encode(context.Background(), raw, filepath.Join(src, "criu/ckpt_a.dmtcp"), 2, 2)
+	if err != nil || len(ends) != 3 || split != 2 {
+		t.Fatalf("ends %v split %d: %v", ends, split, err)
 	}
 	m := manifest.Manifest{Files: []manifest.File{{Path: "criu/ckpt_a.dmtcp", Size: int64(len(image)),
-		Role: manifest.RoleCRIU, Encoding: manifest.EncodingZframes, Frames: ends}}}
+		Role: manifest.RoleCRIU, Encoding: manifest.EncodingZframes, Frames: ends, Split: split}}}
 	if !m.Encoded() || m.StoredBytes() != ends[2] {
 		t.Fatalf("encoded %t, stored %d", m.Encoded(), m.StoredBytes())
 	}

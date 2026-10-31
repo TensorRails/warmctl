@@ -81,23 +81,24 @@ func (b *bake) publish(ctx context.Context) error {
 	return nil
 }
 
-// compress stores the process images and runtime trees in output as zstd
-// frames. The links to the store's blobs make way for the encoded files;
-// the blobs, and each file's SHA256, stay the file's own bytes.
+// compress stores the process images, runtime trees and weights in output
+// as zstd frames, each file split into byte planes when that stores less
+// (16-bit weights). The links to the store's blobs make way for the encoded
+// files; the blobs, and each file's SHA256, stay the file's own bytes.
 func compress(ctx context.Context, output string, files []manifest.File) error {
 	for i, f := range files {
-		if f.Role != manifest.RoleCRIU && f.Role != manifest.RoleRuntimeFS {
+		if f.Role != manifest.RoleCRIU && f.Role != manifest.RoleRuntimeFS && f.Role != manifest.RoleWeights {
 			continue
 		}
 		p := filepath.Join(output, filepath.FromSlash(f.Path))
-		ends, err := zframes.Encode(ctx, p, p+".zst", 8)
+		ends, split, err := zframes.Encode(ctx, p, p+".zst", 8, 0)
 		if err != nil {
 			return err
 		}
 		if err := os.Rename(p+".zst", p); err != nil {
 			return err
 		}
-		files[i].Encoding, files[i].Frames = manifest.EncodingZframes, ends
+		files[i].Encoding, files[i].Frames, files[i].Split = manifest.EncodingZframes, ends, split
 	}
 	return nil
 }

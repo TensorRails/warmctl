@@ -118,7 +118,8 @@ func stagePlan(first, weights []manifest.File) []prefetchJob {
 		}
 		for i := range f.Frames {
 			at, n, offset, size := zframes.Frame(f.Frames, f.Size, i)
-			jobs = append(jobs, prefetchJob{path: f.Path, offset: offset, size: size, stored: at, storedSize: n})
+			jobs = append(jobs, prefetchJob{path: f.Path, offset: offset, size: size, stored: at, storedSize: n,
+				split: f.Split})
 		}
 	}
 	return jobs
@@ -161,14 +162,18 @@ func (w *stager) run(src, dst string, j prefetchJob) (int64, int64, error) {
 	if err != nil {
 		return 0, int64(n), err
 	}
-	if w.out, err = w.dec.Decode(frame, w.out, j.size); err != nil {
+	decoded, err := w.dec.Decode(frame, w.out, j.size, j.split)
+	if err != nil {
 		return 0, int64(n), fmt.Errorf("%s at %d: %w", src, j.stored, err)
+	}
+	if j.split > 1 {
+		w.out = decoded // ours to reuse; unsplit bytes are the decoder's
 	}
 	out, err := os.OpenFile(dst, os.O_WRONLY, 0)
 	if err != nil {
 		return 0, int64(n), err
 	}
-	if _, err := out.WriteAt(w.out, j.offset); err != nil {
+	if _, err := out.WriteAt(decoded, j.offset); err != nil {
 		return 0, int64(n), errors.Join(err, out.Close())
 	}
 	return j.size, int64(n), out.Close()

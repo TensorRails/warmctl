@@ -105,8 +105,8 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer, vers
 		"docs/dmtcp.md)")
 	fs.StringVar(&o.Backend, "backend", host.BackendAuto, "in place, how the process tree is snapshotted: "+
 		"auto (CRIU when this container may run it, else DMTCP), criu or dmtcp")
-	fs.BoolVar(&o.Compress, "compress", false, "store the process images as zstd frames, for a snapshot restored "+
-		"from network storage (up decodes them as it stages a local copy)")
+	fs.BoolVar(&o.Compress, "compress", false, "store the process images and weights as zstd frames, for a snapshot "+
+		"restored from network storage (up decodes them as it stages a local copy)")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}

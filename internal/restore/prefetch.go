@@ -34,8 +34,10 @@ type prefetchJob struct {
 	offset int64
 	size   int64
 	// stored and storedSize, for a file stored encoded, are where the frame
-	// holding [offset, offset+size) lies in the stored file (Stage only).
+	// holding [offset, offset+size) lies in the stored file, split its byte
+	// planes (Stage only).
 	stored, storedSize int64
+	split              int
 }
 
 // prefetchPlan orders the reads: the CRIU images first, then the weights
