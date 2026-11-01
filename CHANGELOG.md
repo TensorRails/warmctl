@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.16 — 2026-11-01
+
+warmctl now runs where CRIU cannot: in containers without privileges, such
+as RunPod Pods. A new dmtcp backend bakes and restores the engine in user
+space. On RunPod, a new pod serves Qwen3-8B in 21 s where warm vLLM takes
+83 s, and Qwen3.8-Flash-Next (180B, 4×RTX PRO 6000) in 21 s from the pod's
+disk and 215 s from a network volume, where vLLM takes 11 to 12.5 minutes.
+The backend is experimental; CRIU snapshots and the CRIU path are
+unchanged.
 
 Backends
 
@@ -34,6 +42,21 @@ Backends
   sockets again on restart. Two more fork fixes came with it: `$ORIGIN` in a
   dlopen path (cuInterpose loads its core that way) and `fcntl64`, without
   which an engine whose vLLM spawns its processes never finished its dump.
+- DMTCP changes a socket's connection only with its fd table locked. A TP=2
+  worker restarted under cuInterpose segfaulted in DMTCP's `setsockopt`
+  wrapper once in about a dozen restores: the wrapper changed a connection
+  another thread could delete.
+- A DMTCP dump that writes no image 3 minutes after it began fails and says
+  that a socket's drain did not end, instead of waiting out the 15-minute
+  timeout (#62).
+- An in-place run whose agent cannot end the engine no longer leaves vLLM and
+  the DMTCP coordinator holding the GPUs: the agent gets time for its
+  release, and the host ends a coordinator the agent left. A bake killed in
+  warmup and an `up` killed during its CUDA step left the GPUs free.
+- fdkeep logs what does not fit its tables instead of dropping it, and does
+  not count DMTCP's own descriptors.
+- An in-place bake takes the container's lock first, as `up` does, and a
+  failed one keeps its engine log.
 
 Restore
 
@@ -44,9 +67,19 @@ Restore
 - Snapshots built by this version reload each weights part as it lands, during
   a stage or a registry pull, instead of after the last one
   (`launch.reload_waits`). Older snapshots wait for all weights, as before.
-  The adapter waits for a part without a deadline; warmctl ends the reload
-  when the stage or pull fails, and a stage fails when no range is copied
-  for 5 minutes.
+  The adapter waits for a part only while a stage or pull still brings it,
+  so a part missing from a complete snapshot fails the reload at once;
+  warmctl ends the reload when the stage or pull fails, and a stage fails
+  when no range is copied for 5 minutes.
+- Two `up`s of one snapshot on a host share its staged copy: the second waits
+  for the first's copy instead of removing it. Two restores of one compressed
+  Qwen3-8B at once both served in 13.0 s.
+- A stage checks free space first: without room, a plain snapshot restores
+  from where it is, and an encoded one fails at once with the numbers.
+- `pull NAME` and `up NAME` take the index entry this host can restore with
+  its backend: a pod without privileges takes a DMTCP snapshot, and a host
+  that runs both takes CRIU's whatever the index's order. `pull` takes
+  `--mode` as `up` does.
 - The stage waits up to two minutes for files a Global Volume shows late
   (eventually consistent across pods).
 
@@ -67,6 +100,38 @@ Snapshots
   weights 1.46×); first `up` from a RunPod network volume 20.2–22.9 s, where
   warm vLLM takes 83 s. `push` refuses an encoded directory; compressed
   registry blobs are #60.
+
+Verified on 4×RTX PRO 6000 (Verda, driver 580.178.04)
+
+- Each model baked and restored twice with each backend, DMTCP in a
+  container with Docker's default privileges, restores on other GPUs than
+  the bake's; weights fingerprints, canary and a quality probe each time:
+
+  | Model | GPUs | CRIU up | DMTCP up |
+  |---|---|---|---|
+  | Qwen3-0.6B, cuInterpose | 2 | 3.7–4.1 s | 3.6–3.8 s |
+  | Qwen3-0.6B, cuInterpose | 4 | 5.0–5.4 s | 5.2–5.3 s |
+  | Qwen3-8B | 1 | 5.9 s | 5.3–5.8 s |
+  | Qwen3-32B | 4 | 8.1–8.3 s | 7.7–8.0 s |
+  | Qwen3.8-27B-FP8 (catalog profile) | 1 | 7.4–9.0 s | 7.4 s |
+  | Gemma 4 31B, cuInterpose | 4 | 7.5–8.2 s | |
+  | gpt-oss-20b | 1 | 5.3 s | 5.1–5.2 s |
+
+- A restored engine serves as fast as a new one: Qwen3-8B greedy at 64
+  concurrent requests, 2,503 tokens/s from vLLM, 2,498 after a CRIU
+  restore, 2,495 after a DMTCP one.
+- Compatible both ways: beta.15 restores snapshots of this release, and this
+  release restores beta.15's.
+
+Known issues
+
+- A DMTCP bake of an engine whose vLLM spawns its processes (Qwen3.8-Flash-Next,
+  profiles with `fuse_allreduce_rms`) hangs in DMTCP's socket drain in about
+  1 bake of 5; it now fails after 3 minutes, and a second bake usually works
+  (#62). Engines that fork, and every restore, were not affected.
+- gpt-oss-20b's canary differs after a restore by up to 0.26 in a logprob,
+  with either backend, while its weights match bit for bit and the quality
+  probe passes.
 
 ## v2.0.0-beta.15 — 2026-10-30
 
