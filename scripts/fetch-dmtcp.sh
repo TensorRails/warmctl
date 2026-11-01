@@ -2,7 +2,7 @@
 # Fetch a released native runtime with the checksum pinned in this source tree.
 # Usage: scripts/fetch-dmtcp.sh amd64|arm64 NEW_DESTINATION
 set -eu
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repo=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 arch=${1:?usage: fetch-dmtcp.sh amd64|arm64 NEW_DESTINATION}
 dest=${2:?usage: fetch-dmtcp.sh amd64|arm64 NEW_DESTINATION}
 case "$arch" in amd64|arm64) ;; *) echo 'unsupported DMTCP architecture' >&2; exit 1 ;; esac
