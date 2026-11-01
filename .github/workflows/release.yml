@@ -164,7 +164,8 @@ jobs:
           (cd "$RUNNER_TEMP/dmtcp-source" && sha256sum --ignore-missing -c "$GITHUB_WORKSPACE/internal/dmtcp/SHA256SUMS")
           tar -xzf "$RUNNER_TEMP/dmtcp-source/dmtcp-$version-source.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/dmtcp-source"
           root="$PWD/unpacked/dmtcp/linux-${{ matrix.arch }}/$version"
-          python3 "$RUNNER_TEMP/dmtcp-source/test/restore-memory-check.py" --root "$root" \
+          # Use the generated version header from the installed package.
+          CPATH="$root/include" python3 "$RUNNER_TEMP/dmtcp-source/test/restore-memory-check.py" --root "$root" \
             --plugin "$root/lib/libdmtcp_fdkeep.so" --output "$RUNNER_TEMP/dmtcp-installed-check"
       - name: Install, reinstall, preserve old snapshots and refuse replacement
         run: INSTALL_TEST_ARCHIVE=$(echo "$PWD"/packages/*-linux-${{ matrix.arch }}.tar.gz) python3 scripts/test-install.py
