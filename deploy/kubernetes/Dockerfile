@@ -32,7 +32,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 FROM ${BASE} AS dmtcp
 COPY scripts/fetch-dmtcp.sh /src/scripts/fetch-dmtcp.sh
 COPY internal/dmtcp/VERSION internal/dmtcp/SHA256SUMS /src/internal/dmtcp/
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 \
     && sh /src/scripts/fetch-dmtcp.sh amd64 /opt/warmctl/dmtcp \
     && /opt/warmctl/dmtcp/bin/dmtcp_launch --version
 
@@ -42,6 +42,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 FROM scratch AS cuinterpose
 
 FROM ${BASE}
+# The native DMTCP package also works with minimal Debian/Ubuntu test bases.
+# --no-upgrade keeps an existing runtime's C++ library unchanged.
+RUN apt-get update && apt-get install -y --no-install-recommends --no-upgrade libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
 ARG BASE
 ARG BASE_REF=${BASE}
 ARG VERSION=dev

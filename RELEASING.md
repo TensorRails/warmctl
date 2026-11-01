@@ -64,7 +64,7 @@ executables. Packages are built on Debian 12 (glibc >= 2.36 and compatible
 libstdc++); macOS archives contain only the warmctl client.
 
 For an update, first publish and verify the DMTCP release. Update
-`internal/dmtcp/VERSION` and copy its two native archive checksums into
+`internal/dmtcp/VERSION` and copy its published archive checksums into
 `internal/dmtcp/SHA256SUMS`. `scripts/fetch-dmtcp.sh` verifies those pinned
 checksums before extracting. Both GoReleaser and the runtime Dockerfile
 consume these assets; neither compiles the fork. `make dmtcp` fetches them

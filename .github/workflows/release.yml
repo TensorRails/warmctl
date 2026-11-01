@@ -154,6 +154,18 @@ jobs:
           port=$(cat "$RUNNER_TEMP/dmtcp.port")
           trap '"$root/bin/dmtcp_command" --coord-port "$port" --quit || true' EXIT
           DMTCP_PLUGIN="$root/lib/libdmtcp_fdkeep.so" "$root/bin/dmtcp_launch" --join-coordinator --coord-port "$port" /bin/true
+      - name: Checkpoint and restore with the packaged runtime on Ubuntu 24.04
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(cat internal/dmtcp/VERSION)
+          mkdir "$RUNNER_TEMP/dmtcp-source"
+          gh release download "$version" --repo TensorRails/dmtcp --pattern "dmtcp-$version-source.tar.gz" --dir "$RUNNER_TEMP/dmtcp-source"
+          (cd "$RUNNER_TEMP/dmtcp-source" && sha256sum --ignore-missing -c "$GITHUB_WORKSPACE/internal/dmtcp/SHA256SUMS")
+          tar -xzf "$RUNNER_TEMP/dmtcp-source/dmtcp-$version-source.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/dmtcp-source"
+          root="$PWD/unpacked/dmtcp/linux-${{ matrix.arch }}/$version"
+          python3 "$RUNNER_TEMP/dmtcp-source/test/restore-memory-check.py" --root "$root" \
+            --plugin "$root/lib/libdmtcp_fdkeep.so" --output "$RUNNER_TEMP/dmtcp-installed-check"
       - name: Install, reinstall, preserve old snapshots and refuse replacement
         run: INSTALL_TEST_ARCHIVE=$(echo "$PWD"/packages/*-linux-${{ matrix.arch }}.tar.gz) python3 scripts/test-install.py
 
