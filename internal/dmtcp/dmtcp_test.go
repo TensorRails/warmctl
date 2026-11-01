@@ -97,7 +97,11 @@ func TestAwaitCheckpoint(t *testing.T) {
 	if err := awaitCheckpoint(dir, time.Minute, result(nil)); err != nil {
 		t.Fatalf("finished: %v", err)
 	}
-	// A drain that does not end: nothing written and no result.
+	// A drain that does not end: no image written, only the directory for
+	// the files DMTCP keeps beside one, and no result.
+	if err := os.Mkdir(filepath.Join(dir, "ckpt_python3.12_x-40000-a_files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := awaitCheckpoint(dir, 10*time.Millisecond, make(chan error)); err == nil ||
 		!strings.Contains(err.Error(), "no image written") {
 		t.Fatalf("stalled: %v", err)

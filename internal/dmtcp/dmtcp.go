@@ -174,15 +174,16 @@ func (t Tools) Checkpoint(ctx context.Context, dir string, drain, timeout time.D
 }
 
 // awaitCheckpoint returns the checkpoint's result, or an error when drain
-// passes before the first image appears in dir (DMTCP writes ckpt_*.temp,
-// then renames it).
+// passes before the first image appears in dir. DMTCP writes
+// ckpt_*.dmtcp.temp, then renames it; the ckpt_*_files directories beside
+// them it makes before the drain.
 func awaitCheckpoint(dir string, drain time.Duration, done <-chan error) error {
 	select {
 	case err := <-done:
 		return err
 	case <-time.After(drain):
 	}
-	if written, _ := filepath.Glob(filepath.Join(dir, "ckpt_*")); len(written) == 0 {
+	if written, _ := filepath.Glob(filepath.Join(dir, "ckpt_*.dmtcp*")); len(written) == 0 {
 		return fmt.Errorf("dmtcp: no image written %s into the checkpoint: a process is still draining "+
 			"a socket whose peer does not answer (docs/dmtcp.md)", drain)
 	}
