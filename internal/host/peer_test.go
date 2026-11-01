@@ -42,8 +42,9 @@ echo '{"claimed":true,"copies":[{"from":0,"to":1,"gbps":24.5},{"from":1,"to":0,"
 
 	// A copy that never finishes: the child is killed and the path broken,
 	// named by the host's GPU indices.
+	// Long enough for the shell to print under a loaded go test -race ./...
 	defer func(d time.Duration) { PeerTimeout = d }(PeerTimeout)
-	PeerTimeout = 300 * time.Millisecond
+	PeerTimeout = 2 * time.Second
 	r, err = ProbePeers(ctx, fakeProbe(t, `echo "copy 0 1"; echo "copy 1 0"; sleep 10`), gpus)
 	if err != nil || !r.Broken || !strings.Contains(r.Why, "from GPU 5 to GPU 2 did not finish") {
 		t.Fatalf("hung copy: %+v %v", r, err)
