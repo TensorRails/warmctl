@@ -444,7 +444,7 @@ static void restorenames(void)
       if (used[i] || strncmp(names[i], stem, strlen(stem)) != 0) continue;
       used[i] = 1;
       char path[64];
-      snprintf(path, sizeof path, "/proc/self/task/%s/comm", e->d_name);
+      snprintf(path, sizeof path, "/proc/self/task/%.20s/comm", e->d_name); // a TID: digits
       int fd = open(path, O_WRONLY | O_CLOEXEC);
       if (fd >= 0) {
         if (write(fd, names[i], strlen(names[i])) > 0) fixed++;
