@@ -70,29 +70,18 @@ func checkInit(comm string, self int) error {
 // checkStatus reads /proc/self/status: the checkpoint capabilities and no
 // seccomp filter, as a receiver container has.
 func checkStatus(status string) error {
-	var eff uint64
-	seccomp := -1
-	for _, line := range strings.Split(status, "\n") {
-		key, value, _ := strings.Cut(line, ":")
-		value = strings.TrimSpace(value)
-		switch key {
-		case "CapEff":
-			eff, _ = strconv.ParseUint(value, 16, 64)
-		case "Seccomp":
-			seccomp, _ = strconv.Atoi(value)
-		}
-	}
+	p := host.ParseStatus(status)
 	var missing []string
 	for _, name := range docker.CheckpointCaps {
-		if eff&(1<<capBits[name]) == 0 {
+		if p.CapEff&(1<<capBits[name]) == 0 {
 			missing = append(missing, name)
 		}
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("the pod lacks %s: CRIU and the mounts need privileged: true", strings.Join(missing, ", "))
 	}
-	if seccomp != 0 {
-		return fmt.Errorf("seccomp mode %d: the pod needs seccompProfile Unconfined", seccomp)
+	if p.Seccomp != 0 {
+		return fmt.Errorf("seccomp mode %d: the pod needs seccompProfile Unconfined", p.Seccomp)
 	}
 	return nil
 }

@@ -223,9 +223,10 @@ func (t Tools) QuitLeft(ctx context.Context) error {
 }
 
 // RestartArgs are dmtcp_restart's arguments. --no-strict-checking drops its
-// one check, that each image's owner is this user: warmctl checks every file
-// of a snapshot against its SHA-256 instead, and a network file system
-// reports another owner (nobody under geesefs or NFS root_squash).
+// one check, that each image's owner is this user: a network file system
+// reports another owner (nobody under geesefs or NFS root_squash). A pull
+// checks every file against its SHA-256; a stage copies by size, its
+// frames checked by zstd.
 func (t Tools) RestartArgs(images []string) []string {
 	return append([]string{"--coord-port", t.port(), "--no-strict-checking"}, images...)
 }
