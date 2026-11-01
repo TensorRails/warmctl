@@ -94,9 +94,10 @@ func TestIndexBackends(t *testing.T) {
 	if PlatformTag(mc) != "1xa40-48gb-595.91.07" || PlatformTag(md) != "1xa40-48gb-595.91.07-dmtcp" {
 		t.Fatalf("tags %q %q", PlatformTag(mc), PlatformTag(md))
 	}
-	pushIndexed(t, reg, criuDir, mc)
-	if n := pushIndexed(t, reg, dmtcpDir, md); n != 2 {
-		t.Fatalf("the DMTCP snapshot replaced the CRIU one: %d entries", n)
+	// The DMTCP snapshot pushed first: a host that runs both still takes CRIU's.
+	pushIndexed(t, reg, dmtcpDir, md)
+	if n := pushIndexed(t, reg, criuDir, mc); n != 2 {
+		t.Fatalf("the CRIU snapshot replaced the DMTCP one: %d entries", n)
 	}
 	if tag, err := Choose(ctx, reg, IndexTag, nil); err != nil || tag != PlatformTag(mc) {
 		t.Fatalf("a host that runs both chose %q, %v", tag, err)

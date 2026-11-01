@@ -135,9 +135,10 @@ func readIndex(ctx context.Context, target oras.ReadOnlyTarget) (ocispec.Index, 
 }
 
 // Choose returns the tag of the snapshot ref stands for: ref itself when it
-// names a snapshot, or, when it names an index, the first entry whose
-// manifest.json check accepts (nil accepts any). Otherwise the error lists
-// every platform and why it does not fit.
+// names a snapshot, or, when it names an index, an entry whose manifest.json
+// check accepts (nil accepts any): CRIU's where the host takes both, else
+// the first. Otherwise the error lists every platform and why it does not
+// fit.
 func Choose(ctx context.Context, target oras.ReadOnlyTarget, ref string, check func(manifest.Manifest) error) (
 	string, error) {
 	desc, err := target.Resolve(ctx, ref)
@@ -156,16 +157,26 @@ func Choose(ctx context.Context, target oras.ReadOnlyTarget, ref string, check f
 		return "", err
 	}
 	var why []string
+	chosen := ""
 	for _, e := range idx.Manifests {
 		tag := e.Annotations[ocispec.AnnotationRefName]
 		_, _, m, _, err := resolve(ctx, target, tag)
 		if err == nil && check != nil {
 			err = check(m)
 		}
-		if err == nil {
+		if err != nil {
+			why = append(why, fmt.Sprintf("%s: %v", tag, err))
+			continue
+		}
+		if entryBackend(e) == manifest.BackendCRIU {
 			return tag, nil
 		}
-		why = append(why, fmt.Sprintf("%s: %v", tag, err))
+		if chosen == "" {
+			chosen = tag
+		}
+	}
+	if chosen != "" {
+		return chosen, nil
 	}
 	if len(why) == 0 {
 		return "", fmt.Errorf("oci: %s lists no snapshots", ref)

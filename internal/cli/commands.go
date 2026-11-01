@@ -295,18 +295,24 @@ func registerUp(fs *flag.FlagSet, o *restore.Options) *string {
 		restore.DefaultPodListen)
 }
 
-// chooseMode decides between a host restore and one in place. In place it
-// opens the gateway before anything is pulled, so a pod's probes get 503
-// rather than no answer, and takes the GPUs the device plugin gave the pod.
-func chooseMode(ctx context.Context, fs *flag.FlagSet, o *restore.Options, mode, sock string) (*restore.Gate, error) {
-	inPlace, reason, err := restore.Choose(ctx, mode, restore.Probe{
+// hostProbe is what restore.Choose looks at on this host: the runtime
+// image's marker, Docker at sock, signs of a Kubernetes pod.
+func hostProbe(sock string) restore.Probe {
+	return restore.Probe{
 		Runtime: func() (run.Runtime, bool, error) { return run.ReadRuntime(run.RuntimeFile) },
 		Docker: func(ctx context.Context) error {
 			_, err := docker.New(ctx, sock)
 			return err
 		},
 		Kubernetes: restore.KubernetesSigns,
-	})
+	}
+}
+
+// chooseMode decides between a host restore and one in place. In place it
+// opens the gateway before anything is pulled, so a pod's probes get 503
+// rather than no answer, and takes the GPUs the device plugin gave the pod.
+func chooseMode(ctx context.Context, fs *flag.FlagSet, o *restore.Options, mode, sock string) (*restore.Gate, error) {
+	inPlace, reason, err := restore.Choose(ctx, mode, hostProbe(sock))
 	if err != nil || !inPlace {
 		return nil, err
 	}

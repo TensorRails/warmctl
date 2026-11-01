@@ -33,7 +33,7 @@ warmctl up /nv/snap/q8 --mode in-place        # or up NAME: the index entry this
 | bake | `--backend auto` (the default): DMTCP in place (`--in-place`), CRIU in the donor container warmctl makes. An in-place CRIU bake is refused as not supported yet: the bake links the model in, so CRIU would record files under the link's target, which an in-place CRIU restore does not bring back. |
 | manifest | `process.backend` records the choice. Snapshots without the field are CRIU's. |
 | index | `io.warmctl.backend` on each entry. A DMTCP snapshot's tag ends in `-dmtcp`, and CRIU's tags are unchanged, so one platform and driver hold both. |
-| restore | `up NAME` takes the first entry `restore.CanRestore` accepts: CRIU through Docker or in a container that may checkpoint, DMTCP in place with DMTCP installed. Tags sort CRIU first. |
+| restore | `up NAME` and `pull NAME` take an entry `restore.CanRestore` accepts for the way the snapshot will restore (`--mode`, auto by default: in place in the runtime image, else through Docker): CRIU through Docker or in a container that may checkpoint, DMTCP in place with DMTCP installed. Where both fit, CRIU's, whatever the index's order. `pull` on a host with neither Docker nor the runtime image takes either. |
 
 ## How it runs
 

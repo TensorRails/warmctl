@@ -20,7 +20,9 @@ has one snapshot per platform, all in one repository. `warmctl push SNAP NAME`
 pushes a snapshot under its platform tag (`8xh100-80gb-sxm-580.95.05`) and
 adds it to the repository's `latest`, an OCI image index. `up NAME` and
 `pull NAME` work like a multi-arch image pull: they take the entry this host
-can restore, or say for each platform why it does not fit. A tag
+can restore, on its hardware and with its backend (a pod without privileges
+takes a DMTCP snapshot, docs/dmtcp.md), or say for each platform why it does
+not fit. A tag
 (`NAME:TAG`, `oci://…/REPO:TAG`) skips the index.
 
 ## Catalog
