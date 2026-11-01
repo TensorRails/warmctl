@@ -60,8 +60,14 @@ jobs:
       # Exercise the actual Dockerfile and context without the large vLLM base.
       - name: Fetch and execute DMTCP in the runtime Docker build
         run: |
-          docker build --target dmtcp -f deploy/kubernetes/Dockerfile \
+          docker build --target dmtcp -t warmctl-runtime-package -f deploy/kubernetes/Dockerfile \
             --build-arg BASE=debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 .
+          docker run --rm --init --entrypoint /bin/sh warmctl-runtime-package -ec '
+            root=/opt/warmctl/dmtcp
+            "$root/bin/dmtcp_coordinator" --daemon --exit-on-last --port 0 --port-file /tmp/dmtcp.port
+            port=$(cat /tmp/dmtcp.port)
+            DMTCP_PLUGIN="$root/lib/libdmtcp_fdkeep.so" "$root/bin/dmtcp_launch" --join-coordinator --coord-port "$port" /bin/true
+          '
 
   lint:
     runs-on: ubuntu-24.04
