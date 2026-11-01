@@ -249,10 +249,6 @@ func (b *bake) tools() (agent.Config, error) {
 // them. Without mounts: the trees are claimed, the model and the adapter
 // linked in (run.Place).
 func (b *bake) placeInPlace() error {
-	var err error
-	if b.owns, err = run.LockContainer(); err != nil {
-		return err
-	}
 	for _, t := range b.cfg.Trees {
 		if err := run.ClaimDir(t.Path); err != nil {
 			return fmt.Errorf("tree %s: %w", t.Path, err)

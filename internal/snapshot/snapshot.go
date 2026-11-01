@@ -133,6 +133,14 @@ func Run(ctx context.Context, o Options) (manifest.Manifest, error) {
 }
 
 func (b *bake) resolve(context.Context) error {
+	if b.o.InPlace {
+		// First, as up does: a run in place owns the container, and the
+		// preflight below already probes its GPUs.
+		var err error
+		if b.owns, err = run.LockContainer(); err != nil {
+			return err
+		}
+	}
 	if err := b.chooseBackend(); err != nil {
 		return err
 	}
@@ -320,6 +328,11 @@ func (b *bake) cleanup() {
 	if b.dir != "" {
 		keepLogs(b.dir, logs)
 		_ = os.RemoveAll(b.dir)
+	}
+	if b.owns != nil && b.c != nil {
+		// In place the engine logged into this container's own /workspace,
+		// which the next run claims.
+		_ = run.CopyFile(EngineLog, filepath.Join(logs, "engine.log"), 0o644)
 	}
 	if b.lease != nil {
 		b.lease.Release()
