@@ -28,6 +28,10 @@ warmctl up /nv/snap/q8 --mode in-place        # or up NAME: the index entry this
 
 ## Large local images and the versioned fork
 
+For a fresh H200 pod restoring directly from a high-performance network
+volume, see [the measured Runpod startup recipe](runpod-volume-restore.md).
+It includes provisioning and the first external streaming token.
+
 From warmctl beta.17, the receiver supplies `DMTCP_RESTART_HUGEPAGES=1` and
 `DMTCP_RESTART_READERS` for DMTCP restores. Readers are bounded by Go's
 container-aware CPU budget: 1–8, or 16 when at least 16 CPUs are available.
@@ -338,8 +342,9 @@ runs at that pod's upload speed (0.22 GiB/s): geesefs uploads in the background 
   `/workspace/.cache`. Mount volumes elsewhere.
 - A Global Volume cannot hold an OCI layout: oras-go `chmod`s blobs and geesefs has no permission bits. It
   serves a plain snapshot directory.
-- Not measured yet: a HIGH_PERFORMANCE network volume (VAST NFS, 5.7 GB/s measured earlier), and the Global
-  Volume with the weights overlapped.
+- HIGH_PERFORMANCE network volumes are now measured on H200: see
+  [fresh-pod startup from NFS](runpod-volume-restore.md). The Global Volume
+  with the weights overlapped remains unmeasured here.
 - Once, a repeat `up` failed at the CUDA step with `cuCheckpointProcessGetState: initialization error (3)`; it
   did not recur.
 - DMTCP built by hand from the fork:
