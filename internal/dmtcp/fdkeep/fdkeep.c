@@ -125,6 +125,8 @@ static void record(void)
     if (n <= 0) continue;
     target[n] = 0;
     if (fd >= MAXFD) {
+      // DMTCP's own descriptors (its coordinator's socket, a pipe: 821 and 828) are its to restore.
+      if (dmtcp_is_protected_fd(fd)) continue;
       if (strncmp(target, "anon_inode:[event", 17) == 0 || strncmp(target, "pipe:", 5) == 0 ||
           strncmp(target, "socket:", 7) == 0)
         past++;
