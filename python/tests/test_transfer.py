@@ -79,6 +79,11 @@ class TransferTest(unittest.TestCase):
                 f.write(b'\x00')
             with self.assertRaises(ValueError):
                 transfer.reload(self.device, allocations, written, root, threads=1, slot_bytes=1000, verify=True)
+            # A part missing from a complete snapshot fails at once: only a
+            # reload told the parts still arrive waits for them.
+            os.remove(os.path.join(root, written[1]['path']))
+            with self.assertRaises(FileNotFoundError):
+                transfer.reload(self.device, allocations, written, root, threads=2, slot_bytes=1000)
 
     def test_export_refuses_existing_rank(self):
         allocations, parts = pool.plan_parts(self.rows, part_bytes=4096)
@@ -259,3 +264,23 @@ class CheckReadsTest(unittest.TestCase):
         shifted.bind()
         with self.assertRaises(ValueError):
             transfer.check_reads(shifted, self.allocation, 0)
+
+
+class ArrivedTest(unittest.TestCase):
+    def test_waits_for_the_part(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'part-00000.bin')
+            threading.Timer(0.05, lambda: open(path, 'wb').close()).start()
+            self.assertEqual(transfer._arrived(path), path)
+
+    def test_has_no_deadline(self):
+        # warmctl ends a reload whose parts stopped coming; the adapter waits.
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'part-00001.bin')
+            waiter = threading.Thread(target=transfer._arrived, args=(path,))
+            waiter.start()
+            waiter.join(0.2)
+            self.assertTrue(waiter.is_alive())
+            open(path, 'wb').close()
+            waiter.join(5)
+            self.assertFalse(waiter.is_alive())

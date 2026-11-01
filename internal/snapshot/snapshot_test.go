@@ -4,8 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/TensorRails/warmctl/v2/internal/agent"
+	"github.com/TensorRails/warmctl/v2/internal/interpose"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/store"
 	"github.com/TensorRails/warmctl/v2/internal/vllm"
@@ -77,5 +80,69 @@ func TestServedName(t *testing.T) {
 	}
 	if _, err := ServedName(map[string]any{}); err == nil {
 		t.Fatal("missing name accepted")
+	}
+}
+
+// A donor container runs CRIU, a bake in place DMTCP; CRIU in place is
+// refused until it is supported.
+func TestBakeBackend(t *testing.T) {
+	for _, c := range []struct {
+		want    string
+		inPlace bool
+		got     string
+	}{
+		{"", false, agent.BackendCRIU},
+		{"auto", false, agent.BackendCRIU},
+		{"criu", false, agent.BackendCRIU},
+		{"dmtcp", false, ""},
+		{"auto", true, agent.BackendDMTCP},
+		{"dmtcp", true, agent.BackendDMTCP},
+		{"criu", true, ""},
+		{"podman", true, ""},
+	} {
+		got, err := bakeBackend(c.want, c.inPlace)
+		if got != c.got || (err != nil) != (c.got == "") {
+			t.Errorf("bakeBackend(%q, %t) = %q %v", c.want, c.inPlace, got, err)
+		}
+	}
+	if _, err := bakeBackend("criu", true); err == nil || !strings.Contains(err.Error(), "not supported yet") {
+		t.Errorf("criu in place: %v", err)
+	}
+}
+
+// A DMTCP engine maps the cuInterpose build where it is, by its real path,
+// and the snapshot keeps a copy as its record.
+func TestInterposerDMTCP(t *testing.T) {
+	build := t.TempDir()
+	for _, name := range interpose.Files {
+		if err := os.WriteFile(filepath.Join(build, name), []byte(name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(t.TempDir(), "cuinterpose")
+	if err := os.Symlink(build, link); err != nil {
+		t.Fatal(err)
+	}
+	b := &bake{o: Options{Cuinterpose: link}, dir: t.TempDir(), backend: agent.BackendDMTCP}
+	b.launch.Profile.IPC, b.launch.Profile.Parallel.TP = interpose.Auto, 2
+	if err := b.interposer(); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _ := filepath.EvalSymlinks(build)
+	if b.cfg.IPC != interpose.Auto || b.cfg.IPCBuild != resolved ||
+		b.cfg.IPCCoordinator != filepath.Join(resolved, interpose.Coordinator) {
+		t.Fatalf("config %+v", b.cfg)
+	}
+	if err := interpose.Check(b.ipcDir); err != nil {
+		t.Fatalf("the snapshot's copy: %v", err)
+	}
+	// CRIU mounts the copy at the guest path instead.
+	b = &bake{o: Options{Cuinterpose: link}, dir: t.TempDir(), backend: agent.BackendCRIU}
+	b.launch.Profile.IPC, b.launch.Profile.Parallel.TP = interpose.Interpose, 2
+	if err := b.interposer(); err != nil {
+		t.Fatal(err)
+	}
+	if b.cfg.IPCBuild != "" || b.cfg.IPCCoordinator != interpose.GuestDir+"/"+interpose.Coordinator {
+		t.Fatalf("criu config %+v", b.cfg)
 	}
 }

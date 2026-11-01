@@ -3,16 +3,16 @@ package restore
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/TensorRails/warmctl/v2/internal/run"
 )
 
 func probe(marker bool, dockerUp bool, kube ...string) Probe {
 	return Probe{
-		Runtime: func() (Runtime, bool, error) {
-			return Runtime{Warmctl: "v2.0.0-beta.4", Base: "vllm/vllm-openai@sha256:ad9d"}, marker, nil
+		Runtime: func() (run.Runtime, bool, error) {
+			return run.Runtime{Warmctl: "v2.0.0-beta.4", Base: "vllm/vllm-openai@sha256:ad9d"}, marker, nil
 		},
 		Docker: func(context.Context) error {
 			if dockerUp {
@@ -63,25 +63,8 @@ func TestChooseMode(t *testing.T) {
 		}
 	}
 	broken := probe(false, true)
-	broken.Runtime = func() (Runtime, bool, error) { return Runtime{}, false, errors.New("unreadable marker") }
+	broken.Runtime = func() (run.Runtime, bool, error) { return run.Runtime{}, false, errors.New("unreadable marker") }
 	if _, _, err := Choose(ctx, ModeAuto, broken); err == nil {
 		t.Error("an unreadable marker fell through to Docker")
-	}
-}
-
-func TestRuntimeMarker(t *testing.T) {
-	dir := t.TempDir()
-	name := filepath.Join(dir, "RUNTIME")
-	if _, ok, err := ReadRuntime(name); ok || err != nil {
-		t.Fatalf("no marker: %t %v", ok, err)
-	}
-	os.WriteFile(name, []byte("warmctl=v2.0.0-beta.4\nbase=vllm/vllm-openai@sha256:ad9d\n"), 0o644)
-	rt, ok, err := ReadRuntime(name)
-	if !ok || err != nil || rt.Warmctl != "v2.0.0-beta.4" || rt.Base != "vllm/vllm-openai@sha256:ad9d" {
-		t.Fatalf("marker: %+v %t %v", rt, ok, err)
-	}
-	os.WriteFile(name, []byte("base=x\n"), 0o644)
-	if _, ok, err := ReadRuntime(name); ok || err == nil {
-		t.Fatalf("a marker without the version: %t %v", ok, err)
 	}
 }

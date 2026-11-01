@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/config"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/gateway"
 	"github.com/TensorRails/warmctl/v2/internal/host"
@@ -25,6 +28,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/run"
 	"github.com/TensorRails/warmctl/v2/internal/snapshot"
 	"github.com/TensorRails/warmctl/v2/internal/store"
+	"github.com/TensorRails/warmctl/v2/internal/zframes"
 )
 
 // DefaultState is where warmctl keeps its store, runs and instances.
@@ -39,6 +43,7 @@ type common struct {
 	state, dockerSock, progress, criu, helper, scratch, cudaExec, cudaBackend string
 	noVerify, cpuTest                                                         bool
 	threads                                                                   int
+	dmtcp                                                                     dmtcp.Tools
 }
 
 func (c *common) register(fs *flag.FlagSet) {
@@ -56,6 +61,9 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.BoolVar(&c.noVerify, "no-verify", false, "canary only warns")
 	fs.IntVar(&c.threads, "threads", 0, "pool copy threads per rank (default 4)")
 	fs.BoolVar(&c.cpuTest, "test-cpu", false, "end-to-end test on a CPU host: no GPU devices, no io_uring check")
+	fs.StringVar(&c.dmtcp.Dir, "dmtcp-dir", dmtcp.DefaultDir, "directory of DMTCP's programs, for the dmtcp backend")
+	fs.StringVar(&c.dmtcp.Plugin, "dmtcp-plugin", dmtcp.DefaultPlugin,
+		"warmctl's fdkeep DMTCP plugin, for the dmtcp backend")
 }
 
 // parse accepts the positional argument before, after or between the
@@ -97,6 +105,12 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer, vers
 	fs.Int64Var(&o.PartBytes, "part-bytes", 1<<30, "size of a weights part")
 	fs.DurationVar(&o.ReadyTimeout, "ready-timeout", 90*time.Minute, "how long the engine may take to load")
 	fs.StringVar(&o.Cuinterpose, "cuinterpose", "", "cuInterpose build directory (default: cuinterpose/ next to warmctl)")
+	fs.BoolVar(&o.InPlace, "in-place", false, "bake in this container, without Docker (a pod without privileges: "+
+		"docs/dmtcp.md)")
+	fs.StringVar(&o.Backend, "backend", host.BackendAuto, "how the process tree is snapshotted: "+
+		"auto (DMTCP in place, else CRIU), criu or dmtcp")
+	fs.BoolVar(&o.Compress, "compress", false, "store the process images and weights as zstd frames, for a snapshot "+
+		"restored from network storage (up decodes them as it stages a local copy)")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -110,7 +124,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer, vers
 	o.ModelDir, _ = filepath.Abs(o.ModelDir)
 	o.Set, o.ProfileDirs, o.StateDir, o.DockerSocket = sets, dirs, c.state, c.dockerSock
 	o.CRIU, o.CUDACheckpoint, o.NoVerify, o.Threads, o.Version = c.criu, c.helper, c.noVerify, c.threads, version
-	o.CPUTest, o.CUDABackend = c.cpuTest, c.cudaBackend
+	o.CPUTest, o.CUDABackend, o.DMTCP = c.cpuTest, c.cudaBackend, c.dmtcp
 	o.Progress = run.NewProgress(stdout, c.progress)
 	m, err := snapshot.Run(ctx, o)
 	if err != nil {
@@ -167,6 +181,7 @@ func runUp(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	o.StateDir, o.DockerSocket, o.CUDAExecution, o.NoVerify = c.state, c.dockerSock, c.cudaExec, c.noVerify
 	o.CRIU, o.CUDACheckpoint, o.Threads, o.Serve, o.CPUTest = c.criu, c.helper, c.threads, true, c.cpuTest
+	o.DMTCP = c.dmtcp
 	o.CUDABackend = c.cudaBackend
 	if err := restore.Run(ctx, o); err != nil {
 		o.Progress.Printf("up failed: %v", err)
@@ -280,18 +295,24 @@ func registerUp(fs *flag.FlagSet, o *restore.Options) *string {
 		restore.DefaultPodListen)
 }
 
-// chooseMode decides between a host restore and one in place. In place it
-// opens the gateway before anything is pulled, so a pod's probes get 503
-// rather than no answer, and takes the GPUs the device plugin gave the pod.
-func chooseMode(ctx context.Context, fs *flag.FlagSet, o *restore.Options, mode, sock string) (*restore.Gate, error) {
-	inPlace, reason, err := restore.Choose(ctx, mode, restore.Probe{
-		Runtime: func() (restore.Runtime, bool, error) { return restore.ReadRuntime(restore.RuntimeFile) },
+// hostProbe is what restore.Choose looks at on this host: the runtime
+// image's marker, Docker at sock, signs of a Kubernetes pod.
+func hostProbe(sock string) restore.Probe {
+	return restore.Probe{
+		Runtime: func() (run.Runtime, bool, error) { return run.ReadRuntime(run.RuntimeFile) },
 		Docker: func(ctx context.Context) error {
 			_, err := docker.New(ctx, sock)
 			return err
 		},
 		Kubernetes: restore.KubernetesSigns,
-	})
+	}
+}
+
+// chooseMode decides between a host restore and one in place. In place it
+// opens the gateway before anything is pulled, so a pod's probes get 503
+// rather than no answer, and takes the GPUs the device plugin gave the pod.
+func chooseMode(ctx context.Context, fs *flag.FlagSet, o *restore.Options, mode, sock string) (*restore.Gate, error) {
+	inPlace, reason, err := restore.Choose(ctx, mode, hostProbe(sock))
 	if err != nil || !inPlace {
 		return nil, err
 	}
@@ -324,6 +345,11 @@ func pullForUp(ctx context.Context, ref string, o *restore.Options, state string
 		o.ID = repoName(ref)
 	}
 	po.Check = func(m manifest.Manifest) error {
+		// Of an index's entries, the first this host can restore: CRIU's
+		// where CRIU runs, else DMTCP's.
+		if err := restore.CanRestore(m, o.InPlace, o.DMTCP); err != nil {
+			return err
+		}
 		gpus, err := restore.CheckHost(ctx, m.Hardware, o.GPUs, filepath.Join(state, "locks"))
 		if err == nil && o.GPUs == "" {
 			o.GPUs = indices(gpus)
@@ -407,18 +433,58 @@ func runVerify(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	for _, f := range m.Files {
 		name := filepath.Join(dir, filepath.FromSlash(f.Path))
 		info, err := os.Stat(name)
-		if err != nil || info.Size() != f.Size {
+		if err != nil || info.Size() != f.Stored() {
 			return fmt.Errorf("%s: missing or wrong size", f.Path)
 		}
 		if *deep {
-			sum, _, err := store.HashFile(ctx, name)
-			if err != nil || sum != f.SHA256 {
+			sum, err := fileSum(ctx, name, f)
+			if err != nil {
+				return fmt.Errorf("%s: %w", f.Path, err)
+			}
+			if sum != f.SHA256 {
 				return fmt.Errorf("%s: content differs", f.Path)
 			}
 		}
 	}
 	fmt.Fprintf(stdout, "ok %s (%d files)\n", snapshot.Describe(m), len(m.Files))
 	return nil
+}
+
+func runCompress(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("compress", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("compress needs a snapshot directory and a new directory for the compressed copy")
+	}
+	start := time.Now()
+	m, err := snapshot.Compress(ctx, fs.Arg(0), fs.Arg(1))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "compressed %s into %s: %.2f GiB stored as %.2f GiB in %.1fs\n", fs.Arg(0), fs.Arg(1),
+		float64(m.Bytes())/(1<<30), float64(m.StoredBytes())/(1<<30), time.Since(start).Seconds())
+	return nil
+}
+
+// fileSum is the SHA-256 of f's own bytes, which name stores as they are or
+// encoded.
+func fileSum(ctx context.Context, name string, f manifest.File) (string, error) {
+	switch f.Encoding {
+	case "":
+		sum, _, err := store.HashFile(ctx, name)
+		return sum, err
+	case manifest.EncodingZframes:
+		h := sha256.New()
+		if err := zframes.DecodeFile(ctx, name, f.Frames, f.Size, f.Split, h); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(h.Sum(nil)), nil
+	default:
+		return "", fmt.Errorf("encoding %q unknown to this warmctl", f.Encoding)
+	}
 }
 
 // recordSnapshot remembers a published snapshot for gc.

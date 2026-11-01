@@ -13,10 +13,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/agent"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/gateway"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
+	"github.com/TensorRails/warmctl/v2/internal/oci"
 	"github.com/TensorRails/warmctl/v2/internal/run"
 )
 
@@ -51,6 +54,8 @@ type Options struct {
 	InPlace bool
 	// RunDir, in place, holds the agent's config, sockets and CRIU work.
 	RunDir string
+	// DMTCP restarts a snapshot the dmtcp backend took.
+	DMTCP dmtcp.Tools
 	// Gate, in place, is the gateway, opened before the pull.
 	Gate *Gate
 	// Arrival, when set, is the pull still filling Snapshot: the restore
@@ -94,8 +99,15 @@ type restore struct {
 	// pulling is the engine image's pull that runs while the snapshot
 	// still arrives.
 	pulling chan imagePull
+	// weights ends the wait for the weights lane while the engine already
+	// reloads the parts that have arrived (Launch.ReloadWaits).
+	weights chan error
+	// pod makes this container a receiver, in place.
+	pod podSetup
 	// mounts are a pod restore's bind mounts.
 	mounts []string
+	// owns is a pod restore's hold on the container (run.LockContainer).
+	owns *run.Lock
 }
 
 // Instance is <state>/restores/<id>/instance.json: what `warmctl stop`
@@ -138,7 +150,15 @@ func Run(ctx context.Context, o Options) error {
 	return r.serve(ctx)
 }
 
-func (r *restore) read(context.Context) error {
+func (r *restore) read(ctx context.Context) error {
+	if r.o.InPlace {
+		// First: a run in place owns the container, and the stage below
+		// would replace a copy another up of this snapshot restores from.
+		var err error
+		if r.owns, err = run.LockContainer(); err != nil {
+			return err
+		}
+	}
 	r.snapshot = r.o.Snapshot
 	if r.o.Arrival != nil {
 		r.m = r.o.Arrival.Manifest()
@@ -153,12 +173,148 @@ func (r *restore) read(context.Context) error {
 	}
 	r.p.Printf("snapshot %s: profile %s, %d ranks, %.2f GiB", r.m.ID, r.m.Profile.ID, r.m.Launch.Ranks,
 		float64(r.m.Bytes())/(1<<30))
+	if onFUSE(r.snapshot) || r.m.Encoded() {
+		return r.stage(ctx)
+	}
 	return nil
 }
 
+// stage restores a snapshot on a FUSE file system, or one stored encoded,
+// from a local copy that Stage makes while the restore runs: the copy is the
+// restore's Arrival, as a pull is, so the process restore starts once its
+// files are in and the weights keep coming. A complete copy from an earlier
+// up is reused.
+func (r *restore) stage(ctx context.Context) error {
+	if err := run.CheckID(r.m.ID); err != nil {
+		return fmt.Errorf("snapshot id: %w", err)
+	}
+	dst := filepath.Join(r.o.StateDir, "staged", r.m.ID)
+	raw, err := os.ReadFile(filepath.Join(r.snapshot, "manifest.json"))
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	// Every up of the snapshot on this host shares the copy: one makes it,
+	// and another waits for it rather than removing it under the first.
+	lock, err := run.WaitLock(ctx, dst+".lock", func() {
+		r.p.Printf("another up is staging %s; waiting for its copy", dst)
+	})
+	if err != nil {
+		return err
+	}
+	if staged(dst, raw) {
+		lock.Release()
+		r.p.Printf("snapshot staged: restoring from the complete copy in %s", dst)
+		r.snapshot = dst
+		return nil
+	}
+	if room, err := r.roomToStage(dst); err != nil || !room {
+		lock.Release()
+		return err
+	}
+	a := oci.NewArrivals()
+	a.Begin(dst, r.m, raw)
+	src, start := r.snapshot, time.Now()
+	go func() {
+		n, err := Stage(ctx, src, dst, r.m, a.Arrived)
+		if err != nil {
+			err = fmt.Errorf("copy to %s: %w", dst, err)
+		} else {
+			seconds := time.Since(start).Seconds()
+			decoded := ""
+			if r.m.Encoded() {
+				decoded = fmt.Sprintf(", %.2f GiB decoded", float64(r.m.Bytes())/(1<<30))
+			}
+			r.p.Printf("snapshot staged: read %.2f GiB in %.1fs (%.2f GiB/s)%s into %s", float64(n)/(1<<30), seconds,
+				float64(n)/(1<<30)/seconds, decoded, dst)
+		}
+		lock.Release()
+		a.End(err)
+	}()
+	r.p.Printf("snapshot staged in %s while it restores", dst)
+	r.o.Arrival, r.snapshot = a, dst
+	return nil
+}
+
+// roomToStage says whether dst's file system holds the decoded snapshot,
+// an incomplete copy there removed first.
+func (r *restore) roomToStage(dst string) (bool, error) {
+	if err := os.RemoveAll(dst); err != nil {
+		return false, err
+	}
+	info, err := statTree(filepath.Dir(dst))
+	if err != nil {
+		return true, nil // no statfs here: let the copy find out
+	}
+	room, err := stageRoom(filepath.Dir(dst), info.Free, r.m.Bytes(), r.m.Encoded())
+	if !room && err == nil {
+		r.p.Printf("warning: %s has %s free, a local copy needs %s: restoring from %s as it is",
+			filepath.Dir(dst), gib(info.Free), gib(r.m.Bytes()), r.snapshot)
+	}
+	return room, err
+}
+
+// stageRoom decides a stage into dir with free bytes of need. Without room,
+// a snapshot stored as it is restores from where it is, as before staging
+// (slower on FUSE), and an encoded one fails now rather than at ENOSPC
+// minutes into the copy.
+func stageRoom(dir string, free, need int64, encoded bool) (bool, error) {
+	switch {
+	case free >= need:
+		return true, nil
+	case encoded:
+		return false, fmt.Errorf("%s has %s free and the snapshot decodes to %s there: free space, or give "+
+			"--state-dir a larger disk", dir, gib(free), gib(need))
+	}
+	return false, nil
+}
+
+// CanRestore says whether this host brings back a tree m's backend dumped,
+// in place or through Docker, before anything is pulled. A receiver
+// container gets CRIU's capabilities from Docker; in place, CRIU needs a
+// container that may checkpoint. A DMTCP snapshot restarts only in place,
+// in a container like the one it was taken in, with DMTCP installed.
+func CanRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools) error {
+	return canRestore(m, inPlace, tools, host.ProbeBackend)
+}
+
+func canRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools,
+	probeHost func() (host.BackendProbe, error)) error {
+	switch b := m.Process.BackendName(); b {
+	case manifest.BackendCRIU:
+		if !inPlace {
+			return nil
+		}
+		probe, err := probeHost()
+		if err != nil {
+			return err
+		}
+		if why := probe.CRIUReason(); why != "" {
+			// The guidance a pod gets from checkPod too (docs/kubernetes.md).
+			return fmt.Errorf("a CRIU snapshot restores in place only in a privileged container (%s): "+
+				"CRIU and the mounts need privileged: true", why)
+		}
+		return nil
+	case manifest.BackendDMTCP:
+		if !inPlace {
+			return errors.New("a DMTCP snapshot restarts in place (--mode in-place), in a container like the " +
+				"one it was taken in")
+		}
+		return tools.Check()
+	default:
+		return fmt.Errorf("unknown snapshot backend %q", b)
+	}
+}
+
 func (r *restore) preflight(ctx context.Context) error {
+	if err := CanRestore(r.m, r.o.InPlace, r.o.DMTCP); err != nil {
+		return err
+	}
 	if r.o.InPlace {
-		if err := r.checkPod(); err != nil {
+		r.pod = r.podSetup()
+		if err := r.pod.check(); err != nil {
 			return err
 		}
 	}
@@ -288,7 +444,12 @@ func (r *restore) cleanup() {
 	}
 	logs := filepath.Join(r.o.StateDir, "logs", r.o.ID)
 	if r.c != nil {
-		_ = r.c.Stop(20 * time.Second)
+		grace := agent.Grace
+		if r.o.InPlace {
+			// No container's teardown ends the engine: the agent must.
+			grace = agent.StopGrace
+		}
+		_ = r.c.Stop(grace)
 		if !r.o.InPlace {
 			_ = os.MkdirAll(logs, 0o755)
 			r.c.SaveLogs(filepath.Join(logs, "agent.log"))
@@ -296,10 +457,13 @@ func (r *restore) cleanup() {
 		r.c.Remove()
 	}
 	if r.o.InPlace {
-		r.unmountPod()
+		if r.pod != nil {
+			r.pod.undo()
+		}
 		if r.dir != "" {
 			_ = claimDir(r.dir)
 		}
+		r.owns.Release()
 	} else if r.dir != "" {
 		_ = os.MkdirAll(logs, 0o755)
 		_ = run.CopyFile(filepath.Join(r.dir, "workspace/logs/engine.log"), filepath.Join(logs, "engine.log"), 0o644)

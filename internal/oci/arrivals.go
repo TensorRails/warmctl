@@ -90,20 +90,24 @@ func (a *Arrivals) Done(ctx context.Context) error {
 	}
 }
 
-func (a *Arrivals) begin(dir string, m manifest.Manifest, raw []byte) {
+// Begin says where the files arrive and what they are: dir, the manifest m
+// and the bytes raw it was parsed from.
+func (a *Arrivals) Begin(dir string, m manifest.Manifest, raw []byte) {
 	if a != nil {
 		a.dir, a.m, a.raw = dir, m, raw
 		close(a.begun)
 	}
 }
 
-func (a *Arrivals) arrived(p string) {
+// Arrived marks the file p, relative to Dir, complete.
+func (a *Arrivals) Arrived(p string) {
 	if a != nil {
 		a.update(func() { a.in[p] = true })
 	}
 }
 
-func (a *Arrivals) end(err error) {
+// End ends the arrivals, with the error that stopped them or nil.
+func (a *Arrivals) End(err error) {
 	if a != nil {
 		a.update(func() { a.ended, a.err = true, err })
 	}

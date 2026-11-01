@@ -5,7 +5,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,12 +21,8 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/criu"
 	"github.com/TensorRails/warmctl/v2/internal/cuda"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
-	"github.com/TensorRails/warmctl/v2/internal/process"
 	"github.com/TensorRails/warmctl/v2/internal/runtimefs"
 )
-
-// Grace is how long a stopping engine gets before the container goes.
-const Grace = 20 * time.Second
 
 type agent struct {
 	cfg Config
@@ -38,7 +33,8 @@ type agent struct {
 	step      string
 	failed    error
 	finishing bool
-	frozen    *criu.Frozen
+	// tree snapshots the engine's process tree: CRIU or DMTCP.
+	tree tree
 	// interposed is whether the engine runs under cuInterpose, and why.
 	interposed bool
 	ipcReason  string
@@ -62,6 +58,10 @@ func Run(ctx context.Context, configPath string, log io.Writer) error {
 	}
 	cfg.CRIU, cfg.CUDACheckpoint = tool(cfg.CRIU), tool(cfg.CUDACheckpoint)
 	a := &agent{cfg: cfg, log: log, pos: -1, done: make(chan struct{}), exited: make(chan struct{})}
+	if a.tree, err = newTree(cfg, a.logf); err != nil {
+		return err
+	}
+	defer a.tree.release()
 	if cfg.Hostname != "" {
 		if err := ownHostname(cfg.Hostname); err != nil {
 			return err
@@ -202,14 +202,9 @@ func (a *agent) run(ctx context.Context, step string, args json.RawMessage) (any
 	case "restore/cuda":
 		return a.cudaRestore(ctx, args)
 	case "snapshot/freeze":
-		f, err := criu.Freeze(ctx, a.enginePID())
-		if err != nil {
-			return nil, err
-		}
-		a.frozen = f
-		return FreezeResult{Tree: f.Tree, References: references(f.Tree, a.cfg.Watch)}, nil
+		return a.tree.freeze(ctx, a.enginePID())
 	case "snapshot/dump":
-		return a.dump(ctx)
+		return a.tree.dump(ctx, a.enginePID(), a.exited)
 	case "snapshot/fs":
 		return a.archive(ctx)
 	case "snapshot/finish":
@@ -220,7 +215,7 @@ func (a *agent) run(ctx context.Context, step string, args json.RawMessage) (any
 	case "restore/criu":
 		return a.restore(ctx)
 	case "restore/thaw":
-		return nil, a.frozen.Thaw(ctx)
+		return nil, a.tree.thaw(ctx)
 	}
 	return nil, fmt.Errorf("no step %q in %s mode", step, a.cfg.Mode)
 }
@@ -254,21 +249,24 @@ func (a *agent) status() Status {
 	return s
 }
 
-// startEngine moves the PID allocator to the floor and starts the engine
-// in its own session, under cuInterpose when ipc asks for it, logging into
-// a carried tree so the restored process finds its log file where it left
-// it.
+// startEngine starts the engine in its own session, under the tree's
+// backend (CRIU's PID floor, DMTCP's dmtcp_launch) and under cuInterpose when
+// ipc asks for it, logging into a carried tree so the restored process finds
+// its log file where it left it.
 func (a *agent) startEngine(ctx context.Context) error {
 	var err error
 	if a.interposed, a.ipcReason, err = a.chooseIPC(ctx); err != nil {
 		return err
 	}
-	argv := a.cfg.Argv
-	if a.interposed {
-		argv = interpose.Wrap(argv)
-	}
-	if err := criu.ReservePIDFloor(); err != nil {
+	argv, env := a.cfg.Argv, a.cfg.Env
+	if argv, env, err = a.tree.launch(ctx, argv, env); err != nil {
 		return err
+	}
+	// The launcher goes outside dmtcp_launch, which keeps the LD_PRELOAD it
+	// was started with for every program the tree execs: one started inside
+	// would lose the interposer in a spawned process.
+	if a.interposed {
+		argv = interpose.Wrap(a.ipcBuild(), argv)
 	}
 	if err := os.MkdirAll(filepath.Dir(a.cfg.Log), 0o755); err != nil {
 		return err
@@ -281,8 +279,8 @@ func (a *agent) startEngine(ctx context.Context) error {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	// No env in the config: the engine inherits the container's, which is
 	// the image's environment plus the profile's.
-	if len(a.cfg.Env) > 0 {
-		cmd.Env = a.cfg.Env
+	if len(env) > 0 {
+		cmd.Env = env
 	}
 	cmd.Dir, cmd.Stdout, cmd.Stderr = a.cfg.Dir, log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -293,9 +291,9 @@ func (a *agent) startEngine(ctx context.Context) error {
 	a.engine = cmd.Process.Pid
 	a.mu.Unlock()
 	go func() { a.setExit(cmd.Wait()) }()
-	if cmd.Process.Pid < criu.PIDFloor {
+	if err := a.tree.started(cmd.Process.Pid); err != nil {
 		_ = cmd.Process.Kill()
-		return fmt.Errorf("engine PID %d is below the floor %d", cmd.Process.Pid, criu.PIDFloor)
+		return err
 	}
 	a.logf("engine started as PID %d (ipc: interposed %t, %s): %s", cmd.Process.Pid, a.interposed, a.ipcReason,
 		strings.Join(argv, " "))
@@ -326,6 +324,10 @@ func (a *agent) cudaCheckpoint(ctx context.Context) (any, error) {
 		}
 		name = b.Name()
 	}
+	// The snapshot records owners by the PIDs the workers report.
+	if owners, err = a.tree.snapshotPIDs(ctx, owners); err != nil {
+		return nil, err
+	}
 	return CUDAResult{Owners: owners, Seconds: time.Since(start).Seconds(), Backend: name}, nil
 }
 
@@ -346,8 +348,16 @@ func (a *agent) cudaRestore(ctx context.Context, raw json.RawMessage) (any, erro
 		if err != nil {
 			return nil, err
 		}
-		s := cuda.NewSession(b, args.Owners)
-		s.Parallel, s.Concurrent = args.Parallel, args.Concurrent
+		owners, err := a.tree.hostPIDs(ctx, args.Owners)
+		if err != nil {
+			return nil, err
+		}
+		parallel, err := a.tree.hostPIDs(ctx, args.Parallel)
+		if err != nil {
+			return nil, err
+		}
+		s := cuda.NewSession(b, owners)
+		s.Parallel, s.Concurrent = parallel, args.Concurrent
 		if err := s.Restore(ctx, args.DeviceMap); err != nil {
 			return nil, err
 		}
@@ -405,43 +415,6 @@ func openPaths(pid int) []string {
 	return paths
 }
 
-// dump checkpoints the frozen tree. CRIU kills it afterwards.
-func (a *agent) dump(ctx context.Context) (any, error) {
-	if a.frozen == nil {
-		return nil, errors.New("the tree is not frozen")
-	}
-	images, work := filepath.Join(a.cfg.Out, "criu"), filepath.Join(a.cfg.Out, "criu-work")
-	if err := os.MkdirAll(images, 0o755); err != nil {
-		return nil, err
-	}
-	if err := criu.PrepareWork(work); err != nil {
-		return nil, err
-	}
-	version := criuVersion(ctx, a.cfg.CRIU)
-	start := time.Now()
-	if err := criu.Dump(ctx, a.cfg.CRIU, version, a.enginePID(), images, work); err != nil {
-		return nil, err
-	}
-	seconds := time.Since(start).Seconds()
-	select {
-	case <-a.exited:
-	case <-time.After(30 * time.Second):
-		return nil, errors.New("the engine outlived its dump")
-	}
-	_ = a.frozen.Close()
-	a.frozen = nil
-	return DumpResult{Seconds: seconds, Version: version}, nil
-}
-
-func criuVersion(ctx context.Context, program string) string {
-	out, err := process.Capture(ctx, 10*time.Second, program, "--version")
-	if err != nil {
-		return ""
-	}
-	line, _, _ := strings.Cut(out.Stdout, "\n")
-	return strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
-}
-
 // archive takes the trees after the dump: the tree is gone, nothing writes,
 // and the link_remap files CRIU left next to deleted-but-open files are
 // ordinary members.
@@ -488,33 +461,21 @@ func (a *agent) install(ctx context.Context) (any, error) {
 	return res, nil
 }
 
+// restore brings the tree back; the agent ends when its root exits.
 func (a *agent) restore(ctx context.Context) (any, error) {
-	start := time.Now()
-	f, err := criu.RestoreStopped(ctx, a.cfg.CRIU, a.cfg.Images, a.cfg.Work, a.cfg.Root, a.cfg.MaxID)
+	res, tree, err := a.tree.restore(ctx)
 	if err != nil {
 		return nil, err
 	}
-	a.frozen = f
 	a.mu.Lock()
-	a.engine = f.Tree.Root
+	a.engine = tree.root
 	a.mu.Unlock()
-	go a.watch(f.RootFD())
-	return RestoreResult{Tree: f.Tree, Seconds: time.Since(start).Seconds()}, nil
-}
-
-// watch ends the agent when the restored root exits: its pidfd turns
-// readable. PID 1 (docker-init or tini), its new parent, reaps it.
-func (a *agent) watch(fd int) {
-	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	for {
-		_, err := unix.Poll(fds, -1)
-		if err == nil || !errors.Is(err, unix.EINTR) {
-			break
-		}
-	}
-	a.setExit(errors.New("engine exited"))
-	a.logf("restored engine exited")
-	a.finish()
+	go func() {
+		a.setExit(tree.wait())
+		a.logf("restored engine exited")
+		a.finish()
+	}()
+	return res, nil
 }
 
 // shutdown asks the engine to stop and gives it Grace; the container's
@@ -530,12 +491,7 @@ func (a *agent) shutdown() {
 		return
 	}
 	a.logf("stopping engine %d", pid)
-	if a.frozen != nil {
-		_ = a.frozen.Thaw(context.Background())
-		_ = a.frozen.Signal(unix.SIGTERM)
-	} else {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
-	}
+	a.tree.stop(pid)
 	select {
 	case <-a.exited:
 	case <-time.After(Grace):

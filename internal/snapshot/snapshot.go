@@ -14,6 +14,7 @@ import (
 
 	"github.com/TensorRails/warmctl/v2"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
@@ -49,6 +50,19 @@ type Options struct {
 	CPUTest  bool
 	Version  string
 	Progress *run.Progress
+	// InPlace bakes in this container, without Docker: the engine runs as a
+	// child of the agent, itself a child of this process, and sees real
+	// paths (docs/dmtcp.md).
+	InPlace bool
+	// Backend snapshots the process tree in place: auto, criu or dmtcp. A
+	// donor container always runs CRIU.
+	Backend string
+	// Compress stores the process images, runtime trees and weights in Output
+	// as zstd frames, for a snapshot restored from network storage: about
+	// 2.8x fewer bytes of images and 1.45x of BF16 weights to read, decoded
+	// in parallel as up stages its copy.
+	Compress bool
+	DMTCP    dmtcp.Tools
 }
 
 type bake struct {
@@ -57,13 +71,18 @@ type bake struct {
 	loader profile.Loader
 	table  profile.HardwareTable
 	launch profile.Launch
+	// defaults and prof are what launch was resolved from, kept for
+	// checkPeers to resolve it again.
+	defaults, prof profile.Profile
 	// ipcDir holds the cuInterpose build the donor mounts, when ipc is not
 	// native; ipc is what the donor decided.
-	ipcDir   string
-	ipc      agent.IPCResult
-	row      profile.Hardware
-	gpus     []host.GPU
-	lease    *host.Lease
+	ipcDir string
+	ipc    agent.IPCResult
+	row    profile.Hardware
+	gpus   []host.GPU
+	lease  *host.Lease
+	// owns is an in-place bake's hold on the container (run.LockContainer).
+	owns     *run.Lock
 	topology string
 	topoSHA  string
 	dk       *docker.Client
@@ -85,6 +104,8 @@ type bake struct {
 	frozen      agent.FreezeResult
 	dumped      agent.DumpResult
 	manifest    manifest.Manifest
+	// backend snapshots the process tree: agent.BackendCRIU or BackendDMTCP.
+	backend string
 }
 
 // Run bakes and returns the published manifest.
@@ -112,6 +133,17 @@ func Run(ctx context.Context, o Options) (manifest.Manifest, error) {
 }
 
 func (b *bake) resolve(context.Context) error {
+	if b.o.InPlace {
+		// First, as up does: a run in place owns the container, and the
+		// preflight below already probes its GPUs.
+		var err error
+		if b.owns, err = run.LockContainer(); err != nil {
+			return err
+		}
+	}
+	if err := b.chooseBackend(); err != nil {
+		return err
+	}
 	b.loader = profile.Loader{Assets: warmctl.Assets, Dirs: b.o.ProfileDirs}
 	defaults, err := b.loader.Defaults()
 	if err != nil {
@@ -132,6 +164,7 @@ func (b *bake) resolve(context.Context) error {
 	if b.launch, err = profile.Resolve(defaults, p); err != nil {
 		return err
 	}
+	b.defaults, b.prof = defaults, p
 	b.table, err = b.loader.Hardware()
 	b.p.Printf("profile %s: %d ranks, %d graph sizes, %d warmup cases", b.launch.Profile.ID,
 		b.launch.Profile.Parallel.Ranks(), len(b.launch.CaptureSizes), len(b.launch.WarmupCases()))
@@ -140,8 +173,13 @@ func (b *bake) resolve(context.Context) error {
 
 func (b *bake) preflight(ctx context.Context) error {
 	if disabled, err := host.IOUringDisabled(); !b.o.CPUTest && (err != nil || disabled != 2) {
-		return errors.New("kernel.io_uring_disabled must be 2 (sysctl -w kernel.io_uring_disabled=2): " +
-			"CRIU cannot dump io_uring")
+		if b.backend != agent.BackendDMTCP {
+			return errors.New("kernel.io_uring_disabled must be 2 (sysctl -w kernel.io_uring_disabled=2): " +
+				"CRIU cannot dump io_uring")
+		}
+		// A container that may not run CRIU may not set the sysctl either.
+		b.p.Printf("warning: kernel.io_uring_disabled is %d, not 2 (%v): the engine runs with UV_USE_IO_URING=0, "+
+			"and a process that sets up io_uring anyway will not restart", disabled, err)
 	}
 	all, err := host.Inventory(ctx)
 	if err != nil {
@@ -169,10 +207,74 @@ func (b *bake) preflight(ctx context.Context) error {
 	if b.topology, b.topoSHA, err = host.Topology(ctx, b.gpus); err != nil {
 		return err
 	}
+	if err := b.checkPeers(ctx); err != nil {
+		return err
+	}
+	if b.o.InPlace {
+		return b.inPlaceImage()
+	}
 	if b.dk, err = docker.New(ctx, b.o.DockerSocket); err != nil {
 		return err
 	}
 	return b.dk.CheckInit(ctx)
+}
+
+// inPlaceImage names the image an in-place engine runs in: the runtime
+// image's base, which a receiver pod compares with its own. Without the
+// runtime image nothing names it, and the manifest keeps the profile's.
+func (b *bake) inPlaceImage() error {
+	rt, ok, err := run.ReadRuntime(run.RuntimeFile)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		b.p.Printf("warning: no %s: nothing names this container's image; the manifest records the profile's, %s",
+			run.RuntimeFile, b.launch.Profile.Image)
+		return nil
+	}
+	b.launch.Profile.Image = rt.Base
+	return nil
+}
+
+// chooseBackend decides how the tree is dumped (bakeBackend).
+func (b *bake) chooseBackend() error {
+	backend, err := bakeBackend(b.o.Backend, b.o.InPlace)
+	if err != nil {
+		return err
+	}
+	b.backend = backend
+	if backend == agent.BackendDMTCP {
+		b.p.Printf("process snapshot backend: dmtcp (in place)")
+		return b.o.DMTCP.Check()
+	}
+	return nil
+}
+
+// bakeBackend is the backend of a bake asked for want (--backend): CRIU in
+// the donor container warmctl makes, DMTCP in place. An in-place CRIU bake
+// is not supported yet: the bake links the model in (run.Place), so CRIU
+// would record files under the link's target, while an in-place CRIU
+// restore mounts the model at its mount path.
+func bakeBackend(want string, inPlace bool) (string, error) {
+	switch want {
+	case "", host.BackendAuto:
+		if inPlace {
+			return agent.BackendDMTCP, nil
+		}
+		return agent.BackendCRIU, nil
+	case host.BackendCRIU:
+		if inPlace {
+			return "", errors.New("backend criu: an in-place bake runs DMTCP, CRIU in place is not supported yet; " +
+				"bake through Docker (without --in-place)")
+		}
+		return agent.BackendCRIU, nil
+	case host.BackendDMTCP:
+		if !inPlace {
+			return "", errors.New("backend dmtcp: only an in-place bake (--in-place) runs DMTCP")
+		}
+		return agent.BackendDMTCP, nil
+	}
+	return "", fmt.Errorf("unknown backend %q: auto, criu or dmtcp", want)
 }
 
 // Hardware finds the hardware row of the selected GPUs: all of one model,
@@ -212,15 +314,39 @@ func (b *bake) cleanup() {
 	logs := filepath.Join(b.o.StateDir, "logs", b.o.ID)
 	if b.c != nil {
 		_ = os.MkdirAll(logs, 0o755)
+		if b.o.InPlace {
+			// No container's teardown ends the engine: the agent must.
+			_ = b.c.Stop(agent.StopGrace)
+		}
 		b.c.SaveLogs(filepath.Join(logs, "agent.log"))
 		b.c.Remove()
+	}
+	if b.o.InPlace && b.backend == agent.BackendDMTCP {
+		// The engine and coordinator of an agent killed before its release.
+		quitLeft(b.cfg.DMTCP, b.p)
 	}
 	if b.dir != "" {
 		keepLogs(b.dir, logs)
 		_ = os.RemoveAll(b.dir)
 	}
+	if b.owns != nil && b.c != nil {
+		// In place the engine logged into this container's own /workspace,
+		// which the next run claims.
+		_ = run.CopyFile(EngineLog, filepath.Join(logs, "engine.log"), 0o644)
+	}
 	if b.lease != nil {
 		b.lease.Release()
+	}
+	b.owns.Release()
+}
+
+// quitLeft ends the DMTCP coordinator an in-place agent left running, and
+// the engine connected to it.
+func quitLeft(tools dmtcp.Tools, p *run.Progress) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := tools.QuitLeft(ctx); err != nil {
+		p.Printf("warning: ending the DMTCP coordinator the agent left: %v", err)
 	}
 }
 

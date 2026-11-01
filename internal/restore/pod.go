@@ -9,10 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -24,8 +24,8 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/pyext"
 	"github.com/TensorRails/warmctl/v2/internal/run"
-	"github.com/TensorRails/warmctl/v2/internal/runtimefs"
 	"github.com/TensorRails/warmctl/v2/internal/snapshot"
+	"github.com/TensorRails/warmctl/v2/internal/store"
 )
 
 // Pod defaults.
@@ -70,29 +70,18 @@ func checkInit(comm string, self int) error {
 // checkStatus reads /proc/self/status: the checkpoint capabilities and no
 // seccomp filter, as a receiver container has.
 func checkStatus(status string) error {
-	var eff uint64
-	seccomp := -1
-	for _, line := range strings.Split(status, "\n") {
-		key, value, _ := strings.Cut(line, ":")
-		value = strings.TrimSpace(value)
-		switch key {
-		case "CapEff":
-			eff, _ = strconv.ParseUint(value, 16, 64)
-		case "Seccomp":
-			seccomp, _ = strconv.Atoi(value)
-		}
-	}
+	p := host.ParseStatus(status)
 	var missing []string
 	for _, name := range docker.CheckpointCaps {
-		if eff&(1<<capBits[name]) == 0 {
+		if p.CapEff&(1<<capBits[name]) == 0 {
 			missing = append(missing, name)
 		}
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("the pod lacks %s: CRIU and the mounts need privileged: true", strings.Join(missing, ", "))
 	}
-	if seccomp != 0 {
-		return fmt.Errorf("seccomp mode %d: the pod needs seccompProfile Unconfined", seccomp)
+	if p.Seccomp != 0 {
+		return fmt.Errorf("seccomp mode %d: the pod needs seccompProfile Unconfined", p.Seccomp)
 	}
 	return nil
 }
@@ -244,35 +233,16 @@ func VisibleGPUs(listed []string, inventory []host.GPU) (string, error) {
 
 // podEnv is the agent's environment in a pod: the container's, with the
 // snapshot's launch environment over it, as a receiver container has.
-func podEnv(base []string, launch map[string]string) []string {
-	out := make([]string, 0, len(base)+len(launch))
-	for _, kv := range base {
-		if key, _, _ := strings.Cut(kv, "="); !hasKey(launch, key) {
-			out = append(out, kv)
-		}
-	}
-	keys := make([]string, 0, len(launch))
-	for key := range launch {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		out = append(out, key+"="+launch[key])
-	}
-	return out
-}
-
-func hasKey(m map[string]string, key string) bool {
-	_, ok := m[key]
-	return ok
-}
+func podEnv(base []string, launch map[string]string) []string { return run.MergeEnv(base, launch) }
 
 // engineMounts are what the restored engine finds where the donor had it:
 // the snapshot's Python package, its cuInterpose build (mapped by every
 // interposed process) and the model directory, when there is one to mount.
 func (r *restore) engineMounts(model string) []docker.Mount {
 	mounts := []docker.Mount{{Source: filepath.Join(r.snapshot, "adapter"), Target: pyext.GuestPath, ReadOnly: true}}
-	if r.interposed() {
+	// An engine that mapped a build of its own, the image's (a DMTCP one),
+	// needs none mounted (checkIPCBuild).
+	if r.interposed() && r.m.Process.IPCBuild == "" {
 		mounts = append(mounts, docker.Mount{Source: filepath.Join(r.snapshot, "ipc"), Target: interpose.GuestDir,
 			ReadOnly: true})
 	}
@@ -296,8 +266,38 @@ func podModel(given string, m manifest.Manifest) (string, error) {
 	return "", nil
 }
 
-// checkPod is the pod half of the preflight: what Docker would have given
-// a receiver container, Kubernetes must have given this one.
+// dmtcpModel is the model directory a DMTCP snapshot's pod links in: the
+// donor's own path, the only one it may have. A restart reopens the files
+// the processes held where they were, and an in-place bake linked the model
+// in, so those are under m.Launch.ModelDir rather than the mount path.
+func dmtcpModel(given string, m manifest.Manifest) (string, error) {
+	donor := m.Launch.ModelDir
+	if given != "" && !sameDir(given, donor) {
+		return "", fmt.Errorf("--model-dir %s: a DMTCP snapshot reopens the model's files where the donor had them, "+
+			"in %s: put the model there", given, donor)
+	}
+	if given == "" && !m.Process.NeedsModel {
+		return "", nil
+	}
+	if entries, err := os.ReadDir(donor); err != nil || len(entries) == 0 {
+		return "", fmt.Errorf("the snapshot's processes keep files of the model open in %s, the donor's model "+
+			"directory, and a DMTCP restart reopens them there: put the model at that path", donor)
+	}
+	return donor, nil
+}
+
+// sameDir is whether a and b are one directory.
+func sameDir(a, b string) bool {
+	ia, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	ib, err := os.Stat(b)
+	return err == nil && os.SameFile(ia, ib)
+}
+
+// checkPod is the pod half of the preflight for CRIU: what Docker would
+// have given a receiver container, Kubernetes must have given this one.
 func (r *restore) checkPod() error {
 	comm, _ := os.ReadFile("/proc/1/comm")
 	if err := checkInit(string(comm), os.Getpid()); err != nil {
@@ -337,6 +337,121 @@ func (r *restore) checkPod() error {
 	return r.checkBase()
 }
 
+// dmtcp is whether the snapshot's tree restarts under DMTCP.
+func (r *restore) dmtcp() bool { return r.m.Process.Backend == agent.BackendDMTCP }
+
+// linkDevices names each donor GPU's device node after this pod's GPU of the
+// same rank: DMTCP reopens a descriptor by its path, and the host numbers
+// /dev/nvidiaN in its own order. CUDA itself moves by UUID (the device map).
+func (r *restore) linkDevices() error {
+	here := make([]string, len(r.gpus))
+	for i, g := range r.gpus {
+		dev, err := host.DevicePath(g.PCIBusID)
+		if err != nil {
+			return fmt.Errorf("rank %d: %w", i, err)
+		}
+		here[i] = dev
+	}
+	linked, err := linkDevices(r.m.Hardware.GPUs, here)
+	for _, l := range linked {
+		r.p.Printf("%s", l)
+	}
+	return err
+}
+
+// linkDevices links every donor device node this pod lacks to here[rank],
+// so that DMTCP finds a node to reopen, and returns what it linked. A donor
+// name that is another GPU here stays as it is: the CUDA restore moves each
+// GPU's state by UUID (the device map) and opens that GPU's nodes itself, so
+// the descriptor DMTCP reopened by the name is never the one it uses. On a
+// RunPod pod where Qwen3.8-Flash-Next's rank 2 had been /dev/nvidia7, this
+// pod's rank 3, the weights' fingerprints and the canary matched.
+func linkDevices(donor []manifest.GPU, here []string) ([]string, error) {
+	var linked []string
+	for i, d := range donor {
+		if d.Device == "" || d.Device == here[i] {
+			continue
+		}
+		info, err := os.Lstat(d.Device)
+		switch {
+		case err == nil && info.Mode()&fs.ModeSymlink != 0:
+			// An earlier restore's link, maybe to another GPU of this pod.
+			if target, err := os.Readlink(d.Device); err == nil && target == here[i] {
+				continue
+			}
+		case err == nil:
+			// A node of this pod: the rank's own GPU by another name, or another GPU.
+			continue
+		case !errors.Is(err, fs.ErrNotExist):
+			return linked, err
+		}
+		if err := relink(here[i], d.Device); err != nil {
+			return linked, err
+		}
+		linked = append(linked, fmt.Sprintf("rank %d: %s links to this pod's %s", i, d.Device, here[i]))
+	}
+	return linked, nil
+}
+
+// relink makes path a symbolic link to target, replacing a link there in
+// one rename.
+func relink(target, path string) error {
+	next := path + ".warmctl-link"
+	_ = os.Remove(next)
+	if err := os.Symlink(target, next); err != nil {
+		return err
+	}
+	if err := os.Rename(next, path); err != nil {
+		_ = os.Remove(next)
+		return err
+	}
+	return nil
+}
+
+// checkUnprivileged is the pod half of the preflight for a snapshot the
+// dmtcp backend took: nothing is mounted, no namespace made and no PID
+// moved, so none of a receiver container's privileges is asked for; DMTCP
+// must be here, and linkedPod.claimTree refuses trees it may not take.
+func (r *restore) checkUnprivileged() error {
+	if err := r.o.DMTCP.Check(); err != nil {
+		return err
+	}
+	if _, err := dmtcpModel(r.o.ModelDir, r.m); err != nil {
+		return err
+	}
+	if err := checkIPCBuild(r.m); err != nil {
+		return err
+	}
+	r.warnPod()
+	return r.checkBase()
+}
+
+// checkIPCBuild checks that a DMTCP snapshot's processes find the
+// cuInterpose libraries they mapped where the donor had them, the same
+// bytes (the snapshot's ipc/ copy is their record): the restart maps them
+// again from there.
+func checkIPCBuild(m manifest.Manifest) error {
+	if m.Process.IPCBuild == "" {
+		return nil
+	}
+	want := map[string]string{}
+	for _, f := range m.Files {
+		want[f.Path] = f.SHA256
+	}
+	for _, name := range []string{interpose.Frontend, interpose.Core} {
+		path := filepath.Join(m.Process.IPCBuild, name)
+		sum, _, err := store.HashFile(context.Background(), path)
+		if err == nil && sum != want["ipc/"+name] {
+			err = errors.New("another build")
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %v; the snapshot's processes map the cuInterpose build of the donor's runtime "+
+				"image there: restore with that image", path, err)
+		}
+	}
+	return nil
+}
+
 // checkTrees checks the trees warmctl does not mount itself: /workspace,
 // in the container's own layer or on a volume.
 func (r *restore) checkTrees() error {
@@ -372,13 +487,13 @@ func (r *restore) tmpfs(path string) (int64, bool) {
 }
 
 func (r *restore) checkBase() error {
-	rt, ok, err := ReadRuntime(RuntimeFile)
+	rt, ok, err := run.ReadRuntime(run.RuntimeFile)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		r.p.Printf("warning: no %s: this is not the warmctl runtime image, nothing says what it was built FROM",
-			RuntimeFile)
+			run.RuntimeFile)
 		return nil
 	}
 	return checkImage(rt.Base, r.m.Launch.Image)
@@ -405,17 +520,9 @@ func (r *restore) claimPod() error {
 		return err
 	}
 	for _, t := range agent.DefaultTrees {
-		size, ours := r.tmpfs(t.Path)
-		if !ours {
-			if err := claimDir(t.Path); err != nil {
-				return err
-			}
-			continue
+		if err := r.pod.claimTree(t); err != nil {
+			return err
 		}
-		if err := mountTmpfs(t.Path, size, t.Path == "/tmp"); err != nil {
-			return fmt.Errorf("tmpfs at %s: %w", t.Path, err)
-		}
-		r.mounts = append(r.mounts, t.Path)
 	}
 	for _, d := range []string{"work", "io"} {
 		if err := os.MkdirAll(filepath.Join(r.dir, d), 0o755); err != nil {
@@ -425,71 +532,8 @@ func (r *restore) claimPod() error {
 	return nil
 }
 
-// claimDir makes dir this restore's: it may be empty or hold what an
-// earlier restore left under its mark, which goes; anything else may be
-// the operator's data on a volume and is refused.
-func claimDir(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		entries, err = nil, os.MkdirAll(dir, 0o755)
-	}
-	if err != nil {
-		return err
-	}
-	marked := false
-	for _, e := range entries {
-		marked = marked || e.Name() == runtimefs.Mark
-	}
-	if len(entries) > 0 && !marked {
-		return fmt.Errorf("%s holds files no restore left there (no %s): mount an emptyDir at %s, "+
-			"or leave it to the container's layer", dir, runtimefs.Mark, dir)
-	}
-	for _, e := range entries {
-		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
-			return err
-		}
-	}
-	return os.WriteFile(filepath.Join(dir, runtimefs.Mark), []byte("a warmctl restore's directory\n"), 0o644)
-}
-
-// startPod mounts what the restored engine needs and starts the agent as
-// this process's child.
-func (r *restore) startPod(ctx context.Context) error {
-	model, err := podModel(r.o.ModelDir, r.m)
-	if err != nil {
-		return err
-	}
-	drivers, err := r.driverMounts()
-	if err != nil {
-		return err
-	}
-	if len(drivers) == 0 && !r.o.CPUTest {
-		r.warnDriver()
-	}
-	for _, m := range append(r.engineMounts(model), drivers...) {
-		if err := mountPoint(m.Source, m.Target); err != nil {
-			return err
-		}
-		if err := bindMount(m.Source, m.Target, m.ReadOnly); err != nil {
-			return fmt.Errorf("mount %s at %s: %w", m.Source, m.Target, err)
-		}
-		r.mounts = append(r.mounts, m.Target)
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	r.c, err = run.Spawn(ctx, run.Child{
-		Name: r.o.ID, Argv: []string{self, "agent", "--config", filepath.Join(r.dir, "work", "agent.json")},
-		Env: podEnv(os.Environ(), r.m.Launch.Env), IO: filepath.Join(r.dir, "io"), Log: snapshot.EngineLog,
-		AgentLog: filepath.Join(r.dir, "agent.log"), Output: os.Stderr, Ranks: r.m.Launch.Ranks, NewUTS: true,
-	})
-	if err != nil {
-		return err
-	}
-	r.p.Printf("receiver agent started in this pod")
-	return nil
-}
+// claimDir makes dir this restore's (run.ClaimDir).
+func claimDir(dir string) error { return run.ClaimDir(dir) }
 
 // warnDriver names the driver libraries the dump maps that this pod lacks
 // under the same driver: the NVIDIA runtime put them elsewhere (a CDI spec

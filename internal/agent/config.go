@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/criu"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
 )
 
@@ -15,6 +17,21 @@ import (
 const (
 	ModeSnapshot = "snapshot"
 	ModeRestore  = "restore"
+)
+
+// Grace is how long a stopping engine gets before the container goes.
+const Grace = 20 * time.Second
+
+// StopGrace is how long the host gives an agent it runs as a child, in
+// place, to stop: Grace for the engine, then the backend's release (DMTCP's
+// coordinator), which no container's teardown does for it.
+const StopGrace = Grace + 20*time.Second
+
+// Process snapshot backends: CRIU where the container may run it, DMTCP in
+// containers without the privileges (docs/dmtcp.md).
+const (
+	BackendCRIU  = "criu"
+	BackendDMTCP = "dmtcp"
 )
 
 // Tree is a directory the snapshot carries as a runtimefs archive.
@@ -55,13 +72,21 @@ type Config struct {
 	// IPC is the profile's resolved ipc: native, interpose or auto. Under
 	// interpose or auto the snapshot agent may start the engine under
 	// cuInterpose (docs/interpose.md); IPCCoordinator runs its checkpoints.
+	// IPCBuild is the build the engine maps, interpose.GuestDir when empty.
 	IPC            string `json:"ipc,omitempty"`
 	IPCCoordinator string `json:"ipc_coordinator,omitempty"`
+	IPCBuild       string `json:"ipc_build,omitempty"`
 	// Hostname, when set, is the host name the agent gives the UTS
 	// namespace of its own it was started in, before anything runs: a
 	// restore in place, where the container's host name is the pod's (or,
 	// with hostNetwork, the node's) and the engine ran under a receiver's.
 	Hostname string `json:"hostname,omitempty"`
+	// Backend snapshots the process tree: criu (the default) or dmtcp. Under
+	// dmtcp the engine runs under dmtcp_launch from the start, the tree's
+	// PIDs in results and arguments are DMTCP's virtual ones, and there is no
+	// freeze: DMTCP stops the tree itself.
+	Backend string      `json:"backend,omitempty"`
+	DMTCP   dmtcp.Tools `json:"dmtcp,omitempty"`
 
 	// Snapshot: the engine to start and where results go.
 	Argv []string `json:"argv,omitempty"`
@@ -114,8 +139,11 @@ func abs(paths ...string) bool {
 
 // Validate checks the fields the mode needs.
 func (c Config) Validate() error {
-	if !abs(c.Control) || c.CRIU == "" || len(c.Trees) == 0 {
-		return errors.New("agent: control socket, criu and trees are required")
+	if !abs(c.Control) || len(c.Trees) == 0 {
+		return errors.New("agent: control socket and trees are required")
+	}
+	if err := c.validateBackend(); err != nil {
+		return err
 	}
 	if c.Inference != "" && (!abs(c.Inference) || c.EngineAddr == "") {
 		return errors.New("agent: inference socket needs an absolute path and an engine address")
@@ -128,6 +156,33 @@ func (c Config) Validate() error {
 	if c.IPC != "" && c.IPC != interpose.Native && !abs(c.IPCCoordinator) {
 		return fmt.Errorf("agent: ipc %s needs the coordinator's path", c.IPC)
 	}
+	if c.IPCBuild != "" && !abs(c.IPCBuild) {
+		return errors.New("agent: the cuInterpose build needs an absolute path")
+	}
+	return c.validateMode()
+}
+
+// validateBackend checks what the process tree's backend needs.
+func (c Config) validateBackend() error {
+	switch c.Backend {
+	case "", BackendCRIU:
+		if c.CRIU == "" {
+			return errors.New("agent: the criu backend needs criu")
+		}
+	case BackendDMTCP:
+		// TmpDir holds the coordinator's port, where the host finds a
+		// coordinator this agent could not end (dmtcp.Tools.QuitLeft).
+		if !abs(c.DMTCP.Plugin, c.DMTCP.TmpDir) {
+			return errors.New("agent: the dmtcp backend needs the fdkeep plugin's and its TmpDir's absolute paths")
+		}
+	default:
+		return fmt.Errorf("agent: unknown backend %q", c.Backend)
+	}
+	return nil
+}
+
+// validateMode checks what a snapshot or a restore needs.
+func (c Config) validateMode() error {
 	switch c.Mode {
 	case ModeSnapshot:
 		if len(c.Argv) == 0 || !abs(c.Log, c.Out) {
@@ -201,11 +256,13 @@ type (
 		Seconds      float64 `json:"seconds"`
 	}
 	// IPCRestoreArgs drive the restore's ipc step: the processes the
-	// coordinator prepared.
+	// coordinator prepared, and the directory with its state,
+	// interpose.GuestDir when empty.
 	IPCRestoreArgs struct {
-		Processes []int `json:"processes"`
+		Processes []int  `json:"processes"`
+		Dir       string `json:"dir,omitempty"`
 	}
-	// RestoreResult reports the CRIU restore.
+	// RestoreResult reports the process restore, CRIU's or DMTCP's.
 	RestoreResult struct {
 		Tree    criu.Tree `json:"tree"`
 		Seconds float64   `json:"seconds"`

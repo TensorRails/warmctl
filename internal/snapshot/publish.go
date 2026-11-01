@@ -7,17 +7,20 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/criu"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/run"
 	"github.com/TensorRails/warmctl/v2/internal/store"
+	"github.com/TensorRails/warmctl/v2/internal/zframes"
 )
 
 // source is one file to publish: where it is, where it goes in the
@@ -31,11 +34,16 @@ type source struct {
 // the output directory, and manifest.json last.
 func (b *bake) publish(ctx context.Context) error {
 	started := time.Now()
-	paths, err := driverFiles(filepath.Join(b.dir, "io", "out", "criu"), b.gpus[0].Driver, filepath.Join(b.dir, "driver"))
-	if err != nil {
-		b.p.Printf("warning: the snapshot restores only under driver %s: %v", b.gpus[0].Driver, err)
-	} else {
-		b.driverPaths = paths
+	// A DMTCP restart maps the driver's libraries again from their files,
+	// which must be the donor's, so its snapshot restores under its own
+	// driver only and there is nothing to carry.
+	if b.backend != agent.BackendDMTCP {
+		paths, err := driverFiles(filepath.Join(b.dir, "io", "out", "criu"), b.gpus[0].Driver, filepath.Join(b.dir, "driver"))
+		if err != nil {
+			b.p.Printf("warning: the snapshot restores only under driver %s: %v", b.gpus[0].Driver, err)
+		} else {
+			b.driverPaths = paths
+		}
 	}
 	sources, err := b.sources()
 	if err != nil {
@@ -56,6 +64,11 @@ func (b *bake) publish(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if b.o.Compress {
+		if err := compress(ctx, b.o.Output, files); err != nil {
+			return fmt.Errorf("compress: %w", err)
+		}
+	}
 	b.manifest = b.assemble(files)
 	if err := b.manifest.Write(filepath.Join(b.o.Output, "manifest.json")); err != nil {
 		return err
@@ -64,9 +77,120 @@ func (b *bake) publish(ctx context.Context) error {
 		return err
 	}
 	published = true
-	b.p.Printf("published %s: %d files, %.2f GiB (weights %.2f GiB) in %.1fs", b.o.Output, len(files),
-		float64(b.manifest.Bytes())/(1<<30), float64(b.manifest.WeightBytes())/(1<<30), time.Since(started).Seconds())
+	stored := ""
+	if b.manifest.Encoded() {
+		stored = fmt.Sprintf(", %.2f GiB stored", float64(b.manifest.StoredBytes())/(1<<30))
+	}
+	b.p.Printf("published %s: %d files, %.2f GiB (weights %.2f GiB)%s in %.1fs", b.o.Output, len(files),
+		float64(b.manifest.Bytes())/(1<<30), float64(b.manifest.WeightBytes())/(1<<30), stored,
+		time.Since(started).Seconds())
 	return nil
+}
+
+// compress stores the process images, runtime trees and weights in output
+// as zstd frames, each file split into byte planes when that stores less
+// (16-bit weights). The links to the store's blobs make way for the encoded
+// files; the blobs, and each file's SHA256, stay the file's own bytes.
+func compress(ctx context.Context, output string, files []manifest.File) error {
+	return encode(ctx, output, output, files)
+}
+
+// Compress writes a copy of the snapshot in src to dst with its process
+// images, runtime trees and weights stored as zstd frames, as a build with
+// --compress would have: the same snapshot in fewer bytes, for network
+// storage. src keeps its files as they are, so it can still be pushed.
+func Compress(ctx context.Context, src, dst string) (manifest.Manifest, error) {
+	m, err := manifest.Read(filepath.Join(src, "manifest.json"))
+	if err != nil {
+		return m, err
+	}
+	if m.Encoded() {
+		return m, fmt.Errorf("%s is stored encoded already", src)
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return m, fmt.Errorf("%s already exists", dst)
+	}
+	if err := encode(ctx, src, dst, m.Files); err != nil {
+		return m, err
+	}
+	// manifest.json last: a reader takes it as the copy's commit point.
+	return m, m.Write(filepath.Join(dst, "manifest.json"))
+}
+
+// encode writes files from src to dst, the process images, runtime trees
+// and weights as zstd frames and the rest linked or copied as they are, and
+// records each encoding in files. With src and dst the same directory it
+// re-encodes in place.
+func encode(ctx context.Context, src, dst string, files []manifest.File) error {
+	// Several files at once, a few frames each: one file's encoder reads,
+	// compresses and writes in turn, which leaves the cores idle.
+	sem := make(chan struct{}, max(2, runtime.NumCPU()/4))
+	var wg sync.WaitGroup
+	errs := make([]error, len(files))
+	for i, f := range files {
+		frames := f.Role == manifest.RoleCRIU || f.Role == manifest.RoleRuntimeFS || f.Role == manifest.RoleWeights
+		if !frames && src == dst {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			from := filepath.Join(src, filepath.FromSlash(f.Path))
+			to := filepath.Join(dst, filepath.FromSlash(f.Path))
+			if !frames {
+				errs[i] = linkOrCopy(from, to)
+				return
+			}
+			ends, split, err := encodeFile(ctx, from, to)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			files[i].Encoding, files[i].Frames, files[i].Split = manifest.EncodingZframes, ends, split
+		}()
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// encodeFile writes src to dst as zstd frames, with src's mode; dst may be
+// src itself.
+func encodeFile(ctx context.Context, src, dst string) ([]int64, int, error) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return nil, 0, err
+	}
+	ends, split, err := zframes.Encode(ctx, src, dst+".zst", 4, 0)
+	if err == nil {
+		err = os.Chmod(dst+".zst", info.Mode().Perm())
+	}
+	if err == nil {
+		err = os.Rename(dst+".zst", dst)
+	}
+	if err != nil {
+		_ = os.Remove(dst + ".zst")
+	}
+	return ends, split, err
+}
+
+// linkOrCopy makes dst the file src: a hard link on the same file system,
+// else a copy with src's mode.
+func linkOrCopy(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	return run.CopyFile(src, dst, info.Mode().Perm())
 }
 
 // tree is a directory published under prefix; role names each file's role
@@ -215,7 +339,7 @@ func (b *bake) assemble(files []manifest.File) manifest.Manifest {
 		Launch: manifest.Launch{
 			Image: b.launch.Profile.Image, Model: b.served, ModelDir: b.o.ModelDir, ModelSHA256: b.model,
 			Argv: b.cfg.Argv, Env: b.launch.Env,
-			CaptureSizes: b.launch.CaptureSizes, Ranks: len(b.workers),
+			CaptureSizes: b.launch.CaptureSizes, Ranks: len(b.workers), ReloadWaits: true,
 		},
 		Hardware: b.hardware(),
 		Process:  b.process(),
@@ -241,10 +365,26 @@ func (b *bake) hardware() manifest.Hardware {
 		h.DriverPortable, h.DriverFiles = true, b.driverPaths
 	}
 	for i, g := range b.gpus {
-		h.GPUs = append(h.GPUs, manifest.GPU{Rank: i, Index: g.Index, UUID: g.UUID, PCIBusID: g.PCIBusID, Name: g.Name,
-			MemoryMiB: g.MemoryMiB})
+		gpu := manifest.GPU{Rank: i, Index: g.Index, UUID: g.UUID, PCIBusID: g.PCIBusID, Name: g.Name, MemoryMiB: g.MemoryMiB}
+		if dev, err := host.DevicePath(g.PCIBusID); err == nil {
+			gpu.Device = dev
+		} else if b.backend == agent.BackendDMTCP {
+			b.p.Printf("warning: rank %d: %v; a pod whose GPU has another /dev/nvidiaN will not restore", i, err)
+		}
+		h.GPUs = append(h.GPUs, gpu)
 	}
 	return h
+}
+
+// modelOpen is whether the frozen tree holds files of the model open: the
+// freeze step watches only the model's paths.
+func (b *bake) modelOpen() bool {
+	for _, n := range b.frozen.References {
+		if n > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *bake) process() manifest.Process {
@@ -253,13 +393,14 @@ func (b *bake) process() manifest.Process {
 		rankOf[w.PID] = w.Rank
 	}
 	p := manifest.Process{
+		Backend: b.backend,
 		RootPID: b.frozen.Tree.Root, MaxID: b.frozen.Tree.MaxID(), PIDFloor: criu.PIDFloor,
-		NeedsModel:          b.frozen.References[b.launch.Profile.Model.MountPath()] > 0,
+		NeedsModel:          b.modelOpen(),
 		CollectivesDetached: b.detached() || b.ipc.Interposed, EngineURL: EngineAddr,
 	}
 	if b.ipc.Interposed {
 		// After the coordinator's prepare no process maps another's memory.
-		p.IPC, p.IPCProcesses = interpose.Interpose, b.ipc.Participants
+		p.IPC, p.IPCProcesses, p.IPCBuild = interpose.Interpose, b.ipc.Participants, b.cfg.IPCBuild
 	}
 	if len(b.prepared) > 0 {
 		p.NCCLMode = b.prepared[0].NCCLMode

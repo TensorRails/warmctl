@@ -57,15 +57,10 @@ func (r *restore) tools() (agent.Config, error) {
 	}
 	cfg := snapshot.AgentConfig(r.guest().state)
 	cfg.CUDABackend = r.o.CUDABackend
-	// The agent runs in a UTS namespace of its own and names it as a
-	// receiver container is named; the pod's own host name stays.
-	cfg.Hostname = docker.Hostname
-	if r.o.CRIU != "" {
-		cfg.CRIU = r.o.CRIU
-	}
 	if r.o.CUDACheckpoint != "" {
 		cfg.CUDACheckpoint = r.o.CUDACheckpoint
 	}
+	r.pod.agent(&cfg)
 	return cfg, nil
 }
 
@@ -183,7 +178,7 @@ func (r *restore) start(ctx context.Context) error {
 
 func (r *restore) launch(ctx context.Context) error {
 	if r.o.InPlace {
-		return r.startPod(ctx)
+		return r.pod.start(ctx)
 	}
 	spec, err := r.spec()
 	if err != nil {
@@ -234,8 +229,14 @@ func (r *restore) processes(ctx context.Context) error {
 	if !r.interposed() || len(r.m.Process.IPCProcesses) == 0 {
 		return nil
 	}
+	ipcArgs := agent.IPCRestoreArgs{Processes: r.m.Process.IPCProcesses}
+	if r.m.Process.IPCBuild != "" {
+		// The coordinator's state, read where the snapshot is: nothing mounts
+		// it for an engine that mapped a build of its own (engineMounts).
+		ipcArgs.Dir = filepath.Join(r.snapshot, "ipc")
+	}
 	var ipc agent.IPCResult
-	if err := r.c.Step(ctx, "ipc", agent.IPCRestoreArgs{Processes: r.m.Process.IPCProcesses}, &ipc); err != nil {
+	if err := r.c.Step(ctx, "ipc", ipcArgs, &ipc); err != nil {
 		return err
 	}
 	r.p.Printf("cross-process memory restored in %.1fs", ipc.Seconds)

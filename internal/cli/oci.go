@@ -15,6 +15,8 @@ import (
 	"oras.land/oras-go/v2"
 
 	"github.com/TensorRails/warmctl/v2/internal/config"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
+	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/oci"
 	"github.com/TensorRails/warmctl/v2/internal/restore"
@@ -150,6 +152,11 @@ func runPull(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	f.register(fs)
 	state := fs.String("state-dir", DefaultState, "state directory (blob store)")
 	output := fs.String("output", "", "snapshot directory to create (default: <state>/pulled/<digest>)")
+	mode := fs.String("mode", restore.ModeAuto, "where the snapshot will restore, as up's --mode: of an index's "+
+		"entries, one this host can restore that way (auto, host or in-place)")
+	sock := fs.String("docker", docker.DefaultSocket, "Docker socket")
+	tools := dmtcp.Tools{Dir: dmtcp.DefaultDir, Plugin: dmtcp.DefaultPlugin}
+	fs.StringVar(&tools.Dir, "dmtcp-dir", tools.Dir, "directory of DMTCP's programs, for the dmtcp backend")
 	pos, err := positionals(fs, args)
 	if err != nil {
 		return err
@@ -161,8 +168,22 @@ func runPull(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	if len(pos) != 1 || reference(pos[0], cfg) == "" {
 		return errors.New("usage: warmctl pull NAME[:TAG]|oci://REGISTRY/REPO[:TAG] [--output DIR]")
 	}
-	// From an index, the snapshot whose hardware this host has, busy or not.
-	fits := func(m manifest.Manifest) error { return restore.Fits(ctx, m.Hardware) }
+	// From an index, a snapshot on hardware this host has, busy or not, that
+	// it can restore the way up will: CRIU through Docker or in a privileged
+	// pod, DMTCP in place, so a pod without privileges takes the DMTCP one.
+	// A host that is neither (no Docker, not the runtime image) takes either.
+	restorable := func(manifest.Manifest) error { return nil }
+	if inPlace, _, err := restore.Choose(ctx, *mode, hostProbe(*sock)); err == nil {
+		restorable = func(m manifest.Manifest) error { return restore.CanRestore(m, inPlace, tools) }
+	} else if *mode != restore.ModeAuto {
+		return err
+	}
+	fits := func(m manifest.Manifest) error {
+		if err := restorable(m); err != nil {
+			return err
+		}
+		return restore.Fits(ctx, m.Hardware)
+	}
 	po := f.options(run.NewProgress(stdout, "plain"))
 	dir, err := pullSnapshot(ctx, reference(pos[0], cfg), *output, *state, po, fits, cfg)
 	if err == nil {

@@ -39,6 +39,10 @@ from .primitives import require
 
 SLOT_BYTES = 64 << 20
 THREADS = 4
+# How often a reload looks for a weights part that has not arrived: a restore
+# wakes the engine while the snapshot is still staged or pulled, and a part's
+# file shows up only once it is complete.
+PART_POLL = 0.005
 
 
 def pipelined(device):
@@ -294,12 +298,27 @@ def _pipelined(device, threads, slot_bytes, jobs, stats, rows=0):
     return results
 
 
+def _arrived(path):
+    """Return path once its file exists: complete, as stage and pull put it.
+    There is no deadline here: the parts come in order, so the last one waits
+    as long as all the weights take, and warmctl ends the reload when the
+    stage or pull fails or stalls."""
+    while not os.path.exists(path):
+        time.sleep(PART_POLL)
+    return path
+
+
 def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SLOT_BYTES, verify=False, stats=None,
-           pipeline=True):
+           pipeline=True, wait=False):
     """Copy every listed allocation back from the part files; return the
     bytes of the parts read. With verify, each part is read whole and its
     SHA-256 checked against the record. stats, a Stats, collects where the
-    threads spent their time."""
+    threads spent their time. With wait, a part's file may still be on its
+    way (a stage or pull), and is waited for; without, a missing one fails."""
+    def part_path(part):
+        path = os.path.join(directory, part['path'])
+        return _arrived(path) if wait else path
+
     layout = pool.pieces(allocations, parts)
     starts, _ = pool.part_starts(parts)
     stats = stats if stats is not None else Stats()
@@ -309,7 +328,7 @@ def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SL
         def lane_job(index):
             def work(lane):
                 part = parts[index]
-                with open(os.path.join(directory, part['path']), 'rb', buffering=0) as f:
+                with open(part_path(part), 'rb', buffering=0) as f:
                     for allocation, inner, offset, length in layout[index]:
                         target = int(allocations[allocation]['ptr'], 16) + inner
                         for done in range(0, length, lane.size):
@@ -326,7 +345,7 @@ def reload(device, allocations, parts, directory, threads=THREADS, slot_bytes=SL
     def job(index):
         def work(slot):
             part = parts[index]
-            with open(os.path.join(directory, part['path']), 'rb', buffering=0) as f:
+            with open(part_path(part), 'rb', buffering=0) as f:
                 if verify:
                     _reload_verified(device, slot, f, part, layout[index], allocations)
                 else:

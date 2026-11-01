@@ -1,6 +1,9 @@
 package restore
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,6 +207,66 @@ func podManifest(needsModel bool, ipc string) manifest.Manifest {
 	}
 }
 
+// A DMTCP snapshot's model is the donor's directory, at its path: the one
+// --model-dir may name, and the one that must hold the model when the
+// processes kept its files open.
+func TestDMTCPModel(t *testing.T) {
+	donor := t.TempDir()
+	m := podManifest(true, "")
+	m.Launch.ModelDir = donor
+	if _, err := dmtcpModel("", m); err == nil || !strings.Contains(err.Error(), "put the model at that path") {
+		t.Fatalf("an empty donor directory accepted: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(donor, "config.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := dmtcpModel("", m); err != nil || got != donor {
+		t.Fatalf("the donor's directory: %q %v", got, err)
+	}
+	link := filepath.Join(t.TempDir(), "model")
+	if err := os.Symlink(donor, link); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := dmtcpModel(link, m); err != nil || got != donor {
+		t.Fatalf("given as a link to it: %q %v", got, err)
+	}
+	if _, err := dmtcpModel(t.TempDir(), m); err == nil || !strings.Contains(err.Error(), "--model-dir") {
+		t.Fatalf("another model directory accepted: %v", err)
+	}
+	m.Process.NeedsModel, m.Launch.ModelDir = false, "/nowhere"
+	if got, err := dmtcpModel("", m); err != nil || got != "" {
+		t.Fatalf("no model needed: %q %v", got, err)
+	}
+}
+
+func TestCheckIPCBuild(t *testing.T) {
+	build := t.TempDir()
+	var m manifest.Manifest
+	if err := checkIPCBuild(m); err != nil {
+		t.Fatalf("no build recorded: %v", err)
+	}
+	m.Process.IPCBuild = build
+	for _, name := range []string{interpose.Frontend, interpose.Core} {
+		body := []byte("build of " + name)
+		if err := os.WriteFile(filepath.Join(build, name), body, 0o444); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(body)
+		m.Files = append(m.Files, manifest.File{Path: "ipc/" + name, SHA256: hex.EncodeToString(sum[:]), Role: manifest.RoleIPC})
+	}
+	if err := checkIPCBuild(m); err != nil {
+		t.Fatalf("the donor's build: %v", err)
+	}
+	m.Files[1].SHA256 = strings.Repeat("0", 64)
+	if err := checkIPCBuild(m); err == nil || !strings.Contains(err.Error(), "another build") {
+		t.Fatalf("another build accepted: %v", err)
+	}
+	m.Process.IPCBuild = filepath.Join(build, "missing")
+	if err := checkIPCBuild(m); err == nil || !strings.Contains(err.Error(), "runtime image") {
+		t.Fatalf("a missing build accepted: %v", err)
+	}
+}
+
 func TestEngineMounts(t *testing.T) {
 	r := &restore{snapshot: "/snap", m: podManifest(true, interpose.Interpose)}
 	got := r.engineMounts("/models/x")
@@ -219,6 +282,11 @@ func TestEngineMounts(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("mount %d: %+v, want %+v", i, got[i], want[i])
 		}
+	}
+	// A DMTCP engine maps the image's build: no ipc mount.
+	r.m.Process.Backend, r.m.Process.IPCBuild = agent.BackendDMTCP, "/usr/local/bin/cuinterpose"
+	if got := r.engineMounts("/models/x"); len(got) != 2 || got[1].Target != "/model" {
+		t.Errorf("dmtcp mounts %+v", got)
 	}
 	// A pod that mounts the model where the profile wants it needs no bind.
 	r.m = podManifest(true, "")
@@ -245,5 +313,52 @@ func TestPodModel(t *testing.T) {
 	os.WriteFile(filepath.Join(m.Profile.Model.ContainerPath, "config.json"), []byte("{}"), 0o644)
 	if got, err := podModel("", m); err != nil || got != "" {
 		t.Errorf("mounted model: %q %v", got, err)
+	}
+}
+
+// A donor's /dev/nvidiaN that this pod lacks becomes a link to this pod's GPU
+// of the same rank, replacing an earlier restore's link; one that is another
+// GPU here is refused.
+func TestLinkDevices(t *testing.T) {
+	dir := t.TempDir()
+	mine, other := filepath.Join(dir, "nvidia1"), filepath.Join(dir, "nvidia2")
+	for _, p := range []string{mine, other} {
+		if err := os.WriteFile(p, nil, 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	donor := []manifest.GPU{{Rank: 0, Device: filepath.Join(dir, "nvidia3")}}
+	linked, err := linkDevices(donor, []string{mine})
+	if err != nil || len(linked) != 1 {
+		t.Fatalf("linked %v: %v", linked, err)
+	}
+	if target, err := os.Readlink(donor[0].Device); err != nil || target != mine {
+		t.Fatalf("link to %q: %v", target, err)
+	}
+	// Linked already, or the same node: nothing to do.
+	if linked, err := linkDevices(donor, []string{mine}); err != nil || len(linked) != 0 {
+		t.Fatalf("again: %v %v", linked, err)
+	}
+	// The link an earlier restore made on this pod's other GPU is replaced.
+	if linked, err := linkDevices(donor, []string{other}); err != nil || len(linked) != 1 {
+		t.Fatalf("relinked %v: %v", linked, err)
+	}
+	if target, err := os.Readlink(donor[0].Device); err != nil || target != other {
+		t.Fatalf("link to %q, not %s: %v", target, other, err)
+	}
+	if _, err := os.Lstat(donor[0].Device + ".warmctl-link"); err == nil {
+		t.Fatal("the temporary link stayed")
+	}
+	// Another GPU's node keeps its name: the CUDA restore opens each GPU's
+	// own nodes.
+	if linked, err := linkDevices([]manifest.GPU{{Device: other}}, []string{mine}); err != nil || len(linked) != 0 {
+		t.Fatalf("another GPU's node: %v %v", linked, err)
+	}
+	if info, err := os.Lstat(other); err != nil || info.Mode()&fs.ModeSymlink != 0 {
+		t.Fatalf("another GPU's node was replaced: %v", err)
+	}
+	// Old manifests name no device.
+	if linked, err := linkDevices([]manifest.GPU{{}}, []string{mine}); err != nil || len(linked) != 0 {
+		t.Fatalf("no device: %v %v", linked, err)
 	}
 }

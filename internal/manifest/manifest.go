@@ -49,6 +49,9 @@ type Launch struct {
 	Env          map[string]string `json:"env"`
 	CaptureSizes []int             `json:"capture_sizes"`
 	Ranks        int               `json:"ranks"`
+	// ReloadWaits says the engine's adapter waits for a weights part whose
+	// file is not there yet, so up wakes it while the snapshot still arrives.
+	ReloadWaits bool `json:"reload_waits,omitempty"`
 }
 
 // GPU is one device of the donor, in rank order.
@@ -59,6 +62,9 @@ type GPU struct {
 	PCIBusID  string `json:"pci_bus_id"`
 	Name      string `json:"name"`
 	MemoryMiB int64  `json:"memory_mib"`
+	// Device is the node the donor's processes opened, /dev/nvidiaN; a
+	// receiver's GPU of the same rank may have another number.
+	Device string `json:"device,omitempty"`
 }
 
 // Hardware is what a restore host has to match.
@@ -100,6 +106,9 @@ type Owner struct {
 
 // Process describes the dumped process tree.
 type Process struct {
+	// Backend dumped the tree: criu (empty in older snapshots) or dmtcp, whose
+	// PIDs here are DMTCP's virtual ones.
+	Backend             string   `json:"backend,omitempty"`
 	RootPID             int      `json:"root_pid"`
 	MaxID               int      `json:"max_id"`
 	PIDFloor            int      `json:"pid_floor"`
@@ -115,6 +124,25 @@ type Process struct {
 	IPC string `json:"ipc,omitempty"`
 	// IPCProcesses are the processes the coordinator prepared and restores.
 	IPCProcesses []int `json:"ipc_processes,omitempty"`
+	// IPCBuild is where a DMTCP engine mapped the cuInterpose build from:
+	// nothing mounts the snapshot's copy for it, so the restoring pod must
+	// have the same build there.
+	IPCBuild string `json:"ipc_build,omitempty"`
+}
+
+// Snapshot backends, as Process.Backend names them.
+const (
+	BackendCRIU  = "criu"
+	BackendDMTCP = "dmtcp"
+)
+
+// BackendName is the backend that dumped the tree; snapshots older than the
+// field are CRIU's.
+func (p Process) BackendName() string {
+	if p.Backend == "" {
+		return BackendCRIU
+	}
+	return p.Backend
 }
 
 // File is one member of the snapshot directory, relative to it.
@@ -124,6 +152,25 @@ type File struct {
 	SHA256 string `json:"sha256"`
 	Role   string `json:"role"`
 	Root   string `json:"root,omitempty"`
+	// Encoding is how the snapshot directory stores the file: "" as it is,
+	// or EncodingZframes, zstd frames (internal/zframes) whose end offsets
+	// are Frames, their bytes in Split planes (2 for 16-bit weights). Size
+	// and SHA256 are always the file's own.
+	Encoding string  `json:"encoding,omitempty"`
+	Frames   []int64 `json:"frames,omitempty"`
+	Split    int     `json:"split,omitempty"`
+}
+
+// EncodingZframes stores a file as independent zstd frames of zframes.Size
+// bytes of it each.
+const EncodingZframes = "zstd-frames-32m"
+
+// Stored is how many bytes the snapshot directory holds of f.
+func (f File) Stored() int64 {
+	if f.Encoding == "" || len(f.Frames) == 0 {
+		return f.Size
+	}
+	return f.Frames[len(f.Frames)-1]
 }
 
 // File roles.
@@ -373,6 +420,26 @@ func (m Manifest) Bytes() int64 {
 		n += f.Size
 	}
 	return n
+}
+
+// StoredBytes is how many bytes the snapshot directory holds.
+func (m Manifest) StoredBytes() int64 {
+	var n int64
+	for _, f := range m.Files {
+		n += f.Stored()
+	}
+	return n
+}
+
+// Encoded says whether any file is stored encoded: such a snapshot restores
+// from a decoded local copy (restore.Stage).
+func (m Manifest) Encoded() bool {
+	for _, f := range m.Files {
+		if f.Encoding != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // WeightBytes is the size of the exported pools.

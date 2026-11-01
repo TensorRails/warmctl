@@ -20,7 +20,8 @@ func TestSnapshotInstall(t *testing.T) {
 		}
 	}
 	pattern := bytes.Repeat([]byte("warmctl-runtimefs-"), 4096)
-	files := map[string][]byte{"a/f.txt": []byte("hello\n"), "a/b/g.bin": pattern}
+	// Mark is an in-place bake's claim on the tree, never archived.
+	files := map[string][]byte{"a/f.txt": []byte("hello\n"), "a/b/g.bin": pattern, Mark: []byte("claimed\n")}
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(src, name), body, 0o640); err != nil {
 			t.Fatal(err)
@@ -55,6 +56,9 @@ func TestSnapshotInstall(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		want["a/s.sock"] = TypeSocket
 	}
+	if _, ok := types[Mark]; ok {
+		t.Errorf("%s archived", Mark)
+	}
 	for p, ty := range want {
 		if types[p] != ty {
 			t.Errorf("%s: %q, want %q", p, types[p], ty)
@@ -69,6 +73,12 @@ func TestSnapshotInstall(t *testing.T) {
 	}
 	for name, body := range files {
 		got, err := os.ReadFile(filepath.Join(dst, name))
+		if name == Mark {
+			if err == nil {
+				t.Errorf("%s installed", Mark)
+			}
+			continue
+		}
 		if err != nil || !bytes.Equal(got, body) {
 			t.Errorf("%s differs: %v", name, err)
 		}

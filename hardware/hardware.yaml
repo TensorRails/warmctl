@@ -24,6 +24,14 @@ rows:
     topology_class: pcie
     device_config_name: NVIDIA_L40S
     driver_min: "580"
+  - id: a40-48gb
+    nvidia_smi_name: "NVIDIA A40"
+    memory_mib: 46068
+    arch: sm_86
+    nvlink: false
+    topology_class: pcie
+    device_config_name: NVIDIA_A40
+    driver_min: "580"
   - id: b200-180gb
     nvidia_smi_name: "NVIDIA B200"
     memory_mib: 183359

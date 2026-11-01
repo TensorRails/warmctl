@@ -12,6 +12,7 @@ import (
 
 	"github.com/TensorRails/warmctl/v2"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
+	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/profile"
 )
 
@@ -27,6 +28,8 @@ const usage = `usage: warmctl <command> [flags]
   push|pull     move snapshots through an OCI registry or a directory (dir:PATH)
   mirror        copy models into another registry or a directory (a shared cache)
   verify        check a snapshot directory against its manifest
+  compress      copy a snapshot directory with its images and weights stored as
+                zstd frames, for network storage (as build --compress)
   gc            remove blobs no recorded snapshot uses
   doctor        check this host
   hardware      list the GPU models snapshots support and mark this host's
@@ -44,6 +47,7 @@ var commands = map[string]func(context.Context, []string, io.Writer, io.Writer) 
 	"stop":     runDown,
 	"ps":       runPs,
 	"verify":   runVerify,
+	"compress": runCompress,
 	"gc":       runGC,
 	"push":     runPush,
 	"pull":     runPull,
@@ -69,6 +73,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, version s
 		err = runProfile(args[1:], stdout)
 	case "agent":
 		err = runAgent(ctx, args[1:], stderr)
+	case host.PeerProbeCommand:
+		// The child of host.ProbePeers (internal).
+		err = host.RunPeerProbe(args[1:], stdout)
 	case "build", "snapshot", "bake":
 		err = runBuild(ctx, args[1:], stdout, stderr, version)
 	case "help", "-h", "--help":

@@ -33,6 +33,11 @@ type prefetchJob struct {
 	path   string
 	offset int64
 	size   int64
+	// stored and storedSize, for a file stored encoded, are where the frame
+	// holding [offset, offset+size) lies in the stored file, split its byte
+	// planes (Stage only).
+	stored, storedSize int64
+	split              int
 }
 
 // prefetchPlan orders the reads: the CRIU images first, then the weights
@@ -48,7 +53,7 @@ func prefetchPlan(criu, weights []manifest.File, chunk, budget int64) []prefetch
 			if budget > 0 && total+n > budget {
 				return jobs
 			}
-			jobs = append(jobs, prefetchJob{f.Path, off, n})
+			jobs = append(jobs, prefetchJob{path: f.Path, offset: off, size: n})
 			total += n
 		}
 	}

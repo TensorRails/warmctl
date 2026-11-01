@@ -79,6 +79,40 @@ func TestIndexChoose(t *testing.T) {
 	}
 }
 
+// A CRIU and a DMTCP snapshot of one platform and driver are two entries,
+// the CRIU one under the tag CRIU snapshots always had; a host that cannot
+// run CRIU passes it over for the DMTCP one.
+func TestIndexBackends(t *testing.T) {
+	ctx := context.Background()
+	reg := memory.New()
+	criuDir, mc := platformSnapshot(t, "a40-48gb", "595.91.07")
+	dmtcpDir, md := platformSnapshot(t, "a40-48gb", "595.91.07")
+	md.Process.Backend = manifest.BackendDMTCP
+	if err := md.Write(filepath.Join(dmtcpDir, "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	if PlatformTag(mc) != "1xa40-48gb-595.91.07" || PlatformTag(md) != "1xa40-48gb-595.91.07-dmtcp" {
+		t.Fatalf("tags %q %q", PlatformTag(mc), PlatformTag(md))
+	}
+	// The DMTCP snapshot pushed first: a host that runs both still takes CRIU's.
+	pushIndexed(t, reg, dmtcpDir, md)
+	if n := pushIndexed(t, reg, criuDir, mc); n != 2 {
+		t.Fatalf("the CRIU snapshot replaced the DMTCP one: %d entries", n)
+	}
+	if tag, err := Choose(ctx, reg, IndexTag, nil); err != nil || tag != PlatformTag(mc) {
+		t.Fatalf("a host that runs both chose %q, %v", tag, err)
+	}
+	unprivileged := func(m manifest.Manifest) error {
+		if m.Process.BackendName() != manifest.BackendDMTCP {
+			return errors.New("this container cannot run CRIU")
+		}
+		return nil
+	}
+	if tag, err := Choose(ctx, reg, IndexTag, unprivileged); err != nil || tag != PlatformTag(md) {
+		t.Fatalf("a container without CRIU chose %q, %v", tag, err)
+	}
+}
+
 func TestCatalog(t *testing.T) {
 	ctx := context.Background()
 	reg := memory.New()
@@ -96,5 +130,19 @@ func TestCatalog(t *testing.T) {
 	}
 	if m, ok := got.Find("llama31-8b"); !ok || !m.Gated {
 		t.Fatal("Find")
+	}
+}
+
+// A directory build --compress wrote holds encoded files, which push would
+// name by the digests of the files' own bytes: it refuses.
+func TestPushRefusesEncoded(t *testing.T) {
+	dir, m := platformSnapshot(t, "l40s-48gb", "595.91.07")
+	m.Files[0].Encoding, m.Files[0].Frames = manifest.EncodingZframes, []int64{m.Files[0].Size / 2}
+	if err := m.Write(filepath.Join(dir, "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Push(context.Background(), memory.New(), dir, "x", Options{}); err == nil ||
+		!strings.Contains(err.Error(), "--compress") {
+		t.Fatalf("pushed an encoded directory: %v", err)
 	}
 }

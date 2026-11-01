@@ -45,12 +45,19 @@ func (b *bake) prepare(ctx context.Context) error {
 			return err
 		}
 	}
-	cfg, err := Tools(filepath.Join(b.dir, "work"), b.o.CRIU, b.o.CUDACheckpoint)
+	cfg, err := b.tools()
 	if err != nil {
 		return err
 	}
 	cfg.CUDABackend = b.o.CUDABackend
-	if b.model, err = run.ModelSHA256(b.o.ModelDir); err != nil {
+	cfg.Backend = b.backend
+	if b.backend == agent.BackendDMTCP {
+		// DMTCP's own files (its coordinator's and workers' state) stay out of
+		// the trees.
+		cfg.DMTCP = b.o.DMTCP
+		cfg.DMTCP.TmpDir = filepath.Join(b.dir, "dmtcp-tmp")
+	}
+	if err := b.hashModel(); err != nil {
 		return err
 	}
 	var sum string
@@ -66,18 +73,39 @@ func (b *bake) prepare(ctx context.Context) error {
 		b.launch.Env["LD_LIBRARY_PATH"] = hostUMDLibraryPath
 	}
 	b.cfg = cfg
-	b.cfg.Mode, b.cfg.Out = agent.ModeSnapshot, guestState+"/out"
+	b.cfg.Mode, b.cfg.Out = agent.ModeSnapshot, b.state()+"/out"
 	b.cfg.Argv = append(append([]string(nil), b.launch.Argv...), "--host", "127.0.0.1", "--port", "8000")
 	b.cfg.Log = EngineLog
+	// The model, where the engine sees it and, in place, where it is.
 	b.cfg.Watch = []string{b.launch.Profile.Model.MountPath()}
+	if b.o.InPlace {
+		b.cfg.Watch = append(b.cfg.Watch, b.o.ModelDir)
+	}
 	if err := b.interposer(); err != nil {
 		return err
 	}
 	if err := b.cfg.Write(filepath.Join(b.dir, "work", "agent.json")); err != nil {
 		return err
 	}
+	if b.o.InPlace {
+		return b.placeInPlace()
+	}
 	b.p.Printf("pulling %s", b.launch.Profile.Image)
 	b.image, err = b.dk.EnsureImage(ctx, b.launch.Profile.Image, nil)
+	return err
+}
+
+// hashModel resolves the model directory and takes its digest. In place
+// the model is linked in, so the engine's open files name its real
+// directory: the one a DMTCP restart reopens them in.
+func (b *bake) hashModel() error {
+	var err error
+	if b.o.InPlace {
+		if b.o.ModelDir, err = filepath.EvalSymlinks(b.o.ModelDir); err != nil {
+			return err
+		}
+	}
+	b.model, err = run.ModelSHA256(b.o.ModelDir)
 	return err
 }
 
@@ -112,6 +140,20 @@ func (b *bake) interposer() error {
 		}
 	}
 	b.cfg.IPC, b.cfg.IPCCoordinator = mode, interpose.GuestDir+"/"+interpose.Coordinator
+	if b.backend == agent.BackendDMTCP {
+		// Nothing is mounted for a DMTCP engine: it maps the build where it
+		// is, and a restart maps those files again, by their real path, only
+		// if they are the same size and mtime. The runtime image's own build
+		// is the same on every pod; the copy above is the snapshot's record.
+		dir, err := filepath.Abs(src)
+		if err == nil {
+			dir, err = filepath.EvalSymlinks(dir)
+		}
+		if err != nil {
+			return err
+		}
+		b.cfg.IPCBuild, b.cfg.IPCCoordinator = dir, filepath.Join(dir, interpose.Coordinator)
+	}
 	return nil
 }
 
@@ -176,14 +218,72 @@ func (b *bake) spec() docker.Spec {
 	}
 }
 
+// state is where the agent's sockets and the bake's output are, as the
+// agent and the engine see them: /state in a donor container, the bake's io
+// directory in place.
+func (b *bake) state() string {
+	if b.o.InPlace {
+		return filepath.Join(b.dir, "io")
+	}
+	return guestState
+}
+
+// tools is the agent's base config: in a donor container this binary and
+// the host's tools from /work; in place they are where they are.
+func (b *bake) tools() (agent.Config, error) {
+	if !b.o.InPlace {
+		return Tools(filepath.Join(b.dir, "work"), b.o.CRIU, b.o.CUDACheckpoint)
+	}
+	cfg := AgentConfig(b.state())
+	if b.o.CRIU != "" {
+		cfg.CRIU = b.o.CRIU
+	}
+	if b.o.CUDACheckpoint != "" {
+		cfg.CUDACheckpoint = b.o.CUDACheckpoint
+	}
+	return cfg, nil
+}
+
+// placeInPlace gives the engine in this container what a donor container
+// mounts: fresh trees, the model and the adapter where the profile has
+// them. Without mounts: the trees are claimed, the model and the adapter
+// linked in (run.Place).
+func (b *bake) placeInPlace() error {
+	for _, t := range b.cfg.Trees {
+		if err := run.ClaimDir(t.Path); err != nil {
+			return fmt.Errorf("tree %s: %w", t.Path, err)
+		}
+	}
+	if err := run.Place(b.o.ModelDir, b.launch.Profile.Model.MountPath()); err != nil {
+		return fmt.Errorf("model: %w", err)
+	}
+	if err := run.Place(b.adapter, pyext.GuestPath); err != nil {
+		return fmt.Errorf("adapter: %w", err)
+	}
+	return nil
+}
+
 func (b *bake) start(ctx context.Context) error {
 	var err error
 	ranks := b.launch.Profile.Parallel.Ranks()
-	if b.c, err = run.Launch(ctx, b.dk, b.spec(), filepath.Join(b.dir, "io"), ranks); err != nil {
+	if b.o.InPlace {
+		self, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		b.c, err = run.Spawn(ctx, run.Child{
+			Name: b.o.ID, Argv: []string{self, "agent", "--config", filepath.Join(b.dir, "work", "agent.json")},
+			Env: run.MergeEnv(os.Environ(), b.launch.Env), IO: filepath.Join(b.dir, "io"), Log: EngineLog,
+			AgentLog: filepath.Join(b.dir, "agent.log"), Output: os.Stderr, Ranks: ranks,
+		})
+		if err != nil {
+			return err
+		}
+	} else if b.c, err = run.Launch(ctx, b.dk, b.spec(), filepath.Join(b.dir, "io"), ranks); err != nil {
 		return err
 	}
 	if b.launch.Profile.Parallel.DP > 1 {
-		b.c.ReplyThrough(guestState)
+		b.c.ReplyThrough(b.state())
 	}
 	b.p.Printf("donor %s started; loading the model", b.c.Name)
 	timeout := b.o.ReadyTimeout

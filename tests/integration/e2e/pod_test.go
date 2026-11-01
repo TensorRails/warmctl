@@ -240,7 +240,7 @@ func (e *env) podLegs(snap string) {
 		e.t.Fatal(err)
 	}
 	p = e.newPod("foreign", "-v", snap+":/snapshots/e2e:ro", "-v", foreign+":/workspace")
-	p.refused("/workspace holds files no restore left there", "/snapshots/e2e")
+	p.refused("/workspace holds files no warmctl run left there", "/snapshots/e2e")
 	if raw, err := os.ReadFile(filepath.Join(foreign, "notes.txt")); err != nil || string(raw) != "mine" {
 		e.t.Fatalf("the operator's /workspace was touched: %v", err)
 	}

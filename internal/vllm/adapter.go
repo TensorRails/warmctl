@@ -141,15 +141,19 @@ func (e *Engine) FinishRestore(ctx context.Context) error {
 }
 
 // ReloadPool copies every rank's pool back from the snapshot mounted at
-// directory, whose manifest is at manifestPath, and checks fingerprints.
-// sync is sent only when set: adapters that predate the pipelined reload
-// refuse arguments they do not know.
+// directory, whose manifest is at manifestPath, and checks fingerprints;
+// with wait, the adapter waits for each part's file, which a stage or pull
+// still brings (manifest.Launch.ReloadWaits). sync and wait are sent only
+// when set: adapters that predate them refuse arguments they do not know.
 func (e *Engine) ReloadPool(ctx context.Context, manifestPath, directory string, threads int,
-	verify, sync bool) ([]Reloaded, error) {
+	verify, sync, wait bool) ([]Reloaded, error) {
 	var rows []Reloaded
 	kwargs := map[string]any{"manifest": manifestPath, "directory": directory, "threads": threads, "verify": verify}
 	if sync {
 		kwargs["sync"] = true
+	}
+	if wait {
+		kwargs["wait"] = true
 	}
 	if err := e.RPC(ctx, "warmctl_reload_pool", kwargs, PoolRPC, &rows); err != nil {
 		return nil, err
