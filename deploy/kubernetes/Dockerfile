@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 FROM ${BASE} AS dmtcp
 # TensorRails fork release v5.0.0-warmctl.1. Keep the source pin immutable;
 # build against this runtime base instead of mixing prebuilt libc versions.
-ARG DMTCP_COMMIT=96a4c0fc394d7714bdc2e1723a661f9aec032172
+ARG DMTCP_COMMIT=9fc657e2c9f5b8bd92818a72c3fada2929062cae
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git \
     && git clone https://github.com/TensorRails/dmtcp /src/dmtcp && cd /src/dmtcp && git checkout ${DMTCP_COMMIT} \
     && ./configure --prefix=/opt/warmctl/dmtcp && make -j"$(nproc)" && make install
