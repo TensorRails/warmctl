@@ -201,3 +201,18 @@ func TestReloadWhileArriving(t *testing.T) {
 		t.Fatalf("finished arrival: %v %v", rows, err)
 	}
 }
+
+// A stage without room restores a plain snapshot from where it is and
+// refuses an encoded one before copying anything.
+func TestStageRoom(t *testing.T) {
+	if room, err := stageRoom("/var/lib/warmctl/staged", 30<<30, 23<<30, true); !room || err != nil {
+		t.Fatalf("room: %t %v", room, err)
+	}
+	if room, err := stageRoom("/var/lib/warmctl/staged", 10<<30, 23<<30, false); room || err != nil {
+		t.Fatalf("plain without room: %t %v", room, err)
+	}
+	if room, err := stageRoom("/var/lib/warmctl/staged", 10<<30, 23<<30, true); room || err == nil ||
+		!strings.Contains(err.Error(), "--state-dir") {
+		t.Fatalf("encoded without room: %t %v", room, err)
+	}
+}

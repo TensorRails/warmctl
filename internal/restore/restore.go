@@ -210,6 +210,10 @@ func (r *restore) stage(ctx context.Context) error {
 		r.snapshot = dst
 		return nil
 	}
+	if room, err := r.roomToStage(dst); err != nil || !room {
+		lock.Release()
+		return err
+	}
 	a := oci.NewArrivals()
 	a.Begin(dst, r.m, raw)
 	src, start := r.snapshot, time.Now()
@@ -232,6 +236,39 @@ func (r *restore) stage(ctx context.Context) error {
 	r.p.Printf("snapshot staged in %s while it restores", dst)
 	r.o.Arrival, r.snapshot = a, dst
 	return nil
+}
+
+// roomToStage says whether dst's file system holds the decoded snapshot,
+// an incomplete copy there removed first.
+func (r *restore) roomToStage(dst string) (bool, error) {
+	if err := os.RemoveAll(dst); err != nil {
+		return false, err
+	}
+	info, err := statTree(filepath.Dir(dst))
+	if err != nil {
+		return true, nil // no statfs here: let the copy find out
+	}
+	room, err := stageRoom(filepath.Dir(dst), info.Free, r.m.Bytes(), r.m.Encoded())
+	if !room && err == nil {
+		r.p.Printf("warning: %s has %s free, a local copy needs %s: restoring from %s as it is",
+			filepath.Dir(dst), gib(info.Free), gib(r.m.Bytes()), r.snapshot)
+	}
+	return room, err
+}
+
+// stageRoom decides a stage into dir with free bytes of need. Without room,
+// a snapshot stored as it is restores from where it is, as before staging
+// (slower on FUSE), and an encoded one fails now rather than at ENOSPC
+// minutes into the copy.
+func stageRoom(dir string, free, need int64, encoded bool) (bool, error) {
+	switch {
+	case free >= need:
+		return true, nil
+	case encoded:
+		return false, fmt.Errorf("%s has %s free and the snapshot decodes to %s there: free space, or give "+
+			"--state-dir a larger disk", dir, gib(free), gib(need))
+	}
+	return false, nil
 }
 
 // CanRestore says whether this host brings back a tree m's backend dumped,
