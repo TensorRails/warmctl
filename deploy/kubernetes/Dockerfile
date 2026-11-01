@@ -31,7 +31,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # link the libc the engine runs with. A restore maps DMTCP's own text from
 # these files, so donor and receiver need this very build.
 FROM ${BASE} AS dmtcp
-ARG DMTCP_COMMIT=9faf3581eae4e04ccc7bd06097578a8028cf301f
+ARG DMTCP_COMMIT=53802784d36bb8c5517dc5be8bb5453b8ff8963c
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git \
     && git clone https://github.com/TensorRails/dmtcp /src/dmtcp && cd /src/dmtcp && git checkout ${DMTCP_COMMIT} \
     && ./configure --prefix=/opt/warmctl/dmtcp && make -j"$(nproc)" && make install

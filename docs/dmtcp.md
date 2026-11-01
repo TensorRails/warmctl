@@ -168,6 +168,7 @@ with these patches:
 | Pass through SysV shm ids DMTCP did not issue | UCX's memory hooks (in the vLLM image, for NIXL) create a test segment through `dlsym(RTLD_NEXT)`, past DMTCP's `shmget`, then remove it with the wrapped `shmctl`, which asserted: the engine core died at startup. |
 | Expand `$ORIGIN` in a dlopen path for the wrapper's caller | glibc expands `$ORIGIN` for the object that called `dlopen`, which was DMTCP's wrapper. cuInterpose loads `$ORIGIN/libcuinterpose_core.so`, found nothing, and every `cuInit` it intercepted failed. |
 | Wrap `fcntl64` as `fcntl` | glibc 2.28 and later compile `fcntl` into `fcntl64` under 64-bit file offsets, as CPython is built, so DMTCP missed its `os.dup`. The child of multiprocessing's spawn keeps its parent sentinel only as such a duplicate, and the parent drained its end of the pipe forever at checkpoint. vLLM spawns whenever its API server initialized CUDA, which Qwen3.8-Flash-Next's model class does at import. |
+| Accept an already unlinked shm file after restart | Processes that share an area of a deleted `/dev/shm` file (CPython's named semaphores, unlinked at once) recreate one file at restart and each unlinks it again; every one but the first found it gone, and every vLLM restart printed a warning. |
 
 The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
 
@@ -175,6 +176,8 @@ The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
 - thread names, which `cuda-checkpoint` uses to find the restore thread;
 - `listen` on sockets DMTCP brought back unbound;
 - epoll watches lost when a forked child was elected the leader of a shared epoll fd.
+- Unix sockets listening on a path that DMTCP never saw, such as cuInterpose's control sockets, made with raw
+  syscalls: bound and listening again at their descriptor.
 
 ## The runtime image
 
