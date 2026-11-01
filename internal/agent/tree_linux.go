@@ -34,9 +34,8 @@ type tree interface {
 	// dump writes the tree's images and ends it; exited closes when the
 	// engine is gone.
 	dump(ctx context.Context, root int, exited <-chan struct{}) (DumpResult, error)
-	// restore brings the tree back from the images and returns its root on
-	// this host and a wait that returns once the root exits.
-	restore(ctx context.Context) (RestoreResult, int, func() error, error)
+	// restore brings the tree back from the images.
+	restore(ctx context.Context) (RestoreResult, restored, error)
 	// thaw lets the restored tree run.
 	thaw(ctx context.Context) error
 	// snapshotPIDs turns PIDs of the running tree into the ones the snapshot
@@ -50,11 +49,30 @@ type tree interface {
 	release()
 }
 
-func newTree(cfg Config, log func(string, ...any)) tree {
+// restored is a tree restore brought back: its root on this host, and a
+// wait that returns once the root exits.
+type restored struct {
+	root int
+	wait func() error
+}
+
+// newTree is cfg's backend, ready for the agent's steps.
+func newTree(cfg Config, log func(string, ...any)) (tree, error) {
 	if cfg.Backend == BackendDMTCP {
-		return &dmtcpTree{cfg: cfg, logf: log}
+		// The coordinator, the engine and dmtcp_restart inherit DMTCP_TMPDIR.
+		return &dmtcpTree{cfg: cfg, logf: log}, cfg.DMTCP.Setenv()
 	}
-	return &criuTree{cfg: cfg}
+	return &criuTree{cfg: cfg}, nil
+}
+
+// awaitExit waits for the engine a dump ended.
+func awaitExit(exited <-chan struct{}) error {
+	select {
+	case <-exited:
+		return nil
+	case <-time.After(30 * time.Second):
+		return errors.New("the engine outlived its dump")
+	}
 }
 
 // criuTree runs CRIU: the engine starts above a moved PID floor, the tree is
@@ -102,10 +120,8 @@ func (t *criuTree) dump(ctx context.Context, root int, exited <-chan struct{}) (
 		return DumpResult{}, err
 	}
 	seconds := time.Since(start).Seconds()
-	select {
-	case <-exited:
-	case <-time.After(30 * time.Second):
-		return DumpResult{}, errors.New("the engine outlived its dump")
+	if err := awaitExit(exited); err != nil {
+		return DumpResult{}, err
 	}
 	_ = t.frozen.Close()
 	t.frozen = nil
@@ -123,11 +139,11 @@ func criuVersion(ctx context.Context, program string) string {
 
 // restore brings the tree back stopped; its root's pidfd turns readable when
 // it exits, and PID 1 (docker-init or tini), its new parent, reaps it.
-func (t *criuTree) restore(ctx context.Context) (RestoreResult, int, func() error, error) {
+func (t *criuTree) restore(ctx context.Context) (RestoreResult, restored, error) {
 	start := time.Now()
 	f, err := criu.RestoreStopped(ctx, t.cfg.CRIU, t.cfg.Images, t.cfg.Work, t.cfg.Root, t.cfg.MaxID)
 	if err != nil {
-		return RestoreResult{}, 0, nil, err
+		return RestoreResult{}, restored{}, err
 	}
 	t.frozen = f
 	fd := f.RootFD()
@@ -140,7 +156,7 @@ func (t *criuTree) restore(ctx context.Context) (RestoreResult, int, func() erro
 			}
 		}
 	}
-	return RestoreResult{Tree: f.Tree, Seconds: time.Since(start).Seconds()}, f.Tree.Root, wait, nil
+	return RestoreResult{Tree: f.Tree, Seconds: time.Since(start).Seconds()}, restored{f.Tree.Root, wait}, nil
 }
 
 func (t *criuTree) thaw(ctx context.Context) error { return t.frozen.Thaw(ctx) }

@@ -262,7 +262,7 @@ type (
 		Processes []int  `json:"processes"`
 		Dir       string `json:"dir,omitempty"`
 	}
-	// RestoreResult reports the CRIU restore.
+	// RestoreResult reports the process restore, CRIU's or DMTCP's.
 	RestoreResult struct {
 		Tree    criu.Tree `json:"tree"`
 		Seconds float64   `json:"seconds"`

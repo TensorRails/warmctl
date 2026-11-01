@@ -40,9 +40,10 @@ const (
 // Env is what an engine needs to run under DMTCP:
 //   - fork with live OpenBLAS/OpenMP thread pools hangs the child (torch's
 //     import runs ldconfig in a subprocess), so the pools get one thread;
-//   - vLLM's spawn hands the engine core a pipe DMTCP turned into a
-//     socketpair and does not drain in the child, so the checkpoint never
-//     ends: the engine core is forked instead;
+//   - vLLM's workers are forked: spawn adds multiprocessing's resource
+//     tracker, one more process to checkpoint (vLLM still spawns once its
+//     API server initialized CUDA, which the fork's fcntl64 wrapper made
+//     work);
 //   - libuv must not batch epoll_ctl through io_uring, which DMTCP cannot see;
 //   - UCX (NIXL's transport, in the vLLM image) must not hook mmap and shmat:
 //     its hooks call the originals past DMTCP's wrappers.

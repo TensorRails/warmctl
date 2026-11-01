@@ -4,7 +4,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -131,38 +130,36 @@ func (t *dmtcpTree) dump(ctx context.Context, _ int, exited <-chan struct{}) (Du
 	if err := t.cfg.DMTCP.Kill(ctx); err != nil {
 		return DumpResult{}, err
 	}
-	select {
-	case <-exited:
-	case <-time.After(30 * time.Second):
-		return DumpResult{}, errors.New("the engine outlived its dump")
+	if err := awaitExit(exited); err != nil {
+		return DumpResult{}, err
 	}
 	return DumpResult{Seconds: seconds, Version: t.cfg.DMTCP.Version(ctx)}, nil
 }
 
 // restore restarts every image under a new coordinator. dmtcp_restart's
 // process becomes the tree's root, a child of the agent.
-func (t *dmtcpTree) restore(ctx context.Context) (RestoreResult, int, func() error, error) {
+func (t *dmtcpTree) restore(ctx context.Context) (RestoreResult, restored, error) {
 	start := time.Now()
 	images, err := dmtcp.Images(t.images())
 	if err != nil {
-		return RestoreResult{}, 0, nil, err
+		return RestoreResult{}, restored{}, err
 	}
 	if err := t.coordinator(ctx); err != nil {
-		return RestoreResult{}, 0, nil, err
+		return RestoreResult{}, restored{}, err
 	}
 	cmd, err := t.cfg.DMTCP.Restart(images, os.Stderr)
 	if err != nil {
 		t.release()
-		return RestoreResult{}, 0, nil, err
+		return RestoreResult{}, restored{}, err
 	}
 	done := make(chan struct{})
 	var waitErr error
 	go func() { waitErr = cmd.Wait(); close(done) }()
 	wait := func() error { <-done; return waitErr }
-	fail := func(err error) (RestoreResult, int, func() error, error) {
+	fail := func(err error) (RestoreResult, restored, error) {
 		t.kill(cmd.Process.Pid)
 		<-done
-		return RestoreResult{}, 0, nil, err
+		return RestoreResult{}, restored{}, err
 	}
 	exited := func() error {
 		select {
@@ -186,7 +183,7 @@ func (t *dmtcpTree) restore(ctx context.Context) (RestoreResult, int, func() err
 		return fail(err)
 	}
 	t.logf("dmtcp restarted %d processes in %.2fs", len(peers), time.Since(start).Seconds())
-	return RestoreResult{Tree: virtual, Seconds: time.Since(start).Seconds()}, cmd.Process.Pid, wait, nil
+	return RestoreResult{Tree: virtual, Seconds: time.Since(start).Seconds()}, restored{cmd.Process.Pid, wait}, nil
 }
 
 // thaw has nothing to do: the restarted tree runs, and its CUDA calls wait

@@ -58,14 +58,10 @@ func Run(ctx context.Context, configPath string, log io.Writer) error {
 	}
 	cfg.CRIU, cfg.CUDACheckpoint = tool(cfg.CRIU), tool(cfg.CUDACheckpoint)
 	a := &agent{cfg: cfg, log: log, pos: -1, done: make(chan struct{}), exited: make(chan struct{})}
-	a.tree = newTree(cfg, a.logf)
-	defer a.tree.release()
-	if cfg.Backend == BackendDMTCP {
-		// The coordinator, the engine and dmtcp_restart inherit DMTCP_TMPDIR.
-		if err := cfg.DMTCP.Setenv(); err != nil {
-			return err
-		}
+	if a.tree, err = newTree(cfg, a.logf); err != nil {
+		return err
 	}
+	defer a.tree.release()
 	if cfg.Hostname != "" {
 		if err := ownHostname(cfg.Hostname); err != nil {
 			return err
@@ -467,15 +463,15 @@ func (a *agent) install(ctx context.Context) (any, error) {
 
 // restore brings the tree back; the agent ends when its root exits.
 func (a *agent) restore(ctx context.Context) (any, error) {
-	res, root, wait, err := a.tree.restore(ctx)
+	res, tree, err := a.tree.restore(ctx)
 	if err != nil {
 		return nil, err
 	}
 	a.mu.Lock()
-	a.engine = root
+	a.engine = tree.root
 	a.mu.Unlock()
 	go func() {
-		a.setExit(wait())
+		a.setExit(tree.wait())
 		a.logf("restored engine exited")
 		a.finish()
 	}()
