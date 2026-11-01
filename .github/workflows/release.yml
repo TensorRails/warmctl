@@ -11,6 +11,10 @@ on:
       - .goreleaser.yaml
       - .github/workflows/release.yml
       - scripts/release-notes.sh
+      - scripts/fetch-dmtcp.sh
+      - scripts/install.sh
+      - scripts/test-install.py
+      - internal/dmtcp/**
       - Makefile
 
 permissions:
@@ -63,6 +67,11 @@ jobs:
           name: cuinterpose-linux-amd64
           path: ${{ runner.temp }}
       - run: mkdir -p bin && tar -xf "$RUNNER_TEMP/cuinterpose-linux-amd64.tar" -C bin && ls -l bin/cuinterpose
+      - name: Fetch the pinned DMTCP release packages
+        run: |
+          version=$(cat internal/dmtcp/VERSION)
+          scripts/fetch-dmtcp.sh amd64 "dmtcp/linux-amd64/$version"
+          scripts/fetch-dmtcp.sh arm64 "dmtcp/linux-arm64/$version"
       - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: ${{ env.SYFT_VERSION }}
@@ -76,12 +85,12 @@ jobs:
           TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v2.0.0-beta.5' }}
         run: scripts/release-notes.sh "$TAG" > "$RUNNER_TEMP/notes.md"
 
-      - name: Publish
+      - name: Build signed release archives
         if: startsWith(github.ref, 'refs/tags/')
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: ${{ env.GORELEASER_VERSION }}
-          args: release --clean --release-notes ${{ runner.temp }}/notes.md
+          args: release --clean --skip=publish --release-notes ${{ runner.temp }}/notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Provenance
@@ -104,11 +113,83 @@ jobs:
           tar -xzf dist/warmctl-*-linux-amd64.tar.gz -C "$RUNNER_TEMP" warmctl cuinterpose/libcuinterpose.so
           "$RUNNER_TEMP/warmctl" version
           test -x "$RUNNER_TEMP/warmctl"
-      - if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: snapshot
+          name: release-packages
           path: |
             dist/*.tar.gz
             dist/*checksums.txt
+            dist/*.sigstore.json
+            dist/*.sbom.json
           retention-days: 7
+
+  verify-native:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-packages
+          path: packages
+      - name: Check the actual native archive and plugin
+        run: |
+          mkdir unpacked
+          tar -xzf packages/*-linux-${{ matrix.arch }}.tar.gz -C unpacked
+          unpacked/warmctl version
+          version=$(cat internal/dmtcp/VERSION)
+          root="$PWD/unpacked/dmtcp/linux-${{ matrix.arch }}/$version"
+          "$root/bin/dmtcp_launch" --version
+          "$root/bin/dmtcp_coordinator" --daemon --exit-on-last --port 0 --port-file "$RUNNER_TEMP/dmtcp.port"
+          port=$(cat "$RUNNER_TEMP/dmtcp.port")
+          trap '"$root/bin/dmtcp_command" --coord-port "$port" --quit || true' EXIT
+          DMTCP_PLUGIN="$root/lib/libdmtcp_fdkeep.so" "$root/bin/dmtcp_launch" --join-coordinator --coord-port "$port" /bin/true
+      - name: Checkpoint and restore with the packaged runtime on Ubuntu 24.04
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(cat internal/dmtcp/VERSION)
+          mkdir "$RUNNER_TEMP/dmtcp-source"
+          gh release download "$version" --repo TensorRails/dmtcp --pattern "dmtcp-$version-source.tar.gz" --dir "$RUNNER_TEMP/dmtcp-source"
+          (cd "$RUNNER_TEMP/dmtcp-source" && sha256sum --ignore-missing -c "$GITHUB_WORKSPACE/internal/dmtcp/SHA256SUMS")
+          tar -xzf "$RUNNER_TEMP/dmtcp-source/dmtcp-$version-source.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/dmtcp-source"
+          root="$PWD/unpacked/dmtcp/linux-${{ matrix.arch }}/$version"
+          # Use the generated version header from the installed package.
+          CPATH="$root/include" python3 "$RUNNER_TEMP/dmtcp-source/test/restore-memory-check.py" --root "$root" \
+            --plugin "$root/lib/libdmtcp_fdkeep.so" --output "$RUNNER_TEMP/dmtcp-installed-check"
+      - name: Install, reinstall, preserve old snapshots and refuse replacement
+        run: INSTALL_TEST_ARCHIVE=$(echo "$PWD"/packages/*-linux-${{ matrix.arch }}.tar.gz) python3 scripts/test-install.py
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: verify-native
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-packages
+          path: packages
+      - name: Publish verified archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          scripts/release-notes.sh "$TAG" > "$RUNNER_TEMP/notes.md"
+          flags=()
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" packages/* --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"

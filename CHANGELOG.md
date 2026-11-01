@@ -1,5 +1,37 @@
 # Changelog
 
+## v2.0.0-beta.17 — 2026-11-01
+
+Large local DMTCP snapshots restore faster with huge pages and parallel
+CPU-memory reads. On one H200, Qwen3.8-Flash-Next-NVFP4 reached health in
+20.21–23.43 s across four runs (median 20.83 s, first streaming token
+20.92 s), versus 77.36/82.14 s with the ordinary reader on the same host
+and snapshot. These were local restores with hot file cache and sufficient
+RAM, excluding provisioning and snapshot transfer; this is not a <=20 s SLA.
+
+- `up` supplies restart-only huge-page advice and up to 16 parallel readers,
+  bounded by Go's container-aware CPU budget. Explicit
+  `DMTCP_RESTART_HUGEPAGES` and `DMTCP_RESTART_READERS` values override the
+  defaults. Private mmap remains disabled by default because it shifted
+  work into CUDA and worsened full recovery time.
+- Linux archives now include the separately released TensorRails DMTCP
+  `v5.0.0-warmctl.1` runtime and fdkeep plugin for amd64 and arm64. The
+  runtime Dockerfile downloads the same packages with source-pinned SHA-256
+  checksums, with no DMTCP compilation during the warmctl build. Packages
+  require Debian 12-compatible glibc/libstdc++; macOS remains client-only.
+- The CLI finds its versioned runtime beside its own executable, including
+  custom install prefixes. The installer preserves runtime bytes and mtimes,
+  retains older versions, and refuses to replace a different build at the
+  same version. Bake new snapshots after upgrading; old snapshots still
+  need their original libraries and paths.
+- Release archives and the installer are tested natively on both Linux
+  architectures before publication. ARM64 is CPU-tested; GPU serving and
+  the parallel reader remain x86-64-only qualifications.
+- All 20 GPU experiments matched weight fingerprints and passed streaming
+  and tool-call tests; 640 short requests succeeded. The numerical canary
+  remains unqualified: the donor already varied before checkpoint. Its
+  tolerance is unchanged. See docs/dmtcp.md for the phase breakdown.
+
 ## v2.0.0-beta.16 — 2026-11-01
 
 warmctl now runs where CRIU cannot: in containers without privileges, such

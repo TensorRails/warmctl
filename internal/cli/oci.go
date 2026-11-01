@@ -155,7 +155,7 @@ func runPull(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	mode := fs.String("mode", restore.ModeAuto, "where the snapshot will restore, as up's --mode: of an index's "+
 		"entries, one this host can restore that way (auto, host or in-place)")
 	sock := fs.String("docker", docker.DefaultSocket, "Docker socket")
-	tools := dmtcp.Tools{Dir: dmtcp.DefaultDir, Plugin: dmtcp.DefaultPlugin}
+	tools := dmtcp.DefaultTools()
 	fs.StringVar(&tools.Dir, "dmtcp-dir", tools.Dir, "directory of DMTCP's programs, for the dmtcp backend")
 	pos, err := positionals(fs, args)
 	if err != nil {

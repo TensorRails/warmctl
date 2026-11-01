@@ -26,6 +26,71 @@ rsync -a --exclude manifest.json /snap/q8/ /nv/snap/q8/ && cp /snap/q8/manifest.
 warmctl up /nv/snap/q8 --mode in-place        # or up NAME: the index entry this host can restore
 ```
 
+## Large local images and the versioned fork
+
+From warmctl beta.17, the receiver supplies `DMTCP_RESTART_HUGEPAGES=1` and
+`DMTCP_RESTART_READERS` for DMTCP restores. Readers are bounded by Go's
+container-aware CPU budget: 1–8, or 16 when at least 16 CPUs are available.
+They operate per process and only on raw regular-file payloads of at least
+1 GiB on x86-64. Explicit values in the receiver environment override these
+defaults. Compressed streams and older DMTCP builds keep ordinary reading.
+`DMTCP_RESTART_MMAP` defaults to 0: CUDA restoration can force private copies
+and erase its memory-pass benefit. Profiling is opt-in:
+
+```bash
+DMTCP_RESTART_PROFILE=1 warmctl up SNAPSHOT --mode in-place
+# Compare with the ordinary reader:
+DMTCP_RESTART_HUGEPAGES=0 DMTCP_RESTART_READERS=1 warmctl up SNAPSHOT --mode in-place
+```
+
+**One H200, Qwen3.8-Flash-Next-NVFP4, local snapshot with hot file cache:**
+four optimized runs reached health in **20.21, 23.43, 20.27, 21.39 s**;
+median **20.83 s**, first streaming token **20.92 s**. The same host and
+snapshot took 77.36/82.14 s with the ordinary reader. One full pair:
+
+| Phase | Ordinary reader | Huge pages + 16 readers |
+| --- | ---: | ---: |
+| Setup and filesystem | 3.09 s | 3.33 s |
+| DMTCP | 54.09 s | 4.04 s |
+| CUDA | 13.52 s | 6.73 s |
+| Wake and reload weights | 5.62 s | 5.12 s |
+| KV, health, canary | 0.99 s | 0.99 s |
+| Total including health polling | 77.36 s | 20.27 s |
+
+The slow path incurred 14.15 million minor faults while loading a 47.68 GiB
+anonymous region already in page cache. Huge pages and parallel reads
+reduced its load to 1.27–1.33 s. The cgroup had 20.4 CPUs and 233.76 GiB RAM;
+unused experimental-image cache was evicted before the fast series, which
+peaked at 213.08 GiB without direct reclaim. These numbers exclude provisioning
+and snapshot transfer and are not a <=20 s SLA. All 20 experiment restores
+matched weight fingerprints and passed streaming/tool checks; all 640 short
+requests succeeded. Numerical equivalence remains unqualified: the donor
+already varied before checkpoint. The canary tolerance remains 0.001.
+The [full experiment record](https://github.com/TensorRails/dmtcp/blob/v5.0.0-warmctl.1/doc/h200-restart-performance.md)
+includes all modes, cache conditions and the unsuccessful mmap experiment.
+
+The fork is released independently as
+[`v5.0.0-warmctl.1`](https://github.com/TensorRails/dmtcp/releases/tag/v5.0.0-warmctl.1),
+with source, Debian 12-compatible Linux amd64 and arm64 packages, checksums
+and provenance. Both packages include fdkeep. Linux warmctl archives bundle
+them at `dmtcp/linux-ARCH/VERSION/` beside the CLI; the runtime Dockerfile
+fetches the same assets into `/opt/warmctl/dmtcp`. Downloads are verified
+against SHA-256 values pinned in warmctl's source. No fork compilation is
+needed during warmctl packaging. macOS archives remain client-only.
+
+**Bake a new snapshot after upgrading the runtime.** Donor and receiver need
+byte-identical mapped libraries at the same paths. The installer preserves
+versioned DMTCP directories and their mtimes, and keeps older versions for
+existing snapshots. Use an old snapshot's original runtime image or explicit
+`--dmtcp-dir` / `--dmtcp-plugin` paths. Publishing a CLI release does not
+replace an existing runtime image. See the fork's
+[release procedure](https://github.com/TensorRails/dmtcp/blob/v5.0.0-warmctl.1/RELEASING.md).
+
+The packages require glibc >= 2.36 and compatible libstdc++. ARM64 passes
+native CPU checkpoint/restore tests, including fdkeep; GPU serving has not
+been qualified on ARM64. Parallel pread is x86-64-only; ARM64 uses the
+ordinary reader with optional huge pages.
+
 ## Choosing the backend
 
 | | Decided by |
@@ -100,14 +165,15 @@ A pod restores a snapshot another pod took when it runs the same image, GPU mode
 - **The engine's image.** An in-place bake records the runtime image's base (`/opt/warmctl/RUNTIME`) as the
   engine's image, which a receiver compares with its own.
 - **DMTCP.** Library text is mapped from the receiver's files (see the fork below), so DMTCP and every library
-  must be byte-identical: the same image. `--dmtcp-dir` defaults to the image's `/opt/warmctl/dmtcp/bin`, not
-  PATH. A shell in a RunPod pod lacks the image's PATH, and any other DMTCP would not match.
+  must be byte-identical. `--dmtcp-dir` defaults to the bundled versioned runtime beside the CLI,
+  or `/opt/warmctl/dmtcp/bin` in the runtime image. It never selects an arbitrary build from PATH.
 
 ## Restoring from network storage
 
 A RunPod Pod gets its snapshot from a Global Volume (S3 behind geesefs, FUSE on the host) or a network
-volume (MooseFS over FUSE in EU-NL-1, VAST NFS in CA-MTL-1). The restore's readers, `dmtcp_restart` and
-the weights reload, read one stream each, and FUSE keeps no page cache the prefetch could fill for them.
+volume (MooseFS over FUSE in EU-NL-1, VAST NFS in CA-MTL-1). These mounts can limit throughput
+and page-cache reuse. The parallel DMTCP reader improves local raw-image restoration; network staging
+still handles remote throughput and independent compressed frames.
 
 So `up` from a FUSE directory, or from any snapshot stored encoded, stages a local copy (`restore.Stage`):
 
@@ -144,8 +210,7 @@ records each file's encoding, frame ends and byte-plane split; sizes and SHA-256
   `--compress`. The source keeps its files, so one bake gives both: a snapshot `push` publishes, and a smaller
   copy for a network volume.
 
-Compression stays out of the restore itself. The fork can pipe its images through zstd (`DMTCP_ZSTD=1`,
-commit `fbbaf3f`, after the one warmctl pins), but `mtcp_restart` then reads one decoded stream through a
+Compression stays out of the restore itself. The fork can pipe its images through zstd (`DMTCP_ZSTD=1`), but `mtcp_restart` then reads one decoded stream through a
 pipe at 0.67 GB/s. A restore from a local copy went from 10.3 to 15.4 s that way, so the images stay raw on
 disk.
 
@@ -154,8 +219,8 @@ are [#60](https://github.com/TensorRails/warmctl/issues/60).
 
 ## DMTCP: the fork and the plugin
 
-Branch `warmctl` of [TensorRails/dmtcp](https://github.com/TensorRails/dmtcp/tree/warmctl) is DMTCP 5.0
-with these patches:
+The released [TensorRails/dmtcp](https://github.com/TensorRails/dmtcp) fork is DMTCP 5.0
+with the restart changes above and these earlier patches:
 
 | Patch | Why |
 |---|---|
@@ -171,7 +236,8 @@ with these patches:
 | Accept an already unlinked shm file after restart | Processes that share an area of a deleted `/dev/shm` file (CPython's named semaphores, unlinked at once) recreate one file at restart and each unlinks it again; every one but the first found it gone, and every vLLM restart printed a warning. |
 | Change a socket's connection only with the fd table locked | `setsockopt`, `connect`, `bind` and `listen` changed the connection they had looked up while another thread could delete it: `add()` drops the entry of an fd closed past the close wrapper once the number comes back. A worker restarted under cuInterpose, whose Rust threads make and close some sockets with raw syscalls, segfaulted in `SocketConnection::addSetsockopt` once in about a dozen restores. |
 
-The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
+The plugin [fdkeep](https://github.com/TensorRails/dmtcp/tree/v5.0.0-warmctl.1/plugin/fdkeep),
+now maintained and released with the fork, repairs what DMTCP loses:
 
 - the CUDA driver's eventfds and pipes, recreated as real pipes;
 - thread names, which `cuda-checkpoint` uses to find the restore thread;
@@ -182,8 +248,8 @@ The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
 
 ## The runtime image
 
-`deploy/kubernetes/Dockerfile` builds the fork at a pinned commit and fdkeep against it, on the base, into
-`/opt/warmctl/dmtcp`.
+`deploy/kubernetes/Dockerfile` downloads the pinned DMTCP release with fdkeep into
+`/opt/warmctl/dmtcp`, checks its SHA-256, and executes it to reject incompatible base images.
 
 - **Base.** The default base (vLLM's cu134 nightly, CUDA 13.4) runs on RunPod's 595.91 driver (CUDA 13.2)
   through CUDA's minor-version compatibility: verified on 4×RTX PRO 6000 in EU-RO-1. The experimental image
@@ -279,6 +345,5 @@ runs at that pod's upload speed (0.22 GiB/s): geesefs uploads in the background 
 
 ```bash
 ./configure --prefix=/opt/warmctl/dmtcp && make -j && make install
-gcc -shared -fPIC -O2 -I/opt/warmctl/dmtcp/include -o /opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so \
-  internal/dmtcp/fdkeep/fdkeep.c
+make -C plugin/fdkeep install PREFIX=/opt/warmctl/dmtcp
 ```

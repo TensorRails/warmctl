@@ -3,8 +3,16 @@ Copyright 2026 The warmctl Authors
 
 This product is licensed under the Apache License, Version 2.0 (LICENSE).
 
-Release archives also contain cuInterpose (cuinterpose/), Copyright (c) 2026
+Linux amd64 release archives also contain cuInterpose (cuinterpose/), Copyright (c) 2026
 NVIDIA CORPORATION & AFFILIATES, licensed under the Apache License, Version
 2.0 (cuinterpose/LICENSE). It is built unmodified from
 https://github.com/ai-dynamo/snapshot at commit
 50bf0db3575df64c968e3f3255d5fa8938950b7a (v0.2.0-rc.2), agent/cmd/cuinterpose.
+
+Linux release archives also contain TensorRails' DMTCP fork, based on DMTCP
+5.0, under the GNU Lesser General Public License version 3 or later. See
+COPYING, COPYING.LESSER and AUTHORS under dmtcp/linux-ARCH/VERSION/share/doc/dmtcp.
+Corresponding source is published with each independently versioned release:
+https://github.com/TensorRails/dmtcp/releases
+The included fdkeep plugin is Copyright 2026 The warmctl Authors, under the
+Apache License 2.0; its license is in the same runtime's share/doc/dmtcp/fdkeep.

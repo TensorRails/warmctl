@@ -1,0 +1,112 @@
+name: runtime image
+
+# Publish only an already released CLI. GPU cold-start qualification follows
+# separately; this workflow deliberately does not move the latest image tag.
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Published warmctl release tag
+        required: true
+      image_tag:
+        description: Optional image tag (defaults to the release tag)
+        required: false
+      base:
+        description: Optional pinned base image (defaults to the Dockerfile base)
+        required: false
+
+permissions:
+  contents: read
+  attestations: read
+
+concurrency:
+  group: runtime-image-${{ inputs.image_tag || inputs.release }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RELEASE: ${{ inputs.release }}
+      IMAGE_TAG: ${{ inputs.image_tag || inputs.release }}
+      BASE_IMAGE: ${{ inputs.base }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release }}
+          persist-credentials: false
+      - name: Validate release and image tag
+        run: |
+          [[ "$RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ ]]
+          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]
+          gh release view "$RELEASE" --repo TensorRails/warmctl
+          if [ -n "$BASE_IMAGE" ]; then [[ "$BASE_IMAGE" == *@sha256:* ]]; fi
+      - name: Make room for the vLLM image
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+          df -h /
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Fetch and verify the released cuInterpose bundle
+        run: |
+          mkdir -p "$RUNNER_TEMP/release" bin
+          gh release download "$RELEASE" --repo TensorRails/warmctl --dir "$RUNNER_TEMP/release" \
+            --pattern "warmctl-$RELEASE-linux-amd64.tar.gz" --pattern "warmctl-$RELEASE-checksums.txt"
+          (cd "$RUNNER_TEMP/release" && sha256sum --ignore-missing -c "warmctl-$RELEASE-checksums.txt")
+          gh attestation verify "$RUNNER_TEMP/release/warmctl-$RELEASE-linux-amd64.tar.gz" --repo TensorRails/warmctl
+          tar -xzf "$RUNNER_TEMP/release/warmctl-$RELEASE-linux-amd64.tar.gz" -C bin cuinterpose
+      - name: Build the released runtime
+        run: |
+          args=()
+          if [ -n "$BASE_IMAGE" ]; then args+=(--build-arg "BASE=$BASE_IMAGE"); fi
+          docker build -t "localhost:5000/warmctl/runtime:$IMAGE_TAG" \
+            -f deploy/kubernetes/Dockerfile --build-context cuinterpose=bin/cuinterpose \
+            --build-arg "VERSION=$RELEASE" "${args[@]}" .
+      - name: Verify runtime programs and native plugin
+        run: |
+          docker run --rm --entrypoint /bin/bash "localhost:5000/warmctl/runtime:$IMAGE_TAG" -lc '
+            set -e
+            warmctl version
+            cat /opt/warmctl/RUNTIME /opt/warmctl/dmtcp/BUILDINFO
+            python3 -c "import importlib.metadata as m; print(\"vllm\", m.version(\"vllm\"))"
+            root=/opt/warmctl/dmtcp
+            "$root/bin/dmtcp_coordinator" --daemon --exit-on-last --port 0 --port-file /tmp/dmtcp.port
+            port=$(cat /tmp/dmtcp.port)
+            DMTCP_PLUGIN="$root/lib/libdmtcp_fdkeep.so" "$root/bin/dmtcp_launch" --join-coordinator --coord-port "$port" /bin/true
+          '
+      - name: Install the pinned registry client
+        run: |
+          curl -fsSL --retry 3 https://github.com/regclient/regclient/releases/download/v0.11.7/regctl-linux-amd64 -o "$RUNNER_TEMP/regctl"
+          echo "3737fbbdd791e04e7a831640b681f3397a376498e80e2ad9b1b2d27296f239bc  $RUNNER_TEMP/regctl" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/regctl"
+      - name: Publish with bounded registry chunks
+        env:
+          WARMCTL_REGISTRY_AUTH: ${{ secrets.WARMCTL_REGISTRY_AUTH }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          config = json.loads(os.environ['WARMCTL_REGISTRY_AUTH'])
+          assert set(config['auths']) == {'registry.warmctl.io'}
+          path = Path.home() / '.docker/config.json'
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(config))
+          path.chmod(0o600)
+          PY
+          docker run -d --name release-registry -p 127.0.0.1:5000:5000 registry:2
+          docker push "localhost:5000/warmctl/runtime:$IMAGE_TAG"
+          "$RUNNER_TEMP/regctl" registry set localhost:5000 --tls disabled
+          "$RUNNER_TEMP/regctl" registry set registry.warmctl.io --blob-chunk 67108864 --blob-max 67108864
+          "$RUNNER_TEMP/regctl" image copy "localhost:5000/warmctl/runtime:$IMAGE_TAG" "registry.warmctl.io/warmctl/runtime:$IMAGE_TAG"
+          digest=$("$RUNNER_TEMP/regctl" image digest "registry.warmctl.io/warmctl/runtime:$IMAGE_TAG")
+          printf 'registry.warmctl.io/warmctl/runtime:%s@%s\n' "$IMAGE_TAG" "$digest" | tee runtime-image.txt
+          cat runtime-image.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-image
+          path: runtime-image.txt
+          if-no-files-found: error
+      - name: Remove credentials
+        if: always()
+        run: rm -f "$HOME/.docker/config.json"

@@ -15,6 +15,7 @@ package dmtcp
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +38,31 @@ const (
 	DefaultDir    = "/opt/warmctl/dmtcp/bin"
 	DefaultPlugin = "/opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so"
 )
+
+//go:embed VERSION
+var bundledVersion string
+
+// DefaultTools uses the release's own runtime, never another build from PATH.
+// Resolve the executable symlink before looking beside it (custom prefixes).
+func DefaultTools() Tools {
+	self, _ := os.Executable()
+	return defaultTools(self, runtime.GOOS+"-"+runtime.GOARCH, strings.TrimSpace(bundledVersion))
+}
+
+func defaultTools(self, platform, version string) Tools {
+	legacy := Tools{Dir: DefaultDir, Plugin: DefaultPlugin}
+	if self == "" || version == "" {
+		return legacy
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	root := filepath.Join(filepath.Dir(self), "dmtcp", platform, version)
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return legacy
+	}
+	return Tools{Dir: filepath.Join(root, "bin"), Plugin: filepath.Join(root, "lib", "libdmtcp_fdkeep.so")}
+}
 
 // Env is what an engine needs to run under DMTCP:
 //   - fork with live OpenBLAS/OpenMP thread pools hangs the child (torch's
@@ -237,11 +264,45 @@ func (t Tools) RestartArgs(images []string) []string {
 func (t Tools) Restart(images []string, log io.Writer) (*exec.Cmd, error) {
 	args := t.RestartArgs(images)
 	cmd := exec.Command(t.path("dmtcp_restart"), args...)
+	cmd.Env = restartEnv(os.Environ(), runtime.GOMAXPROCS(0))
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	return cmd, nil
+}
+
+// restartEnv enables the fork's large-image reader only for restart. Go's
+// GOMAXPROCS default respects container CPU quota; use a supported reader
+// count no larger than that budget. Explicit environment settings, including
+// an empty value, win so a caller can compare or disable either optimization.
+// Older DMTCP builds ignore these variables. Private mmap remains opt-in:
+// CUDA host-memory registration can make it much slower than copying.
+func restartEnv(env []string, cpus int) []string {
+	readers := min(8, max(1, cpus))
+	if cpus >= 16 {
+		readers = 16
+	}
+	defaults := []string{
+		"DMTCP_RESTART_HUGEPAGES=1",
+		"DMTCP_RESTART_READERS=" + strconv.Itoa(readers),
+		"DMTCP_RESTART_MMAP=0",
+	}
+	result := append([]string(nil), env...)
+	for _, setting := range defaults {
+		key, _, _ := strings.Cut(setting, "=")
+		found := false
+		for _, entry := range env {
+			if strings.HasPrefix(entry, key+"=") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result = append(result, setting)
+		}
+	}
+	return result
 }
 
 // Peer is a process of the computation.
