@@ -71,7 +71,7 @@ jobs:
             --build-arg "VERSION=$RELEASE" "${args[@]}" .
       - name: Verify runtime programs and native plugin
         run: |
-          docker run --rm --entrypoint /bin/bash "localhost:5000/warmctl/runtime:$IMAGE_TAG" -lc '
+          docker run --rm --entrypoint /usr/local/bin/tini "localhost:5000/warmctl/runtime:$IMAGE_TAG" -- /bin/bash -lc '
             set -e
             warmctl version
             cat /opt/warmctl/RUNTIME /opt/warmctl/dmtcp/BUILDINFO
