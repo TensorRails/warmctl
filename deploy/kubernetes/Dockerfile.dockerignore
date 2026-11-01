@@ -1,4 +1,4 @@
-# Only what the Go build and the extension need.
+# Only what the Go build, extension and released DMTCP package need.
 *
 !go.mod
 !go.sum
@@ -8,5 +8,6 @@
 !profiles
 !hardware
 !python/warmctl_vllm
+!scripts/fetch-dmtcp.sh
 **/*_test.go
 **/__pycache__

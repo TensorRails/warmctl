@@ -58,6 +58,11 @@ jobs:
           tar -xzf "$RUNNER_TEMP/release/warmctl-$RELEASE-linux-amd64.tar.gz" -C bin cuinterpose
       - name: Build the released runtime
         run: |
+          # beta.17's Docker context omitted this newly added package fetcher.
+          # Keep the published tag immutable; only repair its build-context list.
+          if [ "$RELEASE" = v2.0.0-beta.17 ]; then
+            printf '\n!scripts/fetch-dmtcp.sh\n' >> deploy/kubernetes/Dockerfile.dockerignore
+          fi
           args=()
           if [ -n "$BASE_IMAGE" ]; then args+=(--build-arg "BASE=$BASE_IMAGE"); fi
           docker build -t "localhost:5000/warmctl/runtime:$IMAGE_TAG" \
