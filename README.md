@@ -157,11 +157,15 @@ driver branch it was built on (580.x, 610.x). Proven on H100 SXM, H200, B200,
 B300, L40S and RTX PRO 6000. `warmctl hardware` lists the GPU models warmctl knows and marks this
 host's; another model is a row in a `hardware.yaml` next to your profiles
 (`--profile-dir`).
-Keep `warmctl` and `cuinterpose/` from the linux-amd64 archive side by side,
-or build both with `make build cuinterpose`. Releases also ship linux-arm64
-(no cuInterpose yet, not proven on a GPU) and macOS builds, which run the
-registry side: `catalog`, `images`, `mirror`, `push`, `pull`. Every release
-is signed and has build provenance ([verify](RELEASING.md#verify-a-release)).
+Keep `warmctl`, `cuinterpose/` and the versioned `dmtcp/` directory from the
+linux-amd64 archive side by side; the installer does this automatically.
+Linux arm64 archives include DMTCP but no cuInterpose yet and are CPU-tested,
+not GPU-qualified. The native DMTCP packages require Debian 12-compatible
+glibc (>= 2.36) and libstdc++. macOS builds run the registry side: `catalog`,
+`images`, `mirror`, `push`, `pull`. Source builds use `make build cuinterpose`;
+see [DMTCP runtime installation and upgrades](docs/dmtcp.md).
+Every release is signed and has build provenance
+([verify](RELEASING.md#verify-the-cli-release)).
 
 ## Develop
 
