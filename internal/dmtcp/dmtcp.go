@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -237,11 +238,45 @@ func (t Tools) RestartArgs(images []string) []string {
 func (t Tools) Restart(images []string, log io.Writer) (*exec.Cmd, error) {
 	args := t.RestartArgs(images)
 	cmd := exec.Command(t.path("dmtcp_restart"), args...)
+	cmd.Env = restartEnv(os.Environ(), runtime.GOMAXPROCS(0))
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	return cmd, nil
+}
+
+// restartEnv enables the fork's large-image reader only for restart. Go's
+// GOMAXPROCS default respects container CPU quota; use a supported reader
+// count no larger than that budget. Explicit environment settings, including
+// an empty value, win so a caller can compare or disable either optimization.
+// Older DMTCP builds ignore these variables. Private mmap remains opt-in:
+// CUDA host-memory registration can make it much slower than copying.
+func restartEnv(env []string, cpus int) []string {
+	readers := min(8, max(1, cpus))
+	if cpus >= 16 {
+		readers = 16
+	}
+	defaults := []string{
+		"DMTCP_RESTART_HUGEPAGES=1",
+		"DMTCP_RESTART_READERS=" + strconv.Itoa(readers),
+		"DMTCP_RESTART_MMAP=0",
+	}
+	result := append([]string(nil), env...)
+	for _, setting := range defaults {
+		key, _, _ := strings.Cut(setting, "=")
+		found := false
+		for _, entry := range env {
+			if strings.HasPrefix(entry, key+"=") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result = append(result, setting)
+		}
+	}
+	return result
 }
 
 // Peer is a process of the computation.

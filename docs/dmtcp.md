@@ -26,6 +26,63 @@ rsync -a --exclude manifest.json /snap/q8/ /nv/snap/q8/ && cp /snap/q8/manifest.
 warmctl up /nv/snap/q8 --mode in-place        # or up NAME: the index entry this host can restore
 ```
 
+## Large local images and the versioned fork
+
+From warmctl beta.17, the receiver supplies `DMTCP_RESTART_HUGEPAGES=1` and
+`DMTCP_RESTART_READERS` for DMTCP restores. Readers are bounded by Go's
+container-aware CPU budget: 1–8, or 16 when at least 16 CPUs are available.
+They operate per process and only on raw regular-file payloads of at least
+1 GiB on x86-64. Explicit values in the receiver environment override these
+defaults. Compressed streams and older DMTCP builds keep ordinary reading.
+`DMTCP_RESTART_MMAP` defaults to 0: CUDA restoration can force private copies
+and erase its memory-pass benefit. Profiling is opt-in:
+
+```bash
+DMTCP_RESTART_PROFILE=1 warmctl up SNAPSHOT --mode in-place
+# Compare with the ordinary reader:
+DMTCP_RESTART_HUGEPAGES=0 DMTCP_RESTART_READERS=1 warmctl up SNAPSHOT --mode in-place
+```
+
+**One H200, Qwen3.8-Flash-Next-NVFP4, local snapshot with hot file cache:**
+four optimized runs reached health in **20.21, 23.43, 20.27, 21.39 s**;
+median **20.83 s**, first streaming token **20.92 s**. The same host and
+snapshot took 77.36/82.14 s with the ordinary reader. One full pair:
+
+| Phase | Ordinary reader | Huge pages + 16 readers |
+| --- | ---: | ---: |
+| Setup and filesystem | 3.09 s | 3.33 s |
+| DMTCP | 54.09 s | 4.04 s |
+| CUDA | 13.52 s | 6.73 s |
+| Wake and reload weights | 5.62 s | 5.12 s |
+| KV, health, canary | 0.99 s | 0.99 s |
+| Total including health polling | 77.36 s | 20.27 s |
+
+The slow path incurred 14.15 million minor faults while loading a 47.68 GiB
+anonymous region already in page cache. Huge pages and parallel reads
+reduced its load to 1.27–1.33 s. The cgroup had 20.4 CPUs and 233.76 GiB RAM;
+unused experimental-image cache was evicted before the fast series, which
+peaked at 213.08 GiB without direct reclaim. These numbers exclude provisioning
+and snapshot transfer and are not a <=20 s SLA. All 20 experiment restores
+matched weight fingerprints and passed streaming/tool checks; all 640 short
+requests succeeded. Numerical equivalence remains unqualified: the donor
+already varied before checkpoint. The canary tolerance remains 0.001.
+The [full experiment record](https://github.com/TensorRails/dmtcp/blob/v5.0.0-warmctl.1/doc/h200-restart-performance.md)
+includes all modes, cache conditions and the unsuccessful mmap experiment.
+
+The fork is released independently as
+[`v5.0.0-warmctl.1`](https://github.com/TensorRails/dmtcp/releases/tag/v5.0.0-warmctl.1),
+with source, an Ubuntu 24.04 x86-64 binary archive, checksums and provenance.
+The runtime Dockerfile pins its commit and still compiles on the engine's
+base image. The separate binary archive does not include warmctl's fdkeep
+plugin and is not a portable substitute for that build.
+
+**Upgrade by building the new runtime and baking a new snapshot.** Donor and
+receiver must use byte-identical mapped libraries. Keep an old snapshot's
+runtime; replacing its `libdmtcp.so` with a release build is not an upgrade
+path. Installing a new warmctl CLI alone does not replace DMTCP or an existing
+runtime image. See the fork's
+[release procedure](https://github.com/TensorRails/dmtcp/blob/v5.0.0-warmctl.1/RELEASING.md).
+
 ## Choosing the backend
 
 | | Decided by |

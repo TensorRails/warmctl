@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.0.0-beta.17 — 2026-11-01
+
+Large local DMTCP snapshots restore faster with huge pages and parallel
+CPU-memory reads. On one H200, Qwen3.8-Flash-Next-NVFP4 reached health in
+20.21–23.43 s across four runs (median 20.83 s, first streaming token
+20.92 s), versus 77.36/82.14 s with the ordinary reader on the same host
+and snapshot. These were local restores with hot file cache and sufficient
+RAM, excluding provisioning and snapshot transfer; this is not a <=20 s SLA.
+
+- `up` supplies restart-only huge-page advice and up to 16 parallel readers,
+  bounded by Go's container-aware CPU budget. Explicit
+  `DMTCP_RESTART_HUGEPAGES` and `DMTCP_RESTART_READERS` values override the
+  defaults. Private mmap remains disabled by default because it shifted
+  work into CUDA and worsened full recovery time.
+- The runtime Dockerfile pins TensorRails DMTCP `v5.0.0-warmctl.1`, released
+  independently with source, an Ubuntu 24.04 x86-64 binary, checksums and
+  provenance. Build it on the runtime base and bake new snapshots; an old
+  snapshot still needs its original byte-identical mapped libraries.
+- All 20 GPU experiments matched weight fingerprints and passed streaming
+  and tool-call tests; 640 short requests succeeded. The numerical canary
+  remains unqualified: the donor already varied before checkpoint. Its
+  tolerance is unchanged. See docs/dmtcp.md for the phase breakdown.
+
 ## v2.0.0-beta.16 — 2026-11-01
 
 warmctl now runs where CRIU cannot: in containers without privileges, such

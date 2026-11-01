@@ -31,7 +31,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # link the libc the engine runs with. A restore maps DMTCP's own text from
 # these files, so donor and receiver need this very build.
 FROM ${BASE} AS dmtcp
-ARG DMTCP_COMMIT=fc4c8a3878606dad0b487cd716ddaa5b1ea0195d
+# TensorRails fork release v5.0.0-warmctl.1. Keep the source pin immutable;
+# build against this runtime base instead of mixing prebuilt libc versions.
+ARG DMTCP_COMMIT=96a4c0fc394d7714bdc2e1723a661f9aec032172
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git \
     && git clone https://github.com/TensorRails/dmtcp /src/dmtcp && cd /src/dmtcp && git checkout ${DMTCP_COMMIT} \
     && ./configure --prefix=/opt/warmctl/dmtcp && make -j"$(nproc)" && make install

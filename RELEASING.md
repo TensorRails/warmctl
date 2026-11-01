@@ -44,7 +44,20 @@
 
 5. If `catalog/catalog.yaml` changed: `make catalog-push`.
 
-## Verify a release
+## DMTCP dependency
+
+DMTCP has independent `v5.0.0-warmctl.N` tags in TensorRails/dmtcp. For a
+dependency update, wait for that fork's release tests and assets, then pin
+the released full commit in `deploy/kubernetes/Dockerfile`. Keep building
+on the runtime base with fdkeep; the fork's Ubuntu binary archive is not
+universally compatible with another libc or an existing snapshot.
+
+The CLI archive does not install DMTCP. Publish a rebuilt runtime image
+separately using step 4, and bake fresh snapshots with that runtime; keep
+old runtime images available for existing snapshots. Release notes must
+distinguish a CLI/source dependency update from a published runtime image.
+
+## Verify the CLI release
 
 ```bash
 V=vX.Y.Z
