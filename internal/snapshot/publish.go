@@ -34,11 +34,16 @@ type source struct {
 // the output directory, and manifest.json last.
 func (b *bake) publish(ctx context.Context) error {
 	started := time.Now()
-	paths, err := driverFiles(filepath.Join(b.dir, "io", "out", "criu"), b.gpus[0].Driver, filepath.Join(b.dir, "driver"))
-	if err != nil {
-		b.p.Printf("warning: the snapshot restores only under driver %s: %v", b.gpus[0].Driver, err)
-	} else {
-		b.driverPaths = paths
+	// A DMTCP restart maps the driver's libraries again from their files,
+	// which must be the donor's, so its snapshot restores under its own
+	// driver only and there is nothing to carry.
+	if b.backend != agent.BackendDMTCP {
+		paths, err := driverFiles(filepath.Join(b.dir, "io", "out", "criu"), b.gpus[0].Driver, filepath.Join(b.dir, "driver"))
+		if err != nil {
+			b.p.Printf("warning: the snapshot restores only under driver %s: %v", b.gpus[0].Driver, err)
+		} else {
+			b.driverPaths = paths
+		}
 	}
 	sources, err := b.sources()
 	if err != nil {
