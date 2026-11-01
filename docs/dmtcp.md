@@ -169,6 +169,7 @@ with these patches:
 | Expand `$ORIGIN` in a dlopen path for the wrapper's caller | glibc expands `$ORIGIN` for the object that called `dlopen`, which was DMTCP's wrapper. cuInterpose loads `$ORIGIN/libcuinterpose_core.so`, found nothing, and every `cuInit` it intercepted failed. |
 | Wrap `fcntl64` as `fcntl` | glibc 2.28 and later compile `fcntl` into `fcntl64` under 64-bit file offsets, as CPython is built, so DMTCP missed its `os.dup`. The child of multiprocessing's spawn keeps its parent sentinel only as such a duplicate, and the parent drained its end of the pipe forever at checkpoint. vLLM spawns whenever its API server initialized CUDA, which Qwen3.8-Flash-Next's model class does at import. |
 | Accept an already unlinked shm file after restart | Processes that share an area of a deleted `/dev/shm` file (CPython's named semaphores, unlinked at once) recreate one file at restart and each unlinks it again; every one but the first found it gone, and every vLLM restart printed a warning. |
+| Change a socket's connection only with the fd table locked | `setsockopt`, `connect`, `bind` and `listen` changed the connection they had looked up while another thread could delete it: `add()` drops the entry of an fd closed past the close wrapper once the number comes back. A worker restarted under cuInterpose, whose Rust threads make and close some sockets with raw syscalls, segfaulted in `SocketConnection::addSetsockopt` once in about a dozen restores. |
 
 The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
 

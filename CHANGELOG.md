@@ -7,7 +7,7 @@ Backends
 - A dmtcp backend snapshots and restores engines in containers without
   privileges, where CRIU cannot run (#57): RunPod Pods and other
   container-only GPU clouds give Docker's default capabilities, seccomp and a
-  read-only /proc/sys. DMTCP (TensorRails' fork, with ten fixes) checkpoints
+  read-only /proc/sys. DMTCP (TensorRails' fork, with eleven fixes) checkpoints
   the tree in user space, cuda-checkpoint the GPUs, and the rest of warmctl is
   unchanged. `build --in-place` runs it (CRIU in place is refused as not
   supported yet); the manifest records `process.backend`, index entries `io.warmctl.backend`,
