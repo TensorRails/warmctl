@@ -114,9 +114,9 @@ func (t Tools) Version(ctx context.Context) string {
 	return strings.TrimSpace(line)
 }
 
-// PortFile, in TmpDir, holds the port of the coordinator Coordinator
-// started until Quit ends it: QuitLeft finds there a coordinator whose
-// agent was killed before it could end it.
+// PortFile is the file in TmpDir that holds the port of the coordinator
+// Coordinator started until Quit ends it: QuitLeft finds there a
+// coordinator whose agent was killed before it could end it.
 const PortFile = "coordinator.port"
 
 func (t Tools) portFile() string { return filepath.Join(t.TmpDir, PortFile) }
