@@ -120,7 +120,8 @@ Verified on 4×RTX PRO 6000 (Verda, driver 580.178.04)
 
 - A restored engine serves as fast as a new one: Qwen3-8B greedy at 64
   concurrent requests, 2,503 tokens/s from vLLM, 2,498 after a CRIU
-  restore, 2,495 after a DMTCP one.
+  restore, 2,495 after a DMTCP one. Time to first token varied as much
+  between two runs of the same new engine.
 - Compatible both ways: beta.15 restores snapshots of this release, and this
   release restores beta.15's.
 
@@ -132,7 +133,9 @@ Known issues
   (#62). Engines that fork, and every restore, were not affected.
 - gpt-oss-20b's canary differs after a restore by up to 0.26 in a logprob,
   with either backend, while its weights match bit for bit and the quality
-  probe passes.
+  probe passes. vLLM itself is not deterministic there: six identical greedy
+  requests to a new engine differed by up to 0.08, so the canary's policy
+  for this model should be `warn` or a wider tolerance.
 
 ## v2.0.0-beta.15 — 2026-10-30
 
