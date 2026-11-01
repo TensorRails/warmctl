@@ -15,6 +15,7 @@ package dmtcp
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -37,6 +38,31 @@ const (
 	DefaultDir    = "/opt/warmctl/dmtcp/bin"
 	DefaultPlugin = "/opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so"
 )
+
+//go:embed VERSION
+var bundledVersion string
+
+// DefaultTools uses the release's own runtime, never another build from PATH.
+// Resolve the executable symlink before looking beside it (custom prefixes).
+func DefaultTools() Tools {
+	self, _ := os.Executable()
+	return defaultTools(self, runtime.GOOS+"-"+runtime.GOARCH, strings.TrimSpace(bundledVersion))
+}
+
+func defaultTools(self, platform, version string) Tools {
+	legacy := Tools{Dir: DefaultDir, Plugin: DefaultPlugin}
+	if self == "" || version == "" {
+		return legacy
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	root := filepath.Join(filepath.Dir(self), "dmtcp", platform, version)
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return legacy
+	}
+	return Tools{Dir: filepath.Join(root, "bin"), Plugin: filepath.Join(root, "lib", "libdmtcp_fdkeep.so")}
+}
 
 // Env is what an engine needs to run under DMTCP:
 //   - fork with live OpenBLAS/OpenMP thread pools hangs the child (torch's

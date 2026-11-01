@@ -26,19 +26,15 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-X main.version=${VERSION}" -o /out/warmctl ./cmd/warmctl
 
-# DMTCP for the dmtcp backend (docs/dmtcp.md): TensorRails' fork at a pinned
-# commit and warmctl's fdkeep plugin against it, built on the base so they
-# link the libc the engine runs with. A restore maps DMTCP's own text from
-# these files, so donor and receiver need this very build.
+# The same released DMTCP+fdkeep bytes carried by the CLI archive. The package
+# requires Debian 12-compatible glibc/libstdc++; execute it during the build
+# so an incompatible BASE fails here. No fork compilation during image build.
 FROM ${BASE} AS dmtcp
-# TensorRails fork release v5.0.0-warmctl.1. Keep the source pin immutable;
-# build against this runtime base instead of mixing prebuilt libc versions.
-ARG DMTCP_COMMIT=9fc657e2c9f5b8bd92818a72c3fada2929062cae
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git \
-    && git clone https://github.com/TensorRails/dmtcp /src/dmtcp && cd /src/dmtcp && git checkout ${DMTCP_COMMIT} \
-    && ./configure --prefix=/opt/warmctl/dmtcp && make -j"$(nproc)" && make install
-COPY internal/dmtcp/fdkeep/fdkeep.c /src/fdkeep.c
-RUN gcc -Wall -O2 -shared -fPIC -I/opt/warmctl/dmtcp/include -o /opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so /src/fdkeep.c
+COPY scripts/fetch-dmtcp.sh /src/scripts/fetch-dmtcp.sh
+COPY internal/dmtcp/VERSION internal/dmtcp/SHA256SUMS /src/internal/dmtcp/
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && sh /src/scripts/fetch-dmtcp.sh amd64 /opt/warmctl/dmtcp \
+    && /opt/warmctl/dmtcp/bin/dmtcp_launch --version
 
 # cuInterpose's build (make cuinterpose), passed as a named build context;
 # empty without one. A restore runs the snapshot's own copy, so only a bake

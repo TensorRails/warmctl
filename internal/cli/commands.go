@@ -61,8 +61,9 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.BoolVar(&c.noVerify, "no-verify", false, "canary only warns")
 	fs.IntVar(&c.threads, "threads", 0, "pool copy threads per rank (default 4)")
 	fs.BoolVar(&c.cpuTest, "test-cpu", false, "end-to-end test on a CPU host: no GPU devices, no io_uring check")
-	fs.StringVar(&c.dmtcp.Dir, "dmtcp-dir", dmtcp.DefaultDir, "directory of DMTCP's programs, for the dmtcp backend")
-	fs.StringVar(&c.dmtcp.Plugin, "dmtcp-plugin", dmtcp.DefaultPlugin,
+	dmtcpDefaults := dmtcp.DefaultTools()
+	fs.StringVar(&c.dmtcp.Dir, "dmtcp-dir", dmtcpDefaults.Dir, "directory of DMTCP's programs, for the dmtcp backend")
+	fs.StringVar(&c.dmtcp.Plugin, "dmtcp-plugin", dmtcpDefaults.Plugin,
 		"warmctl's fdkeep DMTCP plugin, for the dmtcp backend")
 }
 

@@ -28,6 +28,7 @@ jobs:
           go-version: "1.26.x"
       - run: make test
       - run: make profiles-check
+      - run: python3 scripts/test-install.py
       # Every platform a release ships must keep compiling.
       - name: Cross-compile
         if: runner.arch == 'X64'
@@ -66,7 +67,7 @@ jobs:
         with:
           src: python
       # warmctl.io/install.sh runs under any POSIX sh: dash, busybox, macOS.
-      - run: shellcheck -s sh scripts/install.sh
+      - run: shellcheck -s sh scripts/install.sh scripts/fetch-dmtcp.sh
 
   vulncheck:
     runs-on: ubuntu-24.04

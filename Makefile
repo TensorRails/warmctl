@@ -1,4 +1,4 @@
-.PHONY: catalog-push demo build linux test pytest lint profiles-check check criu-test criu-image e2e-test cuinterpose pod-image release clean
+.PHONY: catalog-push demo build linux test pytest lint profiles-check check criu-test criu-image e2e-test cuinterpose pod-image dmtcp release clean
 
 GO ?= go
 PY ?= python3
@@ -96,9 +96,16 @@ pod-image:
 	docker build -t $(POD_IMAGE) -f deploy/kubernetes/Dockerfile --build-context cuinterpose=bin/cuinterpose \
 		--build-arg VERSION=$(VERSION) .
 
+# Fetch the independently released native runtimes for Linux CLI archives.
+dmtcp:
+	@for arch in amd64 arm64; do \
+		dest="dmtcp/linux-$$arch/$$(cat internal/dmtcp/VERSION)"; \
+		test -f "$$dest/BUILDINFO" || scripts/fetch-dmtcp.sh "$$arch" "$$dest" || exit $$?; \
+	done
+
 # The release archives as .github/workflows/release.yml builds them, as a
 # local snapshot in dist/ (nothing signed or published). Needs goreleaser v2.
-release:
+release: dmtcp
 	test -f bin/cuinterpose/libcuinterpose.so || $(MAKE) cuinterpose
 	goreleaser release --snapshot --clean --skip=sign,sbom
 

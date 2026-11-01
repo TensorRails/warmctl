@@ -12,13 +12,14 @@
    git push origin main vX.Y.Z
    ```
 
-3. `.github/workflows/release.yml` builds cuInterpose and publishes the GitHub
-   release:
+3. `.github/workflows/release.yml` builds cuInterpose, fetches the pinned
+   DMTCP packages, builds and signs archives, tests the Linux archives and
+   installer on native amd64 and arm64 runners, then publishes the release:
 
    | Asset | What |
    |---|---|
-   | `warmctl-vX.Y.Z-linux-amd64.tar.gz` | `warmctl`, `cuinterpose/`, LICENSE, NOTICE, README |
-   | `warmctl-vX.Y.Z-linux-arm64.tar.gz` | `warmctl` without cuInterpose; not proven on a GPU yet |
+   | `warmctl-vX.Y.Z-linux-amd64.tar.gz` | `warmctl`, `cuinterpose/`, versioned `dmtcp/`, LICENSE, NOTICE, README |
+   | `warmctl-vX.Y.Z-linux-arm64.tar.gz` | `warmctl` and versioned `dmtcp/`, without cuInterpose; CPU-tested, not GPU-qualified |
    | `warmctl-vX.Y.Z-darwin-{amd64,arm64}.tar.gz` | `warmctl` for the registry side: `catalog`, `images`, `mirror`, `push`, `pull`, `profile` |
    | `warmctl-vX.Y.Z-checksums.txt` | SHA-256 of every archive |
    | `warmctl-vX.Y.Z-checksums.txt.sigstore.json` | cosign signature of the checksums, keyless from the workflow |
@@ -42,20 +43,48 @@
    regctl image copy registry.warmctl.io/warmctl/runtime:vX.Y.Z registry.warmctl.io/warmctl/runtime:latest
    ```
 
+   Alternatively, dispatch `.github/workflows/runtime-image.yml` with the
+   published release tag. It uses the same Dockerfile, verifies the released
+   cuInterpose archive and provenance, runs CPU runtime checks, then copies
+   the image to registry.warmctl.io in bounded chunks. Configure the repository
+   secret `WARMCTL_REGISTRY_AUTH` as a Docker auth JSON containing only that
+   registry. An optional custom base must be pinned by digest. The workflow
+   publishes the requested tag and records the digest; promote `latest` only
+   after the GPU bake and cold-start checks succeed.
+
 5. If `catalog/catalog.yaml` changed: `make catalog-push`.
 
 ## DMTCP dependency
 
-DMTCP has independent `v5.0.0-warmctl.N` tags in TensorRails/dmtcp. For a
-dependency update, wait for that fork's release tests and assets, then pin
-the released full commit in `deploy/kubernetes/Dockerfile`. Keep building
-on the runtime base with fdkeep; the fork's Ubuntu binary archive is not
-universally compatible with another libc or an existing snapshot.
+DMTCP has independent `v5.0.0-warmctl.N` tags in TensorRails/dmtcp, with
+native Linux amd64 and arm64 packages containing both the runtime and fdkeep.
+The plugin source is maintained in that fork's `plugin/fdkeep`, not duplicated
+here. DMTCP and its shared libraries are native Linux code, not portable Go
+executables. Packages are built on Debian 12 (glibc >= 2.36 and compatible
+libstdc++); macOS archives contain only the warmctl client.
 
-The CLI archive does not install DMTCP. Publish a rebuilt runtime image
-separately using step 4, and bake fresh snapshots with that runtime; keep
-old runtime images available for existing snapshots. Release notes must
-distinguish a CLI/source dependency update from a published runtime image.
+For an update, first publish and verify the DMTCP release. Update
+`internal/dmtcp/VERSION` and copy its two native archive checksums into
+`internal/dmtcp/SHA256SUMS`. `scripts/fetch-dmtcp.sh` verifies those pinned
+checksums before extracting. Both GoReleaser and the runtime Dockerfile
+consume these assets; neither compiles the fork. `make dmtcp` fetches them
+for local release builds.
+
+Linux CLI archives keep the runtime at
+`dmtcp/linux-ARCH/VERSION/` beside `warmctl`. The CLI resolves its executable
+symlink to find that directory, including custom installation prefixes. The
+installer preserves its bytes and mtimes, refuses to overwrite a different
+build at the same version, and retains older versions for existing snapshots.
+Source-built CLIs without a bundle fall back to `/opt/warmctl/dmtcp`, as used
+by the runtime image. Explicit `--dmtcp-dir` and `--dmtcp-plugin` still override
+the defaults.
+
+Bake fresh snapshots after a runtime upgrade. Donor and receiver need the
+same mapped libraries at the same paths; keep old runtime images and versioned
+directories for old snapshots. An updated CLI archive does not publish a new
+vLLM runtime image: build and publish that separately using step 4. ARM64
+packages pass CPU checkpoint/restore tests; the parallel reader and H200 GPU
+qualification are x86-64 only.
 
 ## Verify the CLI release
 

@@ -55,3 +55,32 @@ func TestRestartPassesReaderEnvironment(t *testing.T) {
 		t.Fatalf("restart environment = %q, %v", got, err)
 	}
 }
+
+func TestDefaultToolsBundle(t *testing.T) {
+	prefix := t.TempDir()
+	self := filepath.Join(prefix, "warmctl")
+	if err := os.WriteFile(self, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "warmctl")
+	if err := os.Symlink(self, link); err != nil {
+		t.Fatal(err)
+	}
+	prefix, err := filepath.EvalSymlinks(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(prefix, "dmtcp", "linux-amd64", "v5.0.0-warmctl.1")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{self, link} {
+		tools := defaultTools(path, "linux-amd64", "v5.0.0-warmctl.1")
+		if tools.Dir != filepath.Join(root, "bin") || tools.Plugin != filepath.Join(root, "lib", "libdmtcp_fdkeep.so") {
+			t.Fatalf("wrong bundle for %s: %+v", path, tools)
+		}
+	}
+	if tools := defaultTools(self, "linux-amd64", "missing"); tools.Dir != DefaultDir || tools.Plugin != DefaultPlugin {
+		t.Fatalf("source build lost runtime image defaults: %+v", tools)
+	}
+}

@@ -3,8 +3,9 @@
 #
 #   curl -fsSL https://warmctl.io/install.sh | sh
 #
-# It puts the release in /opt/warmctl (warmctl and, on linux-amd64,
-# cuinterpose/ next to it) and links /usr/local/bin/warmctl to it. Run it
+# It puts the release in /opt/warmctl (warmctl, versioned Linux DMTCP
+# runtimes and, on linux-amd64, cuinterpose/) and links /usr/local/bin/warmctl
+# to it. Run it
 # again to upgrade. Settings, from the environment:
 #
 #   WARMCTL_VERSION   release tag, e.g. v2.0.0-beta.5 (default: the newest,
@@ -173,6 +174,35 @@ main() {
 	chmod 0755 "$bin"
 	# Some archives carry cuinterpose/ as 0700; it is read by everyone.
 	chmod -R a+rX "$tmp/x"
+
+	# DMTCP libraries are mapped by baked engines. Keep each released runtime
+	# immutable at its versioned path, including mtimes, and retain older ones.
+	# Never overwrite a build still referenced by an existing snapshot.
+	if [ -d "$tmp/x/dmtcp" ]; then
+		for platform_dir in "$tmp/x/dmtcp/"*; do
+			[ -d "$platform_dir" ] || continue
+			component_platform=${platform_dir##*/}
+			for component in "$platform_dir/"*; do
+				[ -d "$component" ] || continue
+				component_version=${component##*/}
+				target=$prefix/dmtcp/$component_platform/$component_version
+				as_root mkdir -p "$(dirname "$target")"
+				if [ -e "$target" ]; then
+					as_root diff -qr "$component" "$target" >/dev/null ||
+						die "existing DMTCP $component_version differs; preserving it for existing snapshots"
+				else
+					stage=$(as_root mktemp -d "$(dirname "$target")/.install.XXXXXXXX")
+					as_root cp -pR "$component/." "$stage/"
+					# Linux packages only. -n also protects against another installer.
+					as_root mv -T -n "$stage" "$target"
+					if [ -d "$stage" ]; then
+						as_root rm -rf "$stage"
+						as_root diff -qr "$component" "$target" >/dev/null || die "concurrent DMTCP install differs"
+					fi
+				fi
+			done
+		done
+	fi
 
 	# Every file goes in under a temporary name and is renamed over the old
 	# one, so a running warmctl keeps its binary and a failed install leaves

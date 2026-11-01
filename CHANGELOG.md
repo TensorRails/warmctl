@@ -14,10 +14,19 @@ RAM, excluding provisioning and snapshot transfer; this is not a <=20 s SLA.
   `DMTCP_RESTART_HUGEPAGES` and `DMTCP_RESTART_READERS` values override the
   defaults. Private mmap remains disabled by default because it shifted
   work into CUDA and worsened full recovery time.
-- The runtime Dockerfile pins TensorRails DMTCP `v5.0.0-warmctl.1`, released
-  independently with source, an Ubuntu 24.04 x86-64 binary, checksums and
-  provenance. Build it on the runtime base and bake new snapshots; an old
-  snapshot still needs its original byte-identical mapped libraries.
+- Linux archives now include the separately released TensorRails DMTCP
+  `v5.0.0-warmctl.1` runtime and fdkeep plugin for amd64 and arm64. The
+  runtime Dockerfile downloads the same packages with source-pinned SHA-256
+  checksums, with no DMTCP compilation during the warmctl build. Packages
+  require Debian 12-compatible glibc/libstdc++; macOS remains client-only.
+- The CLI finds its versioned runtime beside its own executable, including
+  custom install prefixes. The installer preserves runtime bytes and mtimes,
+  retains older versions, and refuses to replace a different build at the
+  same version. Bake new snapshots after upgrading; old snapshots still
+  need their original libraries and paths.
+- Release archives and the installer are tested natively on both Linux
+  architectures before publication. ARM64 is CPU-tested; GPU serving and
+  the parallel reader remain x86-64-only qualifications.
 - All 20 GPU experiments matched weight fingerprints and passed streaming
   and tool-call tests; 640 short requests succeeded. The numerical canary
   remains unqualified: the donor already varied before checkpoint. Its
