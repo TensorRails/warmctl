@@ -284,7 +284,7 @@ func TestEngineMounts(t *testing.T) {
 		}
 	}
 	// A DMTCP engine maps the image's build: no ipc mount.
-	r.m.Process.Backend = agent.BackendDMTCP
+	r.m.Process.Backend, r.m.Process.IPCBuild = agent.BackendDMTCP, "/usr/local/bin/cuinterpose"
 	if got := r.engineMounts("/models/x"); len(got) != 2 || got[1].Target != "/model" {
 		t.Errorf("dmtcp mounts %+v", got)
 	}

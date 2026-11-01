@@ -102,6 +102,8 @@ type restore struct {
 	// weights ends the wait for the weights lane while the engine already
 	// reloads the parts that have arrived (Launch.ReloadWaits).
 	weights chan error
+	// pod makes this container a receiver, in place.
+	pod podSetup
 	// mounts are a pod restore's bind mounts.
 	mounts []string
 	// owns is a pod restore's hold on the container (run.LockContainer).
@@ -274,7 +276,8 @@ func (r *restore) preflight(ctx context.Context) error {
 		return err
 	}
 	if r.o.InPlace {
-		if err := r.checkPod(); err != nil {
+		r.pod = r.podSetup()
+		if err := r.pod.check(); err != nil {
 			return err
 		}
 	}
@@ -417,10 +420,9 @@ func (r *restore) cleanup() {
 		r.c.Remove()
 	}
 	if r.o.InPlace {
-		if r.dmtcp() && r.dir != "" {
-			r.quitLeft()
+		if r.pod != nil {
+			r.pod.undo()
 		}
-		r.unmountPod()
 		if r.dir != "" {
 			_ = claimDir(r.dir)
 		}
@@ -433,16 +435,6 @@ func (r *restore) cleanup() {
 	}
 	if r.lease != nil {
 		r.lease.Release()
-	}
-}
-
-// quitLeft ends the DMTCP coordinator the agent left running, and the
-// engine connected to it: an agent killed before its release.
-func (r *restore) quitLeft() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := r.dmtcpTools().QuitLeft(ctx); err != nil {
-		r.p.Printf("warning: ending the DMTCP coordinator the agent left: %v", err)
 	}
 }
 

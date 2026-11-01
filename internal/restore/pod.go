@@ -251,8 +251,9 @@ func podEnv(base []string, launch map[string]string) []string { return run.Merge
 // interposed process) and the model directory, when there is one to mount.
 func (r *restore) engineMounts(model string) []docker.Mount {
 	mounts := []docker.Mount{{Source: filepath.Join(r.snapshot, "adapter"), Target: pyext.GuestPath, ReadOnly: true}}
-	// A DMTCP engine maps the image's own build (checkIPCBuild).
-	if r.interposed() && !r.dmtcp() {
+	// An engine that mapped a build of its own, the image's (a DMTCP one),
+	// needs none mounted (checkIPCBuild).
+	if r.interposed() && r.m.Process.IPCBuild == "" {
 		mounts = append(mounts, docker.Mount{Source: filepath.Join(r.snapshot, "ipc"), Target: interpose.GuestDir,
 			ReadOnly: true})
 	}
@@ -306,12 +307,9 @@ func sameDir(a, b string) bool {
 	return err == nil && os.SameFile(ia, ib)
 }
 
-// checkPod is the pod half of the preflight: what Docker would have given
-// a receiver container, Kubernetes must have given this one.
+// checkPod is the pod half of the preflight for CRIU: what Docker would
+// have given a receiver container, Kubernetes must have given this one.
 func (r *restore) checkPod() error {
-	if r.dmtcp() {
-		return r.checkUnprivileged()
-	}
 	comm, _ := os.ReadFile("/proc/1/comm")
 	if err := checkInit(string(comm), os.Getpid()); err != nil {
 		return err
@@ -424,7 +422,7 @@ func relink(target, path string) error {
 // checkUnprivileged is the pod half of the preflight for a snapshot the
 // dmtcp backend took: nothing is mounted, no namespace made and no PID
 // moved, so none of a receiver container's privileges is asked for; DMTCP
-// must be here, and claimPod refuses trees it may not take.
+// must be here, and linkedPod.claimTree refuses trees it may not take.
 func (r *restore) checkUnprivileged() error {
 	if err := r.o.DMTCP.Check(); err != nil {
 		return err
@@ -533,17 +531,9 @@ func (r *restore) claimPod() error {
 		return err
 	}
 	for _, t := range agent.DefaultTrees {
-		size, ours := r.tmpfs(t.Path)
-		if !ours || r.dmtcp() {
-			if err := claimDir(t.Path); err != nil {
-				return err
-			}
-			continue
+		if err := r.pod.claimTree(t); err != nil {
+			return err
 		}
-		if err := mountTmpfs(t.Path, size, t.Path == "/tmp"); err != nil {
-			return fmt.Errorf("tmpfs at %s: %w", t.Path, err)
-		}
-		r.mounts = append(r.mounts, t.Path)
 	}
 	for _, d := range []string{"work", "io"} {
 		if err := os.MkdirAll(filepath.Join(r.dir, d), 0o755); err != nil {
@@ -555,60 +545,6 @@ func (r *restore) claimPod() error {
 
 // claimDir makes dir this restore's (run.ClaimDir).
 func claimDir(dir string) error { return run.ClaimDir(dir) }
-
-// startPod mounts what the restored engine needs and starts the agent as
-// this process's child.
-func (r *restore) startPod(ctx context.Context) error {
-	model, err := podModel(r.o.ModelDir, r.m)
-	if r.dmtcp() {
-		model, err = dmtcpModel(r.o.ModelDir, r.m)
-	}
-	if err != nil {
-		return err
-	}
-	drivers, err := r.driverMounts()
-	if err != nil {
-		return err
-	}
-	if len(drivers) == 0 && !r.o.CPUTest {
-		r.warnDriver()
-	}
-	if r.dmtcp() {
-		if err := r.linkDevices(); err != nil {
-			return err
-		}
-	}
-	for _, m := range append(r.engineMounts(model), drivers...) {
-		if r.dmtcp() {
-			// No mounts without privileges: the files are linked in.
-			if err := run.Place(m.Source, m.Target); err != nil {
-				return fmt.Errorf("place %s at %s: %w", m.Source, m.Target, err)
-			}
-			continue
-		}
-		if err := mountPoint(m.Source, m.Target); err != nil {
-			return err
-		}
-		if err := bindMount(m.Source, m.Target, m.ReadOnly); err != nil {
-			return fmt.Errorf("mount %s at %s: %w", m.Source, m.Target, err)
-		}
-		r.mounts = append(r.mounts, m.Target)
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	r.c, err = run.Spawn(ctx, run.Child{
-		Name: r.o.ID, Argv: []string{self, "agent", "--config", filepath.Join(r.dir, "work", "agent.json")},
-		Env: podEnv(os.Environ(), r.m.Launch.Env), IO: filepath.Join(r.dir, "io"), Log: snapshot.EngineLog,
-		AgentLog: filepath.Join(r.dir, "agent.log"), Output: os.Stderr, Ranks: r.m.Launch.Ranks, NewUTS: !r.dmtcp(),
-	})
-	if err != nil {
-		return err
-	}
-	r.p.Printf("receiver agent started in this pod")
-	return nil
-}
 
 // warnDriver names the driver libraries the dump maps that this pod lacks
 // under the same driver: the NVIDIA runtime put them elsewhere (a CDI spec

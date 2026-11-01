@@ -11,7 +11,6 @@ import (
 
 	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/cuda"
-	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
@@ -61,26 +60,8 @@ func (r *restore) tools() (agent.Config, error) {
 	if r.o.CUDACheckpoint != "" {
 		cfg.CUDACheckpoint = r.o.CUDACheckpoint
 	}
-	if r.dmtcp() {
-		// No UTS namespace of its own: the restarted engine keeps the pod's name.
-		cfg.Backend, cfg.DMTCP = agent.BackendDMTCP, r.dmtcpTools()
-		return cfg, nil
-	}
-	// The agent runs in a UTS namespace of its own and names it as a
-	// receiver container is named; the pod's own host name stays.
-	cfg.Hostname = docker.Hostname
-	if r.o.CRIU != "" {
-		cfg.CRIU = r.o.CRIU
-	}
+	r.pod.agent(&cfg)
 	return cfg, nil
-}
-
-// dmtcpTools are DMTCP's programs as a pod restore's agent runs them, its
-// coordinator's and workers' files in the run directory, out of the trees.
-func (r *restore) dmtcpTools() dmtcp.Tools {
-	t := r.o.DMTCP
-	t.TmpDir = filepath.Join(r.dir, "dmtcp-tmp")
-	return t
 }
 
 func (r *restore) prepare(ctx context.Context) error {
@@ -197,7 +178,7 @@ func (r *restore) start(ctx context.Context) error {
 
 func (r *restore) launch(ctx context.Context) error {
 	if r.o.InPlace {
-		return r.startPod(ctx)
+		return r.pod.start(ctx)
 	}
 	spec, err := r.spec()
 	if err != nil {
@@ -249,8 +230,9 @@ func (r *restore) processes(ctx context.Context) error {
 		return nil
 	}
 	ipcArgs := agent.IPCRestoreArgs{Processes: r.m.Process.IPCProcesses}
-	if r.dmtcp() {
-		// The coordinator's state, read where the snapshot is: nothing mounts it.
+	if r.m.Process.IPCBuild != "" {
+		// The coordinator's state, read where the snapshot is: nothing mounts
+		// it for an engine that mapped a build of its own (engineMounts).
 		ipcArgs.Dir = filepath.Join(r.snapshot, "ipc")
 	}
 	var ipc agent.IPCResult
