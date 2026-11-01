@@ -86,7 +86,8 @@ existing snapshots. Use an old snapshot's original runtime image or explicit
 replace an existing runtime image. See the fork's
 [release procedure](https://github.com/TensorRails/dmtcp/blob/v5.0.0-warmctl.1/RELEASING.md).
 
-The packages require glibc >= 2.36 and compatible libstdc++. ARM64 passes
+The packages require glibc >= 2.36, compatible libstdc++ and libatomic
+(`libstdc++6` and `libatomic1` on Debian/Ubuntu). ARM64 passes
 native CPU checkpoint/restore tests, including fdkeep; GPU serving has not
 been qualified on ARM64. Parallel pread is x86-64-only; ARM64 uses the
 ordinary reader with optional huge pages.

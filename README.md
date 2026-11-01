@@ -161,7 +161,8 @@ Keep `warmctl`, `cuinterpose/` and the versioned `dmtcp/` directory from the
 linux-amd64 archive side by side; the installer does this automatically.
 Linux arm64 archives include DMTCP but no cuInterpose yet and are CPU-tested,
 not GPU-qualified. The native DMTCP packages require Debian 12-compatible
-glibc (>= 2.36) and libstdc++. macOS builds run the registry side: `catalog`,
+glibc (>= 2.36), libstdc++ and libatomic (`libstdc++6` and `libatomic1` on
+Debian/Ubuntu). macOS builds run the registry side: `catalog`,
 `images`, `mirror`, `push`, `pull`. Source builds use `make build cuinterpose`;
 see [DMTCP runtime installation and upgrades](docs/dmtcp.md).
 Every release is signed and has build provenance
