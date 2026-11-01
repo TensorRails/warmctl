@@ -6,8 +6,12 @@
 // missing at the same fd numbers, with the same flags, counter and pipe bytes.
 // Listening Unix sockets bound to a path are kept the same way: cuInterpose
 // makes its control socket with raw syscalls, which DMTCP never sees.
+//
+// Some calls bypass libc with raw syscalls, where DMTCP's wrappers must not see them (its pipe() returns a
+// socketpair, its listen() takes a lock the checkpoint thread holds): x86-64 only.
 #define _GNU_SOURCE
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -19,12 +23,17 @@
 #include <sys/stat.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include "dmtcp.h"
 
+#if !defined(__x86_64__)
+#error "fdkeep's raw syscalls are x86-64's"
+#endif
+
 #define MAXFD 512
-#define PIPEBUF 65536
+#define MAXWATCH 4096
 
 enum kind { NONE, EVENTFD, PIPE, LISTEN };
 
@@ -71,7 +80,7 @@ static int fdinfo(int fd, int *flags, unsigned long long *count)
   return 0;
 }
 
-static int nwatches;
+static int nwatches, lostwatches;
 static void record_epoll(int epfd);
 
 // A listening Unix socket's path, type and permissions, kept in case DMTCP does not restore it.
@@ -101,19 +110,26 @@ static void record(void)
     free(recs[fd].path);
   }
   memset(recs, 0, sizeof recs);
-  nwatches = 0;
+  nwatches = lostwatches = 0;
+  int past = 0; // fds of a kind we keep, numbered past MAXFD: not kept
   DIR *d = opendir("/proc/self/fd");
   if (!d) return;
   int self = dirfd(d);
   struct dirent *e;
   while ((e = readdir(d))) {
     int fd = atoi(e->d_name);
-    if (e->d_name[0] == '.' || fd == self || fd >= MAXFD) continue;
+    if (e->d_name[0] == '.' || fd == self) continue;
     char path[64], target[128];
     snprintf(path, sizeof path, "/proc/self/fd/%d", fd);
     ssize_t n = readlink(path, target, sizeof target - 1);
     if (n <= 0) continue;
     target[n] = 0;
+    if (fd >= MAXFD) {
+      if (strncmp(target, "anon_inode:[event", 17) == 0 || strncmp(target, "pipe:", 5) == 0 ||
+          strncmp(target, "socket:", 7) == 0)
+        past++;
+      continue;
+    }
     struct rec *r = &recs[fd];
     if (strcmp(target, "anon_inode:[eventfd]") == 0) {
       r->kind = EVENTFD;
@@ -165,12 +181,15 @@ static void record(void)
   }
   logf_("pid %d precheckpoint: %d eventfds, %d pipe ends, %d listening sockets, %d epoll watches\n", getpid(), ne,
         np, nl, nwatches);
+  if (past > 0 || lostwatches > 0)
+    logf_("pid %d precheckpoint: NOT KEPT: %d eventfds, pipes, epolls or sockets past fd %d, %d epoll watches past %d\n",
+          getpid(), past, MAXFD, lostwatches, MAXWATCH);
 }
 
 static long raw_pipe2(int *p, int flags)
 {
   long ret;
-  __asm__ volatile("syscall" : "=a"(ret) : "0"(293L /* SYS_pipe2 */), "D"(p), "S"((long)flags) : "rcx", "r11", "memory");
+  __asm__ volatile("syscall" : "=a"(ret) : "0"((long)SYS_pipe2), "D"(p), "S"((long)flags) : "rcx", "r11", "memory");
   return ret;
 }
 
@@ -179,7 +198,6 @@ static long raw_pipe2(int *p, int flags)
 // parent added after the fork (uvloop's listening socket in vLLM's API server) are gone, and the
 // server never accepts. Record the kernel's own list, keeping only watches whose fd in this process
 // is still the watched file, and add back whatever is missing after restart.
-#define MAXWATCH 4096
 struct watch {
   int epfd, tfd;
   unsigned int events;
@@ -193,7 +211,7 @@ static void record_epoll(int epfd)
   snprintf(path, sizeof path, "/proc/self/fdinfo/%d", epfd);
   FILE *f = fopen(path, "re");
   if (!f) return;
-  while (fgets(line, sizeof line, f) && nwatches < MAXWATCH) {
+  while (fgets(line, sizeof line, f)) {
     int tfd;
     unsigned int events;
     unsigned long long data;
@@ -201,6 +219,10 @@ static void record_epoll(int epfd)
     if (sscanf(line, "tfd: %d events: %x data: %llx pos:%*d ino:%lx", &tfd, &events, &data, &ino) != 4) continue;
     struct stat st;
     if (fstat(tfd, &st) != 0 || st.st_ino != ino) continue; // registered through another process's fd table
+    if (nwatches == MAXWATCH) {
+      lostwatches++;
+      continue;
+    }
     watches[nwatches++] = (struct watch){epfd, tfd, events, data};
   }
   fclose(f);
@@ -210,7 +232,7 @@ static long raw_epoll_ctl(int epfd, int op, int fd, struct epoll_event *ev)
 {
   long ret;
   register long r10 __asm__("r10") = (long)ev;
-  __asm__ volatile("syscall" : "=a"(ret) : "0"(233L /* SYS_epoll_ctl */), "D"((long)epfd), "S"((long)op), "d"((long)fd), "r"(r10) : "rcx", "r11", "memory");
+  __asm__ volatile("syscall" : "=a"(ret) : "0"((long)SYS_epoll_ctl), "D"((long)epfd), "S"((long)op), "d"((long)fd), "r"(r10) : "rcx", "r11", "memory");
   return ret;
 }
 
@@ -221,7 +243,7 @@ static void rewatch(void)
     struct epoll_event ev = {.events = watches[i].events, .data.u64 = watches[i].data};
     long r = raw_epoll_ctl(watches[i].epfd, EPOLL_CTL_ADD, watches[i].tfd, &ev);
     if (r == 0) added++;
-    else if (r != -17 /* EEXIST */) failed++;
+    else if (r != -EEXIST) failed++;
   }
   logf_("pid %d restart: %d of %d epoll watches were missing and added back, %d failed\n", getpid(), added, nwatches, failed);
 }
@@ -230,7 +252,7 @@ static void rewatch(void)
 static long raw_listen(int fd, int backlog)
 {
   long ret;
-  __asm__ volatile("syscall" : "=a"(ret) : "0"(50L /* SYS_listen */), "D"((long)fd), "S"((long)backlog) : "rcx", "r11", "memory");
+  __asm__ volatile("syscall" : "=a"(ret) : "0"((long)SYS_listen), "D"((long)fd), "S"((long)backlog) : "rcx", "r11", "memory");
   return ret;
 }
 
@@ -279,16 +301,16 @@ static int relisten(int fd, const struct rec *r)
   struct stat st;
   strncpy(a.sun_path, r->path, sizeof a.sun_path - 1);
   if (lstat(r->path, &st) == 0) {
-    long probe = raw3(41 /* SYS_socket */, AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    long c = probe < 0 ? probe : raw3(42 /* SYS_connect */, probe, (long)&a, sizeof a);
+    long probe = raw3(SYS_socket, AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    long c = probe < 0 ? probe : raw3(SYS_connect, probe, (long)&a, sizeof a);
     if (probe >= 0) close((int)probe);
-    if (!S_ISSOCK(st.st_mode) || st.st_uid != geteuid() || c != -111 /* ECONNREFUSED */) return -1;
+    if (!S_ISSOCK(st.st_mode) || st.st_uid != geteuid() || c != -ECONNREFUSED) return -1;
     if (unlink(r->path) != 0) return -1;
   }
-  long s = raw3(41 /* SYS_socket */, AF_UNIX, r->type | SOCK_CLOEXEC, 0);
+  long s = raw3(SYS_socket, AF_UNIX, r->type | SOCK_CLOEXEC, 0);
   if (s < 0) return -1;
   int h = high((int)s);
-  if (h < 0 || raw3(49 /* SYS_bind */, h, (long)&a, sizeof a) != 0 || chmod(r->path, r->mode) != 0 ||
+  if (h < 0 || raw3(SYS_bind, h, (long)&a, sizeof a) != 0 || chmod(r->path, r->mode) != 0 ||
       raw_listen(h, SOMAXCONN) != 0) {
     if (h >= 0) close(h);
     return -1;
@@ -390,14 +412,20 @@ static int readcomm(const char *tid, char *out)
 static void savenames(void)
 {
   nnames = 0;
+  int past = 0;
   DIR *d = opendir("/proc/self/task");
   if (!d) return;
   struct dirent *e;
-  while ((e = readdir(d)) && nnames < MAXTHREADS) {
+  while ((e = readdir(d))) {
     if (e->d_name[0] == '.') continue;
+    if (nnames == MAXTHREADS) {
+      past++;
+      continue;
+    }
     if (readcomm(e->d_name, names[nnames]) == 0) nnames++;
   }
   closedir(d);
+  if (past > 0) logf_("pid %d precheckpoint: NOT KEPT: the names of %d threads past %d\n", getpid(), past, MAXTHREADS);
 }
 
 static void restorenames(void)
@@ -476,7 +504,7 @@ DmtcpPluginDescriptor_t fdkeep_plugin = {
   "fdkeep",
   "warmctl",
   "",
-  "Recreate eventfds and pipes DMTCP did not track (CUDA driver helper threads)",
+  "Keep what DMTCP loses: CUDA's eventfds and pipes, thread names, listening sockets, epoll watches",
   hook
 };
 
