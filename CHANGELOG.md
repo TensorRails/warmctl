@@ -45,7 +45,8 @@ Backends
 - DMTCP changes a socket's connection only with its fd table locked. A TP=2
   worker restarted under cuInterpose segfaulted in DMTCP's `setsockopt`
   wrapper once in about a dozen restores: the wrapper changed a connection
-  another thread could delete.
+  another thread could delete. With the fix, 6 restores of 6 served in
+  3.6–3.8 s.
 - A DMTCP dump that writes no image 3 minutes after it began fails and says
   that a socket's drain did not end, instead of waiting out the 15-minute
   timeout (#62).
@@ -114,7 +115,7 @@ Verified on 4×RTX PRO 6000 (Verda, driver 580.178.04)
   | Qwen3-8B | 1 | 5.9 s | 5.3–5.8 s |
   | Qwen3-32B | 4 | 8.1–8.3 s | 7.7–8.0 s |
   | Qwen3.8-27B-FP8 (catalog profile) | 1 | 7.4–9.0 s | 7.4 s |
-  | Gemma 4 31B, cuInterpose | 4 | 7.5–8.2 s | |
+  | Gemma 4 31B, cuInterpose | 4 | 7.5–8.2 s | baked; dump in 14.5 s |
   | gpt-oss-20b | 1 | 5.3 s | 5.1–5.2 s |
 
 - A restored engine serves as fast as a new one: Qwen3-8B greedy at 64
