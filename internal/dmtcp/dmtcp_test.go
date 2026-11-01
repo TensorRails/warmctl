@@ -87,6 +87,33 @@ func TestImages(t *testing.T) {
 	}
 }
 
+func TestAwaitCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	result := func(err error) <-chan error {
+		done := make(chan error, 1)
+		done <- err
+		return done
+	}
+	if err := awaitCheckpoint(dir, time.Minute, result(nil)); err != nil {
+		t.Fatalf("finished: %v", err)
+	}
+	// A drain that does not end: nothing written and no result.
+	if err := awaitCheckpoint(dir, 10*time.Millisecond, make(chan error)); err == nil ||
+		!strings.Contains(err.Error(), "no image written") {
+		t.Fatalf("stalled: %v", err)
+	}
+	// Images being written: the checkpoint's own result decides.
+	if err := os.WriteFile(filepath.Join(dir, "ckpt_python3.12_x-40000-a.dmtcp.temp"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	failed := errors.New("dmtcp_command: exit status 1")
+	done := make(chan error, 1)
+	time.AfterFunc(50*time.Millisecond, func() { done <- failed })
+	if err := awaitCheckpoint(dir, 10*time.Millisecond, done); !errors.Is(err, failed) {
+		t.Fatalf("writing: %v", err)
+	}
+}
+
 // A stand-in dmtcp_coordinator: it writes the port it "bound" to
 // --port-file, as the real one does before it forks into the background.
 const fakeCoordinator = `#!/bin/sh

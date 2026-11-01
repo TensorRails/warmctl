@@ -175,7 +175,7 @@ The plugin `internal/dmtcp/fdkeep/fdkeep.c` repairs what DMTCP loses:
 - the CUDA driver's eventfds and pipes, recreated as real pipes;
 - thread names, which `cuda-checkpoint` uses to find the restore thread;
 - `listen` on sockets DMTCP brought back unbound;
-- epoll watches lost when a forked child was elected the leader of a shared epoll fd.
+- epoll watches lost when a forked child was elected the leader of a shared epoll fd;
 - Unix sockets listening on a path that DMTCP never saw, such as cuInterpose's control sockets, made with raw
   syscalls: bound and listening again at their descriptor.
 

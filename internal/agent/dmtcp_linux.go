@@ -14,10 +14,12 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 )
 
-// How long DMTCP may take to write or read back a tree's images.
+// How long DMTCP may take to write or read back a tree's images, and to
+// drain every socket before it writes the first.
 const (
 	dmtcpCheckpointTimeout = 15 * time.Minute
 	dmtcpRestartTimeout    = 15 * time.Minute
+	dmtcpDrainTimeout      = 3 * time.Minute
 )
 
 // dmtcpTree runs DMTCP, in user space: the engine starts under dmtcp_launch
@@ -122,7 +124,7 @@ func virtualTree(tree criu.Tree, m dmtcp.Map) (criu.Tree, error) {
 // dump writes every process's image and ends the computation.
 func (t *dmtcpTree) dump(ctx context.Context, _ int, exited <-chan struct{}) (DumpResult, error) {
 	start := time.Now()
-	if err := t.cfg.DMTCP.Checkpoint(ctx, dmtcpCheckpointTimeout); err != nil {
+	if err := t.cfg.DMTCP.Checkpoint(ctx, t.images(), dmtcpDrainTimeout, dmtcpCheckpointTimeout); err != nil {
 		return DumpResult{}, err
 	}
 	seconds := time.Since(start).Seconds()

@@ -146,11 +146,36 @@ func (t Tools) Wrap(argv []string, dir string) []string {
 	return append(out, argv...)
 }
 
-// Checkpoint writes the images of every process and returns once all are
-// written; the processes keep running.
-func (t Tools) Checkpoint(ctx context.Context, timeout time.Duration) error {
-	_, err := process.Capture(ctx, timeout, t.path("dmtcp_command"), "--coord-port", t.port(), "--bcheckpoint")
-	return err
+// Checkpoint writes the images of every process into dir and returns once
+// all are written; the processes keep running. No image is written until
+// every process has drained its sockets, which takes seconds; a drain that
+// does not end fails the checkpoint once drain has passed with no image in
+// dir, instead of at timeout.
+func (t Tools) Checkpoint(ctx context.Context, dir string, drain, timeout time.Duration) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := process.Capture(ctx, timeout, t.path("dmtcp_command"), "--coord-port", t.port(), "--bcheckpoint")
+		done <- err
+	}()
+	return awaitCheckpoint(dir, drain, done)
+}
+
+// awaitCheckpoint returns the checkpoint's result, or an error when drain
+// passes before the first image appears in dir (DMTCP writes ckpt_*.temp,
+// then renames it).
+func awaitCheckpoint(dir string, drain time.Duration, done <-chan error) error {
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(drain):
+	}
+	if written, _ := filepath.Glob(filepath.Join(dir, "ckpt_*")); len(written) == 0 {
+		return fmt.Errorf("dmtcp: no image written %s into the checkpoint: a process is still draining "+
+			"a socket whose peer does not answer (docs/dmtcp.md)", drain)
+	}
+	return <-done
 }
 
 // Kill ends the computation.
