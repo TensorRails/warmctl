@@ -51,6 +51,18 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: make pytest
 
+  runtime-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Exercise the actual Dockerfile and context without the large vLLM base.
+      - name: Fetch and execute DMTCP in the runtime Docker build
+        run: |
+          docker build --target dmtcp -f deploy/kubernetes/Dockerfile \
+            --build-arg BASE=debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 .
+
   lint:
     runs-on: ubuntu-24.04
     steps:

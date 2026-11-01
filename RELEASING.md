@@ -61,7 +61,8 @@ native Linux amd64 and arm64 packages containing both the runtime and fdkeep.
 The plugin source is maintained in that fork's `plugin/fdkeep`, not duplicated
 here. DMTCP and its shared libraries are native Linux code, not portable Go
 executables. Packages are built on Debian 12 (glibc >= 2.36 and compatible
-libstdc++); macOS archives contain only the warmctl client.
+libstdc++ and libatomic); macOS archives contain only the warmctl client.
+Minimal Debian/Ubuntu hosts need `libstdc++6` and `libatomic1` installed.
 
 For an update, first publish and verify the DMTCP release. Update
 `internal/dmtcp/VERSION` and copy its published archive checksums into
