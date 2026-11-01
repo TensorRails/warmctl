@@ -1,10 +1,12 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 )
 
 // ContainerLock is the directory an in-place run locks: the container's
@@ -33,6 +35,35 @@ func lockDir(path string) (*Lock, error) {
 		return nil, fmt.Errorf("lock %s: %w", path, err)
 	}
 	return &Lock{f}, nil
+}
+
+// WaitLock takes an exclusive flock on the file path, made if missing, and
+// waits for the process holding it until ctx ends; held says it had to.
+func WaitLock(ctx context.Context, path string, held func()) (*Lock, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return &Lock{f}, nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			f.Close()
+			return nil, fmt.Errorf("lock %s: %w", path, err)
+		}
+		if held != nil {
+			held()
+			held = nil
+		}
+		select {
+		case <-ctx.Done():
+			f.Close()
+			return nil, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // Release drops the lock; nil has none to drop.

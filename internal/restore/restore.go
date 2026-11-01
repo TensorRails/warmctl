@@ -183,12 +183,27 @@ func (r *restore) read(ctx context.Context) error {
 // files are in and the weights keep coming. A complete copy from an earlier
 // up is reused.
 func (r *restore) stage(ctx context.Context) error {
+	if err := run.CheckID(r.m.ID); err != nil {
+		return fmt.Errorf("snapshot id: %w", err)
+	}
 	dst := filepath.Join(r.o.StateDir, "staged", r.m.ID)
 	raw, err := os.ReadFile(filepath.Join(r.snapshot, "manifest.json"))
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	// Every up of the snapshot on this host shares the copy: one makes it,
+	// and another waits for it rather than removing it under the first.
+	lock, err := run.WaitLock(ctx, dst+".lock", func() {
+		r.p.Printf("another up is staging %s; waiting for its copy", dst)
+	})
+	if err != nil {
+		return err
+	}
 	if staged(dst, raw) {
+		lock.Release()
 		r.p.Printf("snapshot staged: restoring from the complete copy in %s", dst)
 		r.snapshot = dst
 		return nil
@@ -209,6 +224,7 @@ func (r *restore) stage(ctx context.Context) error {
 			r.p.Printf("snapshot staged: read %.2f GiB in %.1fs (%.2f GiB/s)%s into %s", float64(n)/(1<<30), seconds,
 				float64(n)/(1<<30)/seconds, decoded, dst)
 		}
+		lock.Release()
 		a.End(err)
 	}()
 	r.p.Printf("snapshot staged in %s while it restores", dst)

@@ -1,11 +1,14 @@
 package run
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestLock(t *testing.T) {
@@ -31,6 +34,28 @@ func TestLock(t *testing.T) {
 	second.Release()
 	var none *Lock
 	none.Release()
+}
+
+// WaitLock waits for the holder, says so once, and gives up with ctx.
+func TestWaitLock(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "staged.lock")
+	ctx := context.Background()
+	first, err := WaitLock(ctx, name, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	short, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	told := 0
+	if _, err := WaitLock(short, name, func() { told++ }); !errors.Is(err, context.DeadlineExceeded) || told != 1 {
+		t.Fatalf("held: %v, told %d times", err, told)
+	}
+	time.AfterFunc(200*time.Millisecond, first.Release)
+	second, err := WaitLock(ctx, name, nil)
+	if err != nil {
+		t.Fatalf("after release: %v", err)
+	}
+	second.Release()
 }
 
 // Overlayfs refuses to rename an image layer's directory (EXDEV): Place
