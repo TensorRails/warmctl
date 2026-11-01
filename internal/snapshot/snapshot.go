@@ -306,8 +306,16 @@ func (b *bake) cleanup() {
 	logs := filepath.Join(b.o.StateDir, "logs", b.o.ID)
 	if b.c != nil {
 		_ = os.MkdirAll(logs, 0o755)
+		if b.o.InPlace {
+			// No container's teardown ends the engine: the agent must.
+			_ = b.c.Stop(agent.StopGrace)
+		}
 		b.c.SaveLogs(filepath.Join(logs, "agent.log"))
 		b.c.Remove()
+	}
+	if b.o.InPlace && b.backend == agent.BackendDMTCP {
+		// The engine and coordinator of an agent killed before its release.
+		quitLeft(b.cfg.DMTCP, b.p)
 	}
 	if b.dir != "" {
 		keepLogs(b.dir, logs)
@@ -317,6 +325,16 @@ func (b *bake) cleanup() {
 		b.lease.Release()
 	}
 	b.owns.Release()
+}
+
+// quitLeft ends the DMTCP coordinator an in-place agent left running, and
+// the engine connected to it.
+func quitLeft(tools dmtcp.Tools, p *run.Progress) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := tools.QuitLeft(ctx); err != nil {
+		p.Printf("warning: ending the DMTCP coordinator the agent left: %v", err)
+	}
 }
 
 func keepLogs(dir, logs string) {

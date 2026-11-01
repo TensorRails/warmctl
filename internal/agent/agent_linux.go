@@ -24,9 +24,6 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/runtimefs"
 )
 
-// Grace is how long a stopping engine gets before the container goes.
-const Grace = 20 * time.Second
-
 type agent struct {
 	cfg Config
 	log io.Writer

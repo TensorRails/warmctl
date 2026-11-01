@@ -113,22 +113,32 @@ func (t Tools) Version(ctx context.Context) string {
 	return strings.TrimSpace(line)
 }
 
+// PortFile, in TmpDir, holds the port of the coordinator Coordinator
+// started until Quit ends it: QuitLeft finds there a coordinator whose
+// agent was killed before it could end it.
+const PortFile = "coordinator.port"
+
+func (t Tools) portFile() string { return filepath.Join(t.TmpDir, PortFile) }
+
 // Coordinator starts a coordinator in the background and returns its port:
 // Port, or the free one the system gave it when Port is 0, which it writes
-// to a file before it forks into the background. It exits with the last
+// to PortFile before it forks into the background. It exits with the last
 // process of its computation; one that no process joined waits for Quit.
 func (t Tools) Coordinator(ctx context.Context) (int, error) {
-	f, err := os.CreateTemp(t.TmpDir, "coordinator-*.port")
-	if err != nil {
-		return 0, err
+	if t.TmpDir == "" {
+		return 0, errors.New("dmtcp: no TmpDir for the coordinator's port file")
 	}
-	_ = f.Close()
-	defer os.Remove(f.Name())
+	name := t.portFile()
+	_ = os.Remove(name)
 	if _, err := process.Capture(ctx, 30*time.Second, t.path("dmtcp_coordinator"),
-		"--daemon", "--exit-on-last", "--port", t.port(), "--port-file", f.Name()); err != nil {
+		"--daemon", "--exit-on-last", "--port", t.port(), "--port-file", name); err != nil {
 		return 0, err
 	}
-	data, err := os.ReadFile(f.Name())
+	return readPort(name)
+}
+
+func readPort(name string) (int, error) {
+	data, err := os.ReadFile(name)
 	if err != nil {
 		return 0, err
 	}
@@ -187,7 +197,28 @@ func (t Tools) Kill(ctx context.Context) error {
 // Quit kills the processes connected to the coordinator and ends it.
 func (t Tools) Quit(ctx context.Context) error {
 	_, err := process.Capture(ctx, 10*time.Second, t.path("dmtcp_command"), "--coord-port", t.port(), "--quit")
+	if t.TmpDir != "" {
+		_ = os.Remove(t.portFile())
+	}
 	return err
+}
+
+// QuitLeft ends the coordinator PortFile names, and every process still
+// connected to it: the engine of an in-place run whose agent was killed
+// before its own Quit. No PortFile is nothing to end.
+func (t Tools) QuitLeft(ctx context.Context) error {
+	if t.TmpDir == "" {
+		return nil
+	}
+	port, err := readPort(t.portFile())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	t.Port = port
+	return t.Quit(ctx)
 }
 
 // RestartArgs are dmtcp_restart's arguments. --no-strict-checking drops its

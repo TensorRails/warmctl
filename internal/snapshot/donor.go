@@ -52,7 +52,10 @@ func (b *bake) prepare(ctx context.Context) error {
 	cfg.CUDABackend = b.o.CUDABackend
 	cfg.Backend = b.backend
 	if b.backend == agent.BackendDMTCP {
+		// DMTCP's own files (its coordinator's and workers' state) stay out of
+		// the trees.
 		cfg.DMTCP = b.o.DMTCP
+		cfg.DMTCP.TmpDir = filepath.Join(b.dir, "dmtcp-tmp")
 	}
 	if err := b.hashModel(); err != nil {
 		return err
@@ -260,12 +263,6 @@ func (b *bake) placeInPlace() error {
 	}
 	if err := run.Place(b.adapter, pyext.GuestPath); err != nil {
 		return fmt.Errorf("adapter: %w", err)
-	}
-	if b.backend == agent.BackendDMTCP {
-		// DMTCP's own files (its coordinator's and workers' state) stay out of
-		// the trees.
-		b.cfg.DMTCP.TmpDir = filepath.Join(b.dir, "dmtcp-tmp")
-		return b.cfg.Write(filepath.Join(b.dir, "work", "agent.json"))
 	}
 	return nil
 }

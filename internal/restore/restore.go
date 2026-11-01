@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/gateway"
@@ -387,7 +388,12 @@ func (r *restore) cleanup() {
 	}
 	logs := filepath.Join(r.o.StateDir, "logs", r.o.ID)
 	if r.c != nil {
-		_ = r.c.Stop(20 * time.Second)
+		grace := agent.Grace
+		if r.o.InPlace {
+			// No container's teardown ends the engine: the agent must.
+			grace = agent.StopGrace
+		}
+		_ = r.c.Stop(grace)
 		if !r.o.InPlace {
 			_ = os.MkdirAll(logs, 0o755)
 			r.c.SaveLogs(filepath.Join(logs, "agent.log"))
@@ -395,6 +401,9 @@ func (r *restore) cleanup() {
 		r.c.Remove()
 	}
 	if r.o.InPlace {
+		if r.dmtcp() && r.dir != "" {
+			r.quitLeft()
+		}
 		r.unmountPod()
 		if r.dir != "" {
 			_ = claimDir(r.dir)
@@ -408,6 +417,16 @@ func (r *restore) cleanup() {
 	}
 	if r.lease != nil {
 		r.lease.Release()
+	}
+}
+
+// quitLeft ends the DMTCP coordinator the agent left running, and the
+// engine connected to it: an agent killed before its release.
+func (r *restore) quitLeft() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := r.dmtcpTools().QuitLeft(ctx); err != nil {
+		r.p.Printf("warning: ending the DMTCP coordinator the agent left: %v", err)
 	}
 }
 

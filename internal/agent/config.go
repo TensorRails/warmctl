@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/criu"
 	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
@@ -17,6 +18,14 @@ const (
 	ModeSnapshot = "snapshot"
 	ModeRestore  = "restore"
 )
+
+// Grace is how long a stopping engine gets before the container goes.
+const Grace = 20 * time.Second
+
+// StopGrace is how long the host gives an agent it runs as a child, in
+// place, to stop: Grace for the engine, then the backend's release (DMTCP's
+// coordinator), which no container's teardown does for it.
+const StopGrace = Grace + 20*time.Second
 
 // Process snapshot backends: CRIU where the container may run it, DMTCP in
 // containers without the privileges (docs/dmtcp.md).
@@ -161,8 +170,10 @@ func (c Config) validateBackend() error {
 			return errors.New("agent: the criu backend needs criu")
 		}
 	case BackendDMTCP:
-		if !abs(c.DMTCP.Plugin) {
-			return errors.New("agent: the dmtcp backend needs the fdkeep plugin's absolute path")
+		// TmpDir holds the coordinator's port, where the host finds a
+		// coordinator this agent could not end (dmtcp.Tools.QuitLeft).
+		if !abs(c.DMTCP.Plugin, c.DMTCP.TmpDir) {
+			return errors.New("agent: the dmtcp backend needs the fdkeep plugin's and its TmpDir's absolute paths")
 		}
 	default:
 		return fmt.Errorf("agent: unknown backend %q", c.Backend)

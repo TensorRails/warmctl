@@ -11,6 +11,7 @@ import (
 
 	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/cuda"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
@@ -57,10 +58,12 @@ func (r *restore) tools() (agent.Config, error) {
 	}
 	cfg := snapshot.AgentConfig(r.guest().state)
 	cfg.CUDABackend = r.o.CUDABackend
+	if r.o.CUDACheckpoint != "" {
+		cfg.CUDACheckpoint = r.o.CUDACheckpoint
+	}
 	if r.dmtcp() {
 		// No UTS namespace of its own: the restarted engine keeps the pod's name.
-		cfg.Backend, cfg.DMTCP = agent.BackendDMTCP, r.o.DMTCP
-		cfg.DMTCP.TmpDir = filepath.Join(r.dir, "dmtcp-tmp")
+		cfg.Backend, cfg.DMTCP = agent.BackendDMTCP, r.dmtcpTools()
 		return cfg, nil
 	}
 	// The agent runs in a UTS namespace of its own and names it as a
@@ -69,10 +72,15 @@ func (r *restore) tools() (agent.Config, error) {
 	if r.o.CRIU != "" {
 		cfg.CRIU = r.o.CRIU
 	}
-	if r.o.CUDACheckpoint != "" {
-		cfg.CUDACheckpoint = r.o.CUDACheckpoint
-	}
 	return cfg, nil
+}
+
+// dmtcpTools are DMTCP's programs as a pod restore's agent runs them, its
+// coordinator's and workers' files in the run directory, out of the trees.
+func (r *restore) dmtcpTools() dmtcp.Tools {
+	t := r.o.DMTCP
+	t.TmpDir = filepath.Join(r.dir, "dmtcp-tmp")
+	return t
 }
 
 func (r *restore) prepare(ctx context.Context) error {

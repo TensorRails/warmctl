@@ -136,13 +136,45 @@ func TestCoordinator(t *testing.T) {
 	if err != nil || port != 41234 {
 		t.Fatalf("port %d %v", port, err)
 	}
-	if left, _ := os.ReadDir(tmp); len(left) != 0 {
-		t.Fatalf("the port file stayed: %v", left)
+	if _, err := os.Stat(filepath.Join(tmp, PortFile)); err != nil {
+		t.Fatalf("no port file for QuitLeft: %v", err)
 	}
 	// A coordinator that fails to bind the port it was given.
 	tools.Port = 7779
 	if _, err := tools.Coordinator(context.Background()); err == nil {
 		t.Fatal("a failed coordinator returned a port")
+	}
+}
+
+// A stand-in dmtcp_command that records what it was asked.
+const fakeCommand = `#!/bin/sh
+echo "$*" >> "$(dirname "$0")/asked"
+`
+
+// QuitLeft ends the coordinator an agent left behind, once, and nothing
+// when no agent left one.
+func TestQuitLeft(t *testing.T) {
+	dir, tmp := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "dmtcp_command"), []byte(fakeCommand), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tools := Tools{Dir: dir, TmpDir: tmp}
+	ctx := context.Background()
+	if err := tools.QuitLeft(ctx); err != nil {
+		t.Fatalf("no coordinator left: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, PortFile), []byte("41234\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := tools.QuitLeft(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tools.QuitLeft(ctx); err != nil {
+		t.Fatal(err)
+	}
+	asked, _ := os.ReadFile(filepath.Join(dir, "asked"))
+	if string(asked) != "--coord-port 41234 --quit\n" {
+		t.Fatalf("asked %q", asked)
 	}
 }
 

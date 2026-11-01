@@ -81,6 +81,7 @@ func TestConfigValidate(t *testing.T) {
 	}
 	dm := snap
 	dm.CRIU, dm.Backend, dm.DMTCP.Plugin = "", BackendDMTCP, "/opt/warmctl/dmtcp/libdmtcp_fdkeep.so"
+	dm.DMTCP.TmpDir = "/run/warmctl/dmtcp-tmp"
 	if err := dm.Validate(); err != nil {
 		t.Fatalf("dmtcp backend without criu: %v", err)
 	}
@@ -92,6 +93,7 @@ func TestConfigValidate(t *testing.T) {
 	}
 	for _, mutate := range []func(*Config){
 		func(c *Config) { c.DMTCP.Plugin = "" },
+		func(c *Config) { c.DMTCP.TmpDir = "" },
 		func(c *Config) { c.IPC, c.IPCCoordinator = "interpose", "" },
 		func(c *Config) { c.IPCBuild = "cuinterpose" },
 		func(c *Config) { c.Backend = "podman" },
