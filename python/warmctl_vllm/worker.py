@@ -82,9 +82,10 @@ class Extension:
         return {'rank': self._warmctl_rank()}
 
     def warmctl_reload_pool(self, manifest, directory, threads=transfer.THREADS, slot_bytes=transfer.SLOT_BYTES,
-                            verify=False, sync=False):
+                            verify=False, sync=False, wait=False):
         """Copy the rank's pool back from the snapshot after wake_up(weights)
-        and check every allocation's fingerprint, before any forward pass."""
+        and check every allocation's fingerprint, before any forward pass.
+        With wait, a part's file may still be on its way."""
         started = time.monotonic()
         rank = self._warmctl_rank()
         with open(manifest, 'rb') as f:
@@ -99,7 +100,7 @@ class Extension:
         stats = transfer.Stats()
         copied = time.monotonic()
         loaded = transfer.reload(device, record['allocations'], record['parts'], directory, threads, slot_bytes,
-                                 verify, stats, pipeline=not sync)
+                                 verify, stats, pipeline=not sync, wait=wait)
         summed = time.monotonic()
         sums = stats.sums
         if sums is None:

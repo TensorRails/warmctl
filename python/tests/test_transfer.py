@@ -79,6 +79,11 @@ class TransferTest(unittest.TestCase):
                 f.write(b'\x00')
             with self.assertRaises(ValueError):
                 transfer.reload(self.device, allocations, written, root, threads=1, slot_bytes=1000, verify=True)
+            # A part missing from a complete snapshot fails at once: only a
+            # reload told the parts still arrive waits for them.
+            os.remove(os.path.join(root, written[1]['path']))
+            with self.assertRaises(FileNotFoundError):
+                transfer.reload(self.device, allocations, written, root, threads=2, slot_bytes=1000)
 
     def test_export_refuses_existing_rank(self):
         allocations, parts = pool.plan_parts(self.rows, part_bytes=4096)
