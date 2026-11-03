@@ -216,3 +216,58 @@ func TestStageRoom(t *testing.T) {
 		t.Fatalf("encoded without room: %t %v", room, err)
 	}
 }
+
+// A process image's zero pages are not written: the staged file reads the
+// same and keeps holes there. Zeros at the start, between data, in a page
+// cut by the write's end and at the file's end all stay zeros.
+func TestStageSkipsZeroPages(t *testing.T) {
+	page := len(zeroPage)
+	body := make([]byte, 40*page+100) // a last page cut short
+	copy(body[2*page:], bytes.Repeat([]byte("data"), page))
+	copy(body[9*page+7:], "a byte run that starts and ends inside pages")
+	for i := 20 * page; i < 30*page; i++ {
+		body[i] = byte(i)
+	}
+	body[len(body)-1] = 1
+
+	src, dst := t.TempDir(), filepath.Join(t.TempDir(), "staged")
+	if err := os.MkdirAll(filepath.Join(src, "criu"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "criu", "pages-1.img"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "manifest.json"), []byte(`{"id":"zeros"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := manifest.Manifest{Files: []manifest.File{{Path: "criu/pages-1.img", Size: int64(len(body)), Role: manifest.RoleCRIU}}}
+	if _, err := Stage(context.Background(), src, dst, m, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "criu", "pages-1.img")); err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("staged file differs: %v", err)
+	}
+
+	// Mostly zeros: the file keeps holes, so it takes less than its size.
+	f, err := os.CreateTemp(t.TempDir(), "sparse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	const size = 64 << 20
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, size)
+	copy(b[size/2:], "one non-zero page")
+	if err := writeSparse(f, b, 0); err != nil {
+		t.Fatal(err)
+	}
+	var st syscall.Stat_t
+	if err := syscall.Fstat(int(f.Fd()), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Blocks*512 >= size/2 {
+		t.Fatalf("%d bytes allocated for one non-zero page of %d", st.Blocks*512, size)
+	}
+}

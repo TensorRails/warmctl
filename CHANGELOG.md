@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `up`'s stage copy (a snapshot on FUSE or stored with `--compress`) skips
+  all-zero pages: the staged files keep holes there. More than half of a
+  process image is zero pages (57% of GLM-5.3-Flash's CRIU images), and
+  writing them took half of the stage. Staging those images into memory
+  went from 3.96 to 7.23 GB/s from a compressed snapshot and to 8.48 GB/s
+  from a raw one; weights, which have no zero pages, stage as before.
+
 ## v2.0.0-beta.17 — 2026-11-01
 
 Large local DMTCP snapshots restore faster with huge pages and parallel
