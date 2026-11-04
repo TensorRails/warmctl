@@ -73,8 +73,15 @@ already varied before checkpoint. The canary tolerance remains 0.001.
 The [full experiment record](https://github.com/TensorRails/dmtcp/blob/v5.0.0-warmctl.1/doc/h200-restart-performance.md)
 includes all modes, cache conditions and the unsuccessful mmap experiment.
 
+Since [`v5.0.0-warmctl.2`](https://github.com/TensorRails/dmtcp/releases/tag/v5.0.0-warmctl.2),
+the checkpoint also leaves out resident memory that holds only zeros, and the
+readers share large runs of an area that zeros split. On one RTX 3090,
+Qwen3-0.6B's process images fell from 8,582 to 6,065 MiB and time to
+`/health` from 4.6–5.1 s to 4.0–4.4 s. Pinned CUDA host memory, such as
+Qwen3.8-Flash-Next's CPU-side embedding table, already left its zeros out.
+
 The fork is released independently as
-[`v5.0.0-warmctl.1`](https://github.com/TensorRails/dmtcp/releases/tag/v5.0.0-warmctl.1),
+[`v5.0.0-warmctl.2`](https://github.com/TensorRails/dmtcp/releases/tag/v5.0.0-warmctl.2),
 with source, Debian 12-compatible Linux amd64 and arm64 packages, checksums
 and provenance. Both packages include fdkeep. Linux warmctl archives bundle
 them at `dmtcp/linux-ARCH/VERSION/` beside the CLI; the runtime Dockerfile
@@ -88,7 +95,7 @@ versioned DMTCP directories and their mtimes, and keeps older versions for
 existing snapshots. Use an old snapshot's original runtime image or explicit
 `--dmtcp-dir` / `--dmtcp-plugin` paths. Publishing a CLI release does not
 replace an existing runtime image. See the fork's
-[release procedure](https://github.com/TensorRails/dmtcp/blob/v5.0.0-warmctl.1/RELEASING.md).
+[release procedure](https://github.com/TensorRails/dmtcp/blob/v5.0.0-warmctl.2/RELEASING.md).
 
 The packages require glibc >= 2.36, compatible libstdc++ and libatomic
 (`libstdc++6` and `libatomic1` on Debian/Ubuntu). ARM64 passes
@@ -241,7 +248,7 @@ with the restart changes above and these earlier patches:
 | Accept an already unlinked shm file after restart | Processes that share an area of a deleted `/dev/shm` file (CPython's named semaphores, unlinked at once) recreate one file at restart and each unlinks it again; every one but the first found it gone, and every vLLM restart printed a warning. |
 | Change a socket's connection only with the fd table locked | `setsockopt`, `connect`, `bind` and `listen` changed the connection they had looked up while another thread could delete it: `add()` drops the entry of an fd closed past the close wrapper once the number comes back. A worker restarted under cuInterpose, whose Rust threads make and close some sockets with raw syscalls, segfaulted in `SocketConnection::addSetsockopt` once in about a dozen restores. |
 
-The plugin [fdkeep](https://github.com/TensorRails/dmtcp/tree/v5.0.0-warmctl.1/plugin/fdkeep),
+The plugin [fdkeep](https://github.com/TensorRails/dmtcp/tree/v5.0.0-warmctl.2/plugin/fdkeep),
 now maintained and released with the fork, repairs what DMTCP loses:
 
 - the CUDA driver's eventfds and pipes, recreated as real pipes;
