@@ -1,7 +1,17 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.18 — 2026-11-04
 
+Snapshots carry fewer zero pages, and restores copy fewer.
+
+- TensorRails DMTCP `v5.0.0-warmctl.2`: a checkpoint leaves out resident
+  memory that holds only zeros, and restart readers share the large runs
+  between them. Baked with warmctl and restored on one RTX 3090, Qwen3-0.6B's
+  process images fell from 8,582 to 6,065 MiB and time to `/health` from
+  4.6–5.1 s to 4.0–4.4 s, with the same answers. Pinned CUDA host memory
+  already left its zeros out, so Qwen3.8-Flash-Next's CPU-side embedding
+  table is unchanged. Bake new snapshots with this release; images restart
+  under either DMTCP version.
 - `up`'s stage copy (a snapshot on FUSE or stored with `--compress`) skips
   all-zero pages: the staged files keep holes there. More than half of a
   process image is zero pages (57% of GLM-5.3-Flash's CRIU images), and
