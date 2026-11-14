@@ -1,0 +1,4 @@
+cpu_cores_count 64
+simd_count 0
+gfx_target_version 0
+local_mem_size 0

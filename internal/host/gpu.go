@@ -15,7 +15,7 @@ import (
 	"syscall"
 )
 
-// GPU is one device as NVML reports it.
+// GPU is one device as NVML, or on an AMD host the KFD topology, reports it.
 type GPU struct {
 	Index     int    `json:"index"`
 	UUID      string `json:"uuid"`
@@ -23,6 +23,13 @@ type GPU struct {
 	PCIBusID  string `json:"pci_bus_id"`
 	MemoryMiB int64  `json:"memory_mib"`
 	Driver    string `json:"driver"`
+	// Vendor is VendorAMD for a GPU of the KFD topology, empty for NVIDIA's.
+	// Arch (gfx950), KFDGPUID (the kernel's gpu_id) and RenderNode
+	// (/dev/dri/renderD128) are an AMD GPU's.
+	Vendor     string `json:"vendor,omitempty"`
+	Arch       string `json:"arch,omitempty"`
+	KFDGPUID   uint64 `json:"kfd_gpu_id,omitempty"`
+	RenderNode string `json:"render_node,omitempty"`
 }
 
 // Inventory lists every GPU of the host.

@@ -27,6 +27,12 @@ type Worker struct {
 	VLLM          string `json:"vllm"`
 	Torch         string `json:"torch"`
 	AdapterSHA256 string `json:"adapter_sha256"`
+	// On ROCm: torch.version.hip, the ROCm userspace's version and what
+	// kfdr_version() of the preloaded libkfdreplay answers ("" when the
+	// worker runs without it).
+	HIP       string `json:"hip,omitempty"`
+	ROCm      string `json:"rocm,omitempty"`
+	KFDReplay string `json:"kfdr_version,omitempty"`
 }
 
 // Export is warmctl_export_pool of one rank.
@@ -159,4 +165,53 @@ func (e *Engine) ReloadPool(ctx context.Context, manifestPath, directory string,
 		return nil, err
 	}
 	return byRank(rows, func(r Reloaded) int { return r.Rank }, e.Ranks)
+}
+
+// GPUState is warmctl_gpu_checkpoint or warmctl_gpu_restore of one rank: the
+// GPU state an AMD worker moved itself through libkfdreplay.
+type GPUState struct {
+	Rank    int     `json:"rank"`
+	PID     int     `json:"pid"`
+	Version string  `json:"version"`
+	State   string  `json:"state"`
+	Seconds float64 `json:"seconds"`
+	// MaxWptr is the most packets one of the rank's GPU queues has taken,
+	// which its restore replays (checkpoint only).
+	MaxWptr uint64 `json:"max_wptr,omitempty"`
+}
+
+// GPUCheckpoint has every AMD worker checkpoint its GPU state with
+// libkfdreplay (cold: the devices are released, DMTCP can snapshot the
+// process). version is the libkfdreplay the worker must run, "" for any.
+func (e *Engine) GPUCheckpoint(ctx context.Context, version string) ([]GPUState, error) {
+	return e.gpuState(ctx, "warmctl_gpu_checkpoint", version)
+}
+
+// GPURestore has every restored AMD worker replay its GPU state.
+func (e *Engine) GPURestore(ctx context.Context, version string) ([]GPUState, error) {
+	return e.gpuState(ctx, "warmctl_gpu_restore", version)
+}
+
+func (e *Engine) gpuState(ctx context.Context, method, version string) ([]GPUState, error) {
+	var rows []GPUState
+	if err := e.RPC(ctx, method, map[string]any{"version": version}, ShortRPC, &rows); err != nil {
+		return nil, err
+	}
+	return byRank(rows, func(g GPUState) int { return g.Rank }, e.Ranks)
+}
+
+// PrepareCheckpointIfAny is PrepareCheckpoint for an engine whose vLLM may
+// predate checkpoint_prepare (the ROCm images): warmctl_checkpoint_prepare
+// runs vLLM's when it has one, then warmctl's.
+func (e *Engine) PrepareCheckpointIfAny(ctx context.Context) ([]Prepared, error) {
+	var rows []Prepared
+	if err := e.RPC(ctx, "warmctl_checkpoint_prepare", nil, ShortRPC, &rows); err != nil {
+		return nil, err
+	}
+	return byRank(rows, func(p Prepared) int { return p.Rank }, e.Ranks)
+}
+
+// FinishRestoreIfAny is FinishRestore for such an engine.
+func (e *Engine) FinishRestoreIfAny(ctx context.Context) error {
+	return e.RPC(ctx, "warmctl_checkpoint_restore", nil, ShortRPC, nil)
 }

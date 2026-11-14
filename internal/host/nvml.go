@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,8 +29,32 @@ type Session interface {
 	Close() error
 }
 
-// Open starts an NVML session; tests replace it with a fake.
-var Open = openNVML
+// Open starts a session on this host's GPUs; tests replace it with a fake.
+var Open = openSession
+
+// openSession opens NVML, as warmctl always has. Only where NVML cannot be
+// opened, the host has no NVIDIA device node and it is an AMD compute host
+// (KFDPresent) does it read the KFD topology instead. Any host with an
+// NVIDIA device, or with neither vendor, gets NVML's answer as before.
+func openSession() (Session, error) {
+	s, err := openNVML()
+	if err == nil {
+		return s, nil
+	}
+	if NVIDIADevicePresent() || !KFDPresent() {
+		return nil, err
+	}
+	return openKFD()
+}
+
+// NVIDIADevice is the control node every NVIDIA driver creates.
+var NVIDIADevice = "/dev/nvidiactl"
+
+// NVIDIADevicePresent reports an NVIDIA driver's device node.
+func NVIDIADevicePresent() bool {
+	_, err := os.Stat(NVIDIADevice)
+	return err == nil
+}
 
 // Timeout bounds one query: a GPU that fell off the bus can block NVML for
 // minutes, and the caller should hear about it.
