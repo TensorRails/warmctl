@@ -1,0 +1,13 @@
+exit 1
+--- stdout
+--- stderr
+Usage of mirror:
+  -all-platforms
+    	copy every platform, not only those this host can restore
+  -catalog
+    	copy every model of the registry's catalog, and the catalog
+  -concurrency int
+    	blobs transferred at once (0: 64)
+  -plain-http
+    	talk to the registry over plain HTTP
+error: flag: help requested

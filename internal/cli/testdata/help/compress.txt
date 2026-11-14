@@ -1,0 +1,5 @@
+exit 1
+--- stdout
+--- stderr
+Usage of compress:
+error: flag: help requested

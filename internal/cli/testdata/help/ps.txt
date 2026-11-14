@@ -1,0 +1,11 @@
+exit 1
+--- stdout
+--- stderr
+Usage of ps:
+  -all
+    	also list instances whose container is not running
+  -docker string
+    	Docker socket (default "/var/run/docker.sock")
+  -state-dir string
+    	state directory (default "/var/lib/warmctl")
+error: flag: help requested

@@ -1,0 +1,19 @@
+exit 1
+--- stdout
+--- stderr
+Usage of pull:
+  -concurrency int
+    	blobs transferred at once (0: 64)
+  -dmtcp-dir string
+    	directory of DMTCP's programs, for the dmtcp backend (default "/opt/warmctl/dmtcp/bin")
+  -docker string
+    	Docker socket (default "/var/run/docker.sock")
+  -mode string
+    	where the snapshot will restore, as up's --mode: of an index's entries, one this host can restore that way (auto, host or in-place) (default "auto")
+  -output string
+    	snapshot directory to create (default: <state>/pulled/<digest>)
+  -plain-http
+    	talk to the registry over plain HTTP
+  -state-dir string
+    	state directory (blob store) (default "/var/lib/warmctl")
+error: flag: help requested

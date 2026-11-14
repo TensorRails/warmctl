@@ -1,0 +1,4 @@
+exit 1
+--- stdout
+--- stderr
+error: flag: help requested
