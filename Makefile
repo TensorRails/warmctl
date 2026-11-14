@@ -1,4 +1,4 @@
-.PHONY: catalog-push demo build linux test pytest lint profiles-check check criu-test criu-image e2e-test cuinterpose pod-image dmtcp release clean
+.PHONY: catalog-push demo build linux test pytest lint profiles-check check criu-test criu-image e2e-test amd-e2e-test cuinterpose pod-image dmtcp release clean
 
 GO ?= go
 PY ?= python3
@@ -8,6 +8,7 @@ LDFLAGS := -X main.version=$(VERSION)
 CRIU_IMAGE ?= warmctl-criu-test:local
 E2E_IMAGE ?= warmctl-e2e:local
 E2E_POD_IMAGE ?= warmctl-e2e-pod:local
+AMD_E2E_IMAGE ?= warmctl-amd-e2e:local
 POD_IMAGE ?= warmctl-pod:$(VERSION)
 SUDO ?= $(shell [ "$$(id -u)" = 0 ] || echo sudo -E)
 # cuInterpose (docs/interpose.md): NVIDIA's release v0.2.0-rc.2. Its build
@@ -56,6 +57,17 @@ criu-test: criu-image
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell $(GO) env GOARCH) $(GO) build -o bin/criu/witness ./tests/integration/criu/witness
 	$(GO) test -c -tags criu -o bin/criu/roundtrip.test ./tests/integration/criu
 	$(SUDO) bin/criu/roundtrip.test -test.v -test.count=1 -bin $(CURDIR)/bin/criu -image $(CRIU_IMAGE)
+
+# The AMD path on a CPU host: a bake and restores in unprivileged containers
+# of a stand-in ROCm runtime image with the pinned DMTCP and libkfdreplay
+# releases, on a KFD topology of MI350X GPUs (tests/integration/amd). Needs
+# Docker and the network (the releases).
+amd-e2e-test:
+	mkdir -p bin/amd-e2e
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -o bin/amd-e2e/warmctl ./cmd/warmctl
+	tests/integration/amd/fixtures.sh bin/amd-e2e/kfd
+	docker build -t $(AMD_E2E_IMAGE) -f tests/integration/amd/Dockerfile .
+	tests/integration/amd/run.sh $(AMD_E2E_IMAGE)
 
 # A whole snapshot and two restores through the real binary on a CPU host,
 # around a stand-in vLLM (tests/integration/e2e/vllm.py) that runs warmctl's

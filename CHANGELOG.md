@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+AMD Instinct GPUs (preview, [docs/amd.md](docs/amd.md)).
+
+- On an AMD host warmctl finds the GPUs itself (the KFD topology, where no
+  NVIDIA device exists) and bakes in place under DMTCP; the engine's
+  processes preload [libkfdreplay](https://github.com/TensorRails/libkfdreplay)
+  v0.1.0 and checkpoint and restore their own GPU state, asked through the
+  engine. One MI350X per engine, ROCm 10.1, vLLM 0.29, unprivileged
+  containers. `deploy/rocm/Dockerfile` is the ROCm runtime image.
+- AMD snapshots carry the manifest schema `warmctl.snapshot/v2-rocm`, which
+  earlier releases refuse: they keep choosing the NVIDIA entries of a
+  repository that holds both. A restore checks the snapshot's GPU vendor
+  against the host's before anything is pulled.
+- Nothing changes for NVIDIA: manifests, profiles, flags and defaults are
+  byte for byte as before, now pinned by tests (published manifests read and
+  write back unchanged, every profile resolves as before, every command's
+  help). New snapshots' adapter has another SHA-256: it carries the AMD
+  methods, which an NVIDIA engine never calls.
+- `warmctl hardware` lists the AMD Instinct rows.
+
 ## v2.0.0-beta.18 — 2026-11-04
 
 Snapshots carry fewer zero pages, and restores copy fewer.

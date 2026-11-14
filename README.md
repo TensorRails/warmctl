@@ -112,6 +112,7 @@ fingerprint, and a canary prompt must get the original engine's answer
 | H100, H200, B200, B300, L40S, RTX PRO 6000 | Another GPU model or count, or another driver branch: build a snapshot for that platform |
 | Docker hosts, Kubernetes, KServe | GPUs in confidential-computing mode (cuda-checkpoint does not support it) |
 | Any OCI registry, or a shared file system | |
+| AMD Instinct MI350X, one GPU per engine, in an unprivileged container (preview, [docs/amd.md](docs/amd.md)) | AMD tensor parallel, other AMD generations |
 
 ## Kubernetes
 

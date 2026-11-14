@@ -20,8 +20,18 @@ import sys
 import threading
 from urllib.parse import parse_qs, urlparse
 
-from warmctl_vllm import pool
+from warmctl_vllm import kfdr, pool
 from warmctl_vllm.worker import Extension
+
+# WARMCTL_E2E_AMD: the engine stands in for vLLM on ROCm (tests/integration/amd).
+# Its workers map a stand-in libamdhip64 (warmctl finds ROCm processes by it),
+# report the libkfdreplay they preload, and checkpoint and restore their "GPU"
+# state through it: the real library, with no GPU object to replay.
+AMD = os.environ.get('WARMCTL_E2E_AMD') == '1'
+FAKE_HIP = '/opt/fake-rocm/libamdhip64.so.7'
+if AMD:
+    import types
+    sys.modules['torch'] = types.SimpleNamespace(cuda=types.SimpleNamespace(synchronize=lambda *a: None))
 
 BASE = 0x7F0000000000
 # The first allocation is one part long and the same on every rank, like a
@@ -116,9 +126,13 @@ class Worker(Extension):
         return []
 
     def warmctl_describe(self):
-        return {'rank': self.rank, 'pid': os.getpid(), 'device': self.rank, 'name': 'Fake GPU', 'arch': 'sm_00',
-                'pci_bus_id': '0000:%02x:00.0' % (self.rank + 1), 'uuid': '', 'vllm': 'fake', 'torch': 'none',
-                'adapter_sha256': os.environ.get('WARMCTL_ADAPTER_SHA256', '')}
+        row = {'rank': self.rank, 'pid': os.getpid(), 'device': self.rank, 'name': 'Fake GPU', 'arch': 'sm_00',
+               'pci_bus_id': '0000:%02x:00.0' % (self.rank + 1), 'uuid': '', 'vllm': 'fake', 'torch': 'none',
+               'adapter_sha256': os.environ.get('WARMCTL_ADAPTER_SHA256', '')}
+        if AMD:
+            row.update(name='AMD Instinct MI350X', arch='gfx950', hip='7.16.26385', rocm='fake',
+                       kfdr_version=kfdr.Library().version())
+        return row
 
     def checkpoint_prepare(self):
         return None
@@ -128,6 +142,10 @@ class Worker(Extension):
 
 
 def serve_worker(rank, seed, conn):
+    if AMD:
+        import mmap
+        with open(FAKE_HIP, 'rb') as f:
+            HELD.append(mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ))
     worker = Worker(rank, seed)
     while True:
         method, kwargs = conn.recv()
