@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/accel"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
@@ -282,6 +283,9 @@ func CanRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools) error {
 
 func canRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools,
 	probeHost func() (host.BackendProbe, error)) error {
+	if err := canRestoreVendor(m, inPlace, accel.Host()); err != nil {
+		return err
+	}
 	switch b := m.Process.BackendName(); b {
 	case manifest.BackendCRIU:
 		if !inPlace {
@@ -310,6 +314,9 @@ func canRestore(m manifest.Manifest, inPlace bool, tools dmtcp.Tools,
 
 func (r *restore) preflight(ctx context.Context) error {
 	if err := CanRestore(r.m, r.o.InPlace, r.o.DMTCP); err != nil {
+		return err
+	}
+	if err := r.amdFiles(); err != nil {
 		return err
 	}
 	if r.o.InPlace {
@@ -376,7 +383,7 @@ func checkHost(ctx context.Context, h manifest.Hardware, spec, locks string, fre
 	if err != nil {
 		return nil, err
 	}
-	if err := Compatible(h, gpus, topology, host.CPUFlags()); err != nil {
+	if err := compatible(h, gpus, topology, len(all)); err != nil {
 		return nil, err
 	}
 	for _, g := range gpus {

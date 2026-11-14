@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,6 +60,11 @@ func (t *dmtcpTree) launch(ctx context.Context, argv, env []string) ([]string, [
 	}
 	// Later entries win in exec.Cmd.Env.
 	env = append(append([]string(nil), env...), dmtcp.Env...)
+	if t.cfg.GPU == GPUAMD {
+		// dmtcp_launch keeps the LD_PRELOAD it starts with for every program
+		// of the tree: each engine process records its GPU objects.
+		env = append(env, "LD_PRELOAD="+preload(env, t.cfg.GPULib))
+	}
 	return t.cfg.DMTCP.Wrap(argv, t.images()), env, nil
 }
 
@@ -233,4 +239,14 @@ func (t *dmtcpTree) release() {
 	// or once the restored engine exits.
 	_ = t.cfg.DMTCP.Quit(ctx)
 	t.cfg.DMTCP.Port = 0
+}
+
+// preload is lib ahead of any LD_PRELOAD env already has.
+func preload(env []string, lib string) string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(env[i], "LD_PRELOAD="); ok && v != "" {
+			return lib + ":" + v
+		}
+	}
+	return lib
 }

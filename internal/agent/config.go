@@ -11,6 +11,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/criu"
 	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
+	"github.com/TensorRails/warmctl/v2/internal/rocm"
 )
 
 // Modes of the agent.
@@ -33,6 +34,9 @@ const (
 	BackendCRIU  = "criu"
 	BackendDMTCP = "dmtcp"
 )
+
+// GPUAMD is Config.GPU of an AMD engine.
+const GPUAMD = "amd"
 
 // Tree is a directory the snapshot carries as a runtimefs archive.
 type Tree struct {
@@ -87,6 +91,12 @@ type Config struct {
 	// freeze: DMTCP stops the tree itself.
 	Backend string      `json:"backend,omitempty"`
 	DMTCP   dmtcp.Tools `json:"dmtcp,omitempty"`
+	// GPU is "amd" for an AMD engine: its processes preload GPULib
+	// (libkfdreplay) and move their GPU state themselves, asked through the
+	// engine by the host; the cuda steps check that they did. Empty for
+	// NVIDIA, whose state the cuda steps move.
+	GPU    string `json:"gpu,omitempty"`
+	GPULib string `json:"gpu_lib,omitempty"`
 
 	// Snapshot: the engine to start and where results go.
 	Argv []string `json:"argv,omitempty"`
@@ -159,6 +169,15 @@ func (c Config) Validate() error {
 	if c.IPCBuild != "" && !abs(c.IPCBuild) {
 		return errors.New("agent: the cuInterpose build needs an absolute path")
 	}
+	switch c.GPU {
+	case "":
+	case GPUAMD:
+		if c.Backend != BackendDMTCP || !abs(c.GPULib) {
+			return errors.New("agent: an AMD engine runs under the dmtcp backend with libkfdreplay's absolute path")
+		}
+	default:
+		return fmt.Errorf("agent: unknown GPU vendor %q", c.GPU)
+	}
 	return c.validateMode()
 }
 
@@ -221,6 +240,9 @@ type (
 	FreezeResult struct {
 		Tree       criu.Tree      `json:"tree"`
 		References map[string]int `json:"references"`
+		// Coverage is what an AMD tree maps outside the snapshot
+		// (rocm.Cover); the freeze fails when a file is not carried.
+		Coverage *rocm.Coverage `json:"coverage,omitempty"`
 	}
 	// CUDARestoreArgs drive the restore's cuda step.
 	CUDARestoreArgs struct {

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/TensorRails/warmctl/v2/internal/accel"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
@@ -66,12 +67,7 @@ func (b *bake) prepare(ctx context.Context) error {
 	}
 	b.launch.Env["WARMCTL_ADAPTER_SHA256"] = sum
 	b.launch.Env["WARMCTL_PROFILE"] = b.launch.Profile.ID
-	if _, set := b.launch.Env[DriverCheckEnv]; !set {
-		b.launch.Env[DriverCheckEnv] = "1"
-	}
-	if _, set := b.launch.Env["LD_LIBRARY_PATH"]; !set && len(b.gpus) > 0 && hostUMD(b.gpus[0].Driver, len(b.gpus)) {
-		b.launch.Env["LD_LIBRARY_PATH"] = hostUMDLibraryPath
-	}
+	b.gpuEnv(&cfg)
 	b.cfg = cfg
 	b.cfg.Mode, b.cfg.Out = agent.ModeSnapshot, b.state()+"/out"
 	b.cfg.Argv = append(append([]string(nil), b.launch.Argv...), "--host", "127.0.0.1", "--port", "8000")
@@ -93,6 +89,22 @@ func (b *bake) prepare(ctx context.Context) error {
 	b.p.Printf("pulling %s", b.launch.Profile.Image)
 	b.image, err = b.dk.EnsureImage(ctx, b.launch.Profile.Image, nil)
 	return err
+}
+
+// gpuEnv sets what the engine's GPU driver needs: NVIDIA's driver version
+// check off and, on a multi-GPU engine under a newer driver, the host's
+// user-mode driver; on AMD, libkfdreplay, which the agent preloads.
+func (b *bake) gpuEnv(cfg *agent.Config) {
+	if b.vendor == accel.AMD {
+		cfg.GPU, cfg.GPULib = agent.GPUAMD, b.gpuLib.Path
+		return
+	}
+	if _, set := b.launch.Env[DriverCheckEnv]; !set {
+		b.launch.Env[DriverCheckEnv] = "1"
+	}
+	if _, set := b.launch.Env["LD_LIBRARY_PATH"]; !set && len(b.gpus) > 0 && hostUMD(b.gpus[0].Driver, len(b.gpus)) {
+		b.launch.Env["LD_LIBRARY_PATH"] = hostUMDLibraryPath
+	}
 }
 
 // hashModel resolves the model directory and takes its digest. In place
@@ -298,6 +310,11 @@ func (b *bake) start(ctx context.Context) error {
 		if w.AdapterSHA256 != b.launch.Env["WARMCTL_ADAPTER_SHA256"] {
 			return fmt.Errorf("rank %d runs adapter %q, mounted %q",
 				w.Rank, w.AdapterSHA256, b.launch.Env["WARMCTL_ADAPTER_SHA256"])
+		}
+	}
+	if b.vendor == accel.AMD {
+		if err := b.checkWorkers(b.workers); err != nil {
+			return err
 		}
 	}
 	w := b.workers[0]

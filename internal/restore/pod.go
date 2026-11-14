@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/TensorRails/warmctl/v2/internal/accel"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/criu"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
@@ -339,6 +340,9 @@ func (r *restore) checkPod() error {
 
 // dmtcp is whether the snapshot's tree restarts under DMTCP.
 func (r *restore) dmtcp() bool { return r.m.Process.Backend == agent.BackendDMTCP }
+
+// amd is whether the snapshot is of AMD GPUs.
+func (r *restore) amd() bool { return accel.Of(r.m.Hardware) == accel.AMD }
 
 // linkDevices names each donor GPU's device node after this pod's GPU of the
 // same rank: DMTCP reopens a descriptor by its path, and the host numbers

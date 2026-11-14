@@ -13,11 +13,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/accel"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/criu"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
+	"github.com/TensorRails/warmctl/v2/internal/rocm"
 	"github.com/TensorRails/warmctl/v2/internal/run"
 	"github.com/TensorRails/warmctl/v2/internal/store"
 	"github.com/TensorRails/warmctl/v2/internal/zframes"
@@ -333,8 +335,12 @@ func (b *bake) assemble(files []manifest.File) manifest.Manifest {
 		r.Fingerprint.Allocations = len(r.Allocations)
 		ranks[i] = r
 	}
+	schema := manifest.Schema
+	if b.vendor == accel.AMD {
+		schema = manifest.SchemaROCm
+	}
 	return manifest.Manifest{
-		Schema: manifest.Schema, ID: b.o.ID, CreatedAt: time.Now().UTC(), Tool: b.o.Version,
+		Schema: schema, ID: b.o.ID, CreatedAt: time.Now().UTC(), Tool: b.o.Version,
 		Profile: b.launch.Profile,
 		Launch: manifest.Launch{
 			Image: b.launch.Profile.Image, Model: b.served, ModelDir: b.o.ModelDir, ModelSHA256: b.model,
@@ -366,12 +372,19 @@ func (b *bake) hardware() manifest.Hardware {
 	}
 	for i, g := range b.gpus {
 		gpu := manifest.GPU{Rank: i, Index: g.Index, UUID: g.UUID, PCIBusID: g.PCIBusID, Name: g.Name, MemoryMiB: g.MemoryMiB}
+		if b.vendor == accel.AMD {
+			h.GPUs = append(h.GPUs, gpu)
+			continue
+		}
 		if dev, err := host.DevicePath(g.PCIBusID); err == nil {
 			gpu.Device = dev
 		} else if b.backend == agent.BackendDMTCP {
 			b.p.Printf("warning: rank %d: %v; a pod whose GPU has another /dev/nvidiaN will not restore", i, err)
 		}
 		h.GPUs = append(h.GPUs, gpu)
+	}
+	if b.vendor == accel.AMD {
+		rocm.Hardware(&h, b.gpus, b.workers[0], b.gpuLib)
 	}
 	return h
 }
@@ -408,12 +421,22 @@ func (b *bake) process() manifest.Process {
 	for _, g := range b.gpus {
 		p.VisibleUUIDs = append(p.VisibleUUIDs, g.UUID)
 	}
+	owners := &p.Owners
+	if b.vendor == accel.AMD {
+		// No CUDA owner: an older warmctl that read this would move no state.
+		lib := b.gpuLib
+		p.GPUState, p.GPULib, p.GPUMaxWptr = manifest.GPUStateKFDReplay, &lib, b.gpuRes.MaxWptr()
+		if b.coverage != nil {
+			p.Mapped = b.coverage.Model
+		}
+		owners = &p.GPUOwners
+	}
 	for _, pid := range b.cudaRes.Owners {
 		o := manifest.Owner{PID: pid, Rank: -1, Role: "engine"}
 		if r, ok := rankOf[pid]; ok {
 			o.Rank, o.Role = r, "worker"
 		}
-		p.Owners = append(p.Owners, o)
+		*owners = append(*owners, o)
 	}
 	return p
 }

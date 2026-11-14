@@ -107,6 +107,9 @@ func (p linkedPod) claimTree(t agent.Tree) error { return claimDir(t.Path) }
 // agent keeps the pod's host name: the restarted engine runs under it.
 func (p linkedPod) agent(cfg *agent.Config) {
 	cfg.Backend, cfg.DMTCP = agent.BackendDMTCP, p.tools()
+	if p.r.amd() {
+		cfg.GPU, cfg.GPULib = agent.GPUAMD, p.r.m.Process.GPULib.Path
+	}
 }
 
 // tools are DMTCP's programs as the agent runs them, its coordinator's and
@@ -122,8 +125,11 @@ func (p linkedPod) start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := p.r.linkDevices(); err != nil {
-		return err
+	// AMD's render nodes are libkfdreplay's to reopen: no link.
+	if !p.r.amd() {
+		if err := p.r.linkDevices(); err != nil {
+			return err
+		}
 	}
 	mounts, err := p.r.podMounts(model)
 	if err != nil {
