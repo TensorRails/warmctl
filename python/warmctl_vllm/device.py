@@ -1,6 +1,7 @@
 """The CUDA side of the pool: copies through vLLM's own CUDA runtime wrapper
 (the one CuMemAllocator itself uses for sleep backups) and fingerprints
-computed on the GPU over raw allocation addresses."""
+computed on the GPU over raw allocation addresses. On ROCm the wrapper loads
+libamdhip64 and the same calls go by their hip names."""
 from __future__ import annotations
 
 import ctypes
@@ -15,8 +16,16 @@ _MEMCPY_HOST_TO_DEVICE = 1
 _bound = {}
 
 
-def _runtime(lib):
-    """Stream, event and async-copy functions of a libcudart, bound once."""
+def runtime_name(name, hip):
+    """The runtime's name of a CUDA runtime function: on ROCm, HIP's
+    (cudaStreamCreateWithFlags is hipStreamCreateWithFlags, with the same
+    arguments and constants)."""
+    return 'hip' + name[len('cuda'):] if hip else name
+
+
+def _runtime(lib, hip=False):
+    """Stream, event and async-copy functions of a libcudart (or, on ROCm,
+    libamdhip64), bound once, by their CUDA names."""
     if id(lib) not in _bound:
         handle, size, kind, err = ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int
         signatures = {
@@ -31,7 +40,7 @@ def _runtime(lib):
         }
         functions = {}
         for name, argtypes in signatures.items():
-            fn = getattr(lib, name)
+            fn = getattr(lib, runtime_name(name, hip))
             fn.restype, fn.argtypes = err, argtypes
             functions[name] = fn
         _bound[id(lib)] = functions
@@ -53,6 +62,7 @@ class CudaDevice:
         self.torch, self.device = torch, torch.device(device)
         self.index = self.device.index if self.device.index is not None else torch.cuda.current_device()
         self.rt = CudaRTLibrary()
+        self.hip = bool(getattr(torch.version, 'hip', None))
 
     def bind(self):
         self.rt.cudaSetDevice(self.index)
@@ -75,7 +85,7 @@ class CudaDevice:
     # The pipelined reload's calls, bound from the same libcudart: vLLM's
     # wrapper has no streams or events.
     def _call(self, name, *args):
-        fn = _runtime(self.rt.lib).get(name)
+        fn = _runtime(self.rt.lib, self.hip).get(name)
         err = fn(*args)
         if err != 0:
             message = self.rt.cudaGetErrorString(err)
