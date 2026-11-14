@@ -207,6 +207,10 @@ type Profile struct {
 type Loader struct {
 	Assets fs.FS
 	Dirs   []string
+	// Vendor is the GPU vendor of the host the profile runs on. "amd" lays
+	// profiles/_defaults-rocm.yaml over the defaults; empty (NVIDIA) reads
+	// _defaults.yaml alone, as always.
+	Vendor string
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
@@ -230,7 +234,34 @@ func (l Loader) Defaults() (Profile, error) {
 	if d.Schema != DefaultsSchema {
 		return d, fmt.Errorf("profiles/_defaults.yaml: schema %q, want %s", d.Schema, DefaultsSchema)
 	}
-	return d, nil
+	switch l.Vendor {
+	case "":
+		return d, nil
+	case "amd":
+		var layer Profile
+		if err := l.decodeAsset("profiles/_defaults-rocm.yaml", &layer); err != nil {
+			return d, err
+		}
+		if layer.Schema != DefaultsSchema {
+			return d, fmt.Errorf("profiles/_defaults-rocm.yaml: schema %q, want %s", layer.Schema, DefaultsSchema)
+		}
+		return overlay(d, layer), nil
+	}
+	return d, fmt.Errorf("profiles: no defaults for GPU vendor %q", l.Vendor)
+}
+
+// overlay lays a vendor's defaults over the common ones: its image, ipc,
+// vLLM options and environment win, a null removes a common key.
+func overlay(d, layer Profile) Profile {
+	if layer.Image != "" {
+		d.Image = layer.Image
+	}
+	if layer.IPC != "" {
+		d.IPC = layer.IPC
+	}
+	d.VLLM = mergeAny(d.VLLM, layer.VLLM)
+	d.Env = mergeEnv(d.Env, layer.Env)
+	return d
 }
 
 // Load resolves ref: a path to a YAML file, or a profile id looked up in

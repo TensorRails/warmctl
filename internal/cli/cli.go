@@ -135,6 +135,9 @@ func runProfile(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
+		if defaults, err = loader.DefaultsFor(p); err != nil {
+			return err
+		}
 		launch, err := profile.Resolve(defaults, p)
 		if err != nil {
 			return err
@@ -167,7 +170,13 @@ func checkProfiles(loader profile.Loader, defaults profile.Profile, stdout io.Wr
 		if err != nil {
 			return err
 		}
-		launch, err := profile.Resolve(defaults, p)
+		base := defaults
+		if table.VendorOf(p) != "" {
+			if base, err = loader.DefaultsFor(p); err != nil {
+				return err
+			}
+		}
+		launch, err := profile.Resolve(base, p)
 		if err != nil {
 			return err
 		}

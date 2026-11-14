@@ -21,6 +21,19 @@ type Hardware struct {
 	TopologyClass    string `yaml:"topology_class" json:"topology_class"`
 	DeviceConfigName string `yaml:"device_config_name" json:"device_config_name"`
 	DriverMin        string `yaml:"driver_min" json:"driver_min"`
+	// Vendor is "amd" for an AMD Instinct row, which names its model in
+	// ProductName (as warmctl reads it from the KFD topology) instead of
+	// NvidiaSMIName; empty for NVIDIA's rows.
+	Vendor      string `yaml:"vendor,omitempty" json:"vendor,omitempty"`
+	ProductName string `yaml:"product_name,omitempty" json:"product_name,omitempty"`
+}
+
+// Name is the product name a GPU of the row reports.
+func (r Hardware) Name() string {
+	if r.Vendor == "amd" {
+		return r.ProductName
+	}
+	return r.NvidiaSMIName
 }
 
 // HardwareTable is hardware/hardware.yaml.
@@ -61,7 +74,8 @@ func (l Loader) Hardware() (HardwareTable, error) {
 	}
 	seen := map[string]bool{}
 	for _, r := range t.Rows {
-		if r.ID == "" || r.NvidiaSMIName == "" || r.MemoryMiB <= 0 || r.Arch == "" || seen[r.ID] {
+		if r.ID == "" || r.Name() == "" || r.MemoryMiB <= 0 || r.Arch == "" || seen[r.ID] ||
+			(r.Vendor != "" && r.Vendor != "amd") {
 			return t, fmt.Errorf("hardware.yaml: invalid or duplicate row %q", r.ID)
 		}
 		seen[r.ID] = true
@@ -79,10 +93,10 @@ func (t HardwareTable) ByID(id string) (Hardware, bool) {
 	return Hardware{}, false
 }
 
-// ByName finds the row for an nvidia-smi product name.
+// ByName finds the row for a product name: nvidia-smi's, or an AMD GPU's.
 func (t HardwareTable) ByName(name string) (Hardware, bool) {
 	for _, r := range t.Rows {
-		if strings.EqualFold(strings.TrimSpace(r.NvidiaSMIName), strings.TrimSpace(name)) {
+		if strings.EqualFold(strings.TrimSpace(r.Name()), strings.TrimSpace(name)) {
 			return r, true
 		}
 	}
@@ -97,4 +111,30 @@ func (p Profile) Supports(row Hardware) bool {
 		}
 	}
 	return false
+}
+
+// VendorOf is the GPU vendor a profile is written for: "amd" when every
+// hardware row it lists is an AMD one, else "" (NVIDIA).
+func (t HardwareTable) VendorOf(p Profile) string {
+	if len(p.Hardware) == 0 {
+		return ""
+	}
+	for _, id := range p.Hardware {
+		if r, ok := t.ByID(id); !ok || r.Vendor != "amd" {
+			return ""
+		}
+	}
+	return "amd"
+}
+
+// DefaultsFor are the defaults p is resolved over when inspected (warmctl
+// profile show, argv, check): the ROCm layer for a profile of AMD rows. A
+// bake takes the vendor from its host instead.
+func (l Loader) DefaultsFor(p Profile) (Profile, error) {
+	table, err := l.Hardware()
+	if err != nil {
+		return Profile{}, err
+	}
+	l.Vendor = table.VendorOf(p)
+	return l.Defaults()
 }
