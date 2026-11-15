@@ -381,7 +381,8 @@ func quitLeft(tools dmtcp.Tools, p *run.Progress) {
 
 func keepLogs(dir, logs string) {
 	_ = os.MkdirAll(logs, 0o755)
-	for _, name := range []string{"workspace/logs/engine.log", "io/out/criu-work/dump.log", "work/agent.json"} {
+	for _, name := range []string{"workspace/logs/engine.log", "io/out/criu-work/dump.log", "work/agent.json",
+		"cache-pass.log"} {
 		_ = run.CopyFile(filepath.Join(dir, name), filepath.Join(logs, filepath.Base(name)), 0o644)
 	}
 }
