@@ -11,6 +11,11 @@
 #
 #   docker build -f deploy/rocm/Dockerfile -t warmctl-runtime-rocm .
 #
+# For vLLM 0.33 (ROCm 10.0 wheels), on deploy/images/vllm-rocm-0.33:
+#
+#   docker build -f deploy/rocm/Dockerfile \
+#     --build-arg BASE=registry.warmctl.io/warmctl/vllm-rocm:0.33.0-rocm100@sha256:<digest> .
+#
 # BASE is the ROCm vLLM image AMD snapshots were verified with
 # (profiles/_defaults-rocm.yaml); a restore refuses a snapshot taken in
 # another one.
@@ -54,6 +59,8 @@ COPY --from=native /opt/warmctl/dmtcp /opt/warmctl/dmtcp
 COPY --from=native /opt/warmctl/kfdreplay /opt/warmctl/kfdreplay
 ENV PATH=/opt/warmctl/dmtcp/bin:${PATH}
 COPY python/warmctl_vllm /opt/warmctl/adapter/warmctl_vllm
+# Its vLLM plugin entry point (warmctl_vllm.plugin), as warmctl places it.
+COPY python/warmctl_vllm-2.0.0a0.dist-info /opt/warmctl/adapter/warmctl_vllm-2.0.0a0.dist-info
 # /tmp starts empty: an in-place run claims it only empty or as an earlier
 # run left it. Last, the marker: this is the runtime image, built FROM BASE_REF.
 RUN mkdir -p /workspace /run/warmctl /var/lib/warmctl \
