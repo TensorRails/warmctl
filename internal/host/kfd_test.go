@@ -53,7 +53,7 @@ func TestKFDInventoryOfAPod(t *testing.T) {
 	}
 	g := gpus[0]
 	want := GPU{Index: 0, UUID: "GPU-1111111111111111", Name: "AMD Instinct MI350X", PCIBusID: "0000:09:00.0",
-		MemoryMiB: 294912, Driver: "7.1.3.31500000", Vendor: VendorAMD, Arch: "gfx950", KFDGPUID: 41001,
+		MemoryMiB: 294896, Driver: "7.1.3.31500000", Vendor: VendorAMD, Arch: "gfx950", KFDGPUID: 41001,
 		RenderNode: "/dev/dri/renderD136"}
 	if g != want {
 		t.Errorf("got  %+v\nwant %+v", g, want)

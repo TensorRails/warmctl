@@ -278,6 +278,11 @@ func (b *bake) placeInPlace() error {
 func (b *bake) start(ctx context.Context) error {
 	var err error
 	ranks := b.launch.Profile.Parallel.Ranks()
+	if b.vendor == accel.AMD && b.o.InPlace && !b.o.CPUTest {
+		if err := b.cachePass(ctx); err != nil {
+			return err
+		}
+	}
 	if b.o.InPlace {
 		self, err := os.Executable()
 		if err != nil {

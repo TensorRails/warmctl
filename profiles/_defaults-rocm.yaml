@@ -12,6 +12,9 @@ vllm:
   # vllm serve would refuse to start with it.
   enable-nccl-comm-suspend: null
 env:
+  # The adapter, and the ROCm image's amdsmi (vLLM finds the ROCm platform
+  # through it): the common defaults' PYTHONPATH would hide it.
+  PYTHONPATH: /opt/warmctl/adapter:/opt/python/lib/python3.14/site-packages/_rocm_sdk_core/share/amd_smi
   # SDMA queues are not replayed: ROCr copies with blit kernels instead.
   HSA_ENABLE_SDMA: "0"
   # Scratch memory stays where it was between checkpoint and restore.

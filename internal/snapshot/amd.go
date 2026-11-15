@@ -1,8 +1,14 @@
 package snapshot
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/accel"
 	"github.com/TensorRails/warmctl/v2/internal/kfdreplay"
@@ -10,6 +16,69 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/run"
 	"github.com/TensorRails/warmctl/v2/internal/vllm"
 )
+
+// cachePass runs the engine once outside DMTCP, with the bake's very argv,
+// environment and trees, through the warmup grid and the canary, and stops
+// it: the compile caches (torch.compile, Triton's kernels and their
+// launchers, hip_utils) are then warm in /workspace for the engine DMTCP
+// runs. A process that has initialized ROCm and forks a compiler under
+// DMTCP (v5.0.0-warmctl.2) fails about half the time (gcc exits 99 on a
+// DMTCP assertion), so the engine under DMTCP must find nothing to compile.
+func (b *bake) cachePass(ctx context.Context) error {
+	start := time.Now()
+	b.p.Printf("compile cache pass: the engine runs once outside DMTCP")
+	log, err := os.Create(filepath.Join(b.dir, "cache-pass.log"))
+	if err != nil {
+		return err
+	}
+	defer log.Close()
+	argv := b.cfg.Argv
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = run.MergeEnv(os.Environ(), b.launch.Env)
+	cmd.Dir, cmd.Stdout, cmd.Stderr = b.cfg.Dir, log, log
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	stop := func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		select {
+		case <-exited:
+		case <-time.After(30 * time.Second):
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			<-exited
+		}
+	}
+	engine := vllm.NewTCP(EngineAddr, b.launch.Profile.Parallel.Ranks())
+	alive := func() error {
+		select {
+		case err := <-exited:
+			exited <- err
+			return fmt.Errorf("the cache pass's engine exited (%v); see %s", err, log.Name())
+		default:
+			return nil
+		}
+	}
+	if err := engine.WaitReady(ctx, b.o.ReadyTimeout, alive); err != nil {
+		stop()
+		return err
+	}
+	model, err := ServedName(b.launch.Options)
+	if err == nil {
+		err = engine.Warmup(ctx, model, max(b.launch.Profile.Parallel.DP, 1), b.launch.WarmupCases(), nil)
+	}
+	if err == nil {
+		_, err = engine.RunCanary(ctx, model, max(b.launch.Profile.Canary.PrefixTokens, 32), 32)
+	}
+	stop()
+	if err != nil {
+		return fmt.Errorf("compile cache pass: %w", err)
+	}
+	b.p.Printf("compile cache pass done in %.0fs", time.Since(start).Seconds())
+	return nil
+}
 
 // chooseVendor takes the GPU vendor from the host. On an AMD host a bake
 // runs in place under DMTCP: in the ROCm runtime image it does so without

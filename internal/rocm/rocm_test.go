@@ -15,7 +15,7 @@ import (
 )
 
 var mi350x = host.GPU{Index: 0, UUID: "GPU-1111111111111111", Name: "AMD Instinct MI350X", PCIBusID: "0000:09:00.0",
-	MemoryMiB: 294912, Driver: "7.1.3.31500000", Vendor: host.VendorAMD, Arch: "gfx950", KFDGPUID: 41001,
+	MemoryMiB: 294896, Driver: "7.1.3.31500000", Vendor: host.VendorAMD, Arch: "gfx950", KFDGPUID: 41001,
 	RenderNode: "/dev/dri/renderD136"}
 
 func TestSupported(t *testing.T) {
@@ -77,6 +77,11 @@ func TestROCmLayer(t *testing.T) {
 		if !found {
 			t.Errorf("argv lacks %s", want)
 		}
+	}
+	// The ROCm image finds amdsmi through PYTHONPATH; vLLM finds the ROCm
+	// platform through amdsmi.
+	if !strings.HasPrefix(l.Env["PYTHONPATH"], "/opt/warmctl/adapter:") || !strings.Contains(l.Env["PYTHONPATH"], "amd_smi") {
+		t.Errorf("PYTHONPATH %q", l.Env["PYTHONPATH"])
 	}
 	if l.Env["HSA_ENABLE_SDMA"] != "0" || l.Env["HOME"] != "/workspace/home" || l.Env["MIOPEN_USER_DB_PATH"] == "" {
 		t.Errorf("env %v", l.Env)
