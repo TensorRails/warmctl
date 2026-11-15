@@ -99,7 +99,7 @@ type Hardware struct {
 	DriverFiles    []string `json:"driver_files,omitempty"`
 	// Vendor is VendorAMD for a snapshot of AMD GPUs; empty is NVIDIA, as
 	// every snapshot before AMD support. GPUCheckpoint names what moved an
-	// AMD process's GPU state ("libkfdreplay 0.1.0"), as CUDACheckpoint
+	// AMD process's GPU state ("libkfdreplay 0.1.1"), as CUDACheckpoint
 	// does for NVIDIA; ROCm is the GPU runtime the engine ran.
 	Vendor        string `json:"vendor,omitempty"`
 	GPUCheckpoint string `json:"gpu_checkpoint,omitempty"`

@@ -26,7 +26,7 @@ func TestNVIDIAStateIsNone(t *testing.T) {
 			t.Fatal(r, err)
 		}
 	}
-	if s, err := For(AMD, "0.1.0"); err != nil || s.(rocm.State).Version != "0.1.0" {
+	if s, err := For(AMD, "0.1.1"); err != nil || s.(rocm.State).Version != "0.1.1" {
 		t.Fatal(s, err)
 	}
 	if _, err := For("intel", ""); err == nil {

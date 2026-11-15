@@ -37,7 +37,7 @@ type Support struct {
 // Matrix is what has been verified; a GPU of another ISA is refused, since
 // libkfdreplay mirrors what the runtime does on the GPUs it was tested on.
 var Matrix = []Support{
-	{Arch: "gfx950", Driver: "7.1.3", KFDReplay: "0.1.0"},
+	{Arch: "gfx950", Driver: "7.1.3", KFDReplay: "0.1.1"},
 }
 
 // Supported refuses GPUs no row of Matrix covers and warns (the returned

@@ -39,12 +39,12 @@ func TestSchemaGoesWithVendor(t *testing.T) {
 func TestAMDRoundtrip(t *testing.T) {
 	m := mustRead(t, readFixture(t, "dmtcp-h200-tp1-beta17.json"))
 	m.Schema, m.Hardware.Vendor = manifest.SchemaROCm, manifest.VendorAMD
-	m.Hardware.GPUCheckpoint = "libkfdreplay 0.1.0 sha256:d06a"
+	m.Hardware.GPUCheckpoint = "libkfdreplay 0.1.1 sha256:7ce6"
 	m.Hardware.ROCm = &manifest.ROCm{HIP: "7.16.26385", Runtime: "rocm-sdk-core 10.1.0"}
 	m.Hardware.GPUs[0].Arch, m.Hardware.GPUs[0].KFDGPUID = "gfx950", 41001
 	m.Process.GPUState = manifest.GPUStateKFDReplay
-	m.Process.GPULib = &manifest.MappedFile{Path: "/opt/warmctl/kfdreplay/v0.1.0/libkfdreplay.so", Size: 157408,
-		MtimeNS: 1763164800123456789, SHA256: "d06a", Version: "0.1.0"}
+	m.Process.GPULib = &manifest.MappedFile{Path: "/opt/warmctl/kfdreplay/v0.1.1/libkfdreplay.so", Size: 157456,
+		MtimeNS: 1763164800123456789, SHA256: "7ce6", Version: "0.1.1"}
 	m.Process.GPUOwners = []manifest.Owner{{PID: 40001, Rank: 0, Role: "worker"}}
 	m.Process.GPUMaxWptr = 41467
 	m.Process.Mapped = []manifest.MappedFile{{Path: "/nv/models/q/model.safetensors", Size: 1, MtimeNS: 2}}

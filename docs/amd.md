@@ -74,7 +74,7 @@ translates the GPU's `gpu_id` and reopens its render node.
 | GPU | MI350X (gfx950), one per engine |
 | Driver | amdgpu DKMS 7.1.3 |
 | ROCm | 10.1 (TheRock), PyTorch 2.13, vLLM 0.29 (`rocm/vllm` image, `_defaults-rocm.yaml`); 10.0 (TheRock wheels), PyTorch 2.13, vLLM `0.33.0+rocm100` in a Python 3.12 venv |
-| libkfdreplay | v0.1.0 (`internal/kfdreplay`); vLLM 0.33's sleep-mode allocator needs the next release (live GEM handles tracked without a limit) |
+| libkfdreplay | v0.1.1 (`internal/kfdreplay`), which tracks live GEM handles without a limit, as vLLM 0.33's sleep-mode allocator needs |
 | Models | Qwen3-0.6B, Qwen3-8B; Qwen3.8-Flash-Next FP8 (180B-A6B, 173 GiB of weights) on one MI350X: 184.6 GiB snapshot, served 26–40 s after `up` |
 | DMTCP | `v5.0.0-warmctl.2` |
 

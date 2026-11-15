@@ -198,7 +198,7 @@ func fakeProc(t *testing.T, procs map[int]struct{ maps, fds []string }) {
 
 func itoa(i int) string { return strconv.Itoa(i) }
 
-const lib = "/opt/warmctl/kfdreplay/v0.1.0/libkfdreplay.so"
+const lib = "/opt/warmctl/kfdreplay/v0.1.1/libkfdreplay.so"
 
 func TestVerifyReleased(t *testing.T) {
 	hip := "/opt/python/lib/_rocm_sdk_core/lib/libamdhip64.so.7"
