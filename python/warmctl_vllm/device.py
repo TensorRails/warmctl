@@ -47,6 +47,25 @@ def _runtime(lib, hip=False):
     return _bound[id(lib)]
 
 
+_host_bound = {}
+
+
+def _host_runtime(lib, hip=False):
+    """Host-memory registration of a libcudart (or libamdhip64), bound once
+    by CUDA names: for a vLLM whose CudaRTLibrary lacks them (vLLM 0.29 on
+    ROCm wraps neither cudaHostRegister nor cudaHostUnregister)."""
+    if id(lib) not in _host_bound:
+        handle, size, err = ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int
+        functions = {}
+        for name, argtypes in {'cudaHostRegister': [handle, size, ctypes.c_uint], 'cudaHostUnregister': [handle],
+                               'cudaGetLastError': []}.items():
+            fn = getattr(lib, runtime_name(name, hip))
+            fn.restype, fn.argtypes = err, argtypes
+            functions[name] = fn
+        _host_bound[id(lib)] = functions
+    return _host_bound[id(lib)]
+
+
 class _CudaArray:
     """__cuda_array_interface__ over raw device memory: lets torch read an
     allocation of the sleep-mode pool as bytes without owning it."""
@@ -67,14 +86,18 @@ class CudaDevice:
     def bind(self):
         self.rt.cudaSetDevice(self.index)
 
+    def _host(self, name):
+        fn = getattr(self.rt, name, None)
+        return fn if fn is not None else _host_runtime(self.rt.lib, self.hip)[name]
+
     def register(self, ptr, nbytes):
-        if self.rt.cudaHostRegister(ptr, nbytes, 0) != 0:
-            self.rt.cudaGetLastError()
+        if self._host('cudaHostRegister')(ptr, nbytes, 0) != 0:
+            self._host('cudaGetLastError')()
             return False
         return True
 
     def unregister(self, ptr):
-        self.rt.cudaHostUnregister(ptr)
+        self._host('cudaHostUnregister')(ptr)
 
     def to_host(self, host_ptr, dev_ptr, nbytes):
         self.rt.cudaMemcpy(ctypes.c_void_p(host_ptr), ctypes.c_void_p(dev_ptr), nbytes)

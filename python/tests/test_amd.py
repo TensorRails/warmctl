@@ -154,6 +154,40 @@ class KFDReplayTest(unittest.TestCase):
         self.assertEqual(called, ['prepare', 'restore'])
 
 
+class HostRegisterTest(unittest.TestCase):
+    """vLLM 0.29's CudaRTLibrary on ROCm has no cudaHostRegister: the device
+    binds the runtime's own; a wrapper that has it keeps being used."""
+
+    def device(self, rt, hip):
+        d = device.CudaDevice.__new__(device.CudaDevice)
+        d.rt, d.hip = rt, hip
+        return d
+
+    def test_falls_back_to_the_runtime(self):
+        calls = []
+
+        class Lib:
+            pass
+        lib = Lib()
+        lib.hipHostRegister = Fn(lambda p, n, f: calls.append(('register', p, n, f)) or 0)
+        lib.hipHostUnregister = Fn(lambda p: calls.append(('unregister', p)) or 0)
+        lib.hipGetLastError = Fn(lambda: 0)
+        rt = types.SimpleNamespace(lib=lib)
+        d = self.device(rt, True)
+        self.assertTrue(d.register(4096, 8192))
+        d.unregister(4096)
+        self.assertEqual(calls, [('register', 4096, 8192, 0), ('unregister', 4096)])
+
+    def test_the_wrappers_own_when_it_has_them(self):
+        calls = []
+        rt = types.SimpleNamespace(lib=object(), cudaHostRegister=lambda p, n, f: calls.append('w') or 1,
+                                   cudaGetLastError=lambda: calls.append('e'), cudaHostUnregister=lambda p: calls.append('u'))
+        d = self.device(rt, False)
+        self.assertFalse(d.register(1, 2))
+        d.unregister(1)
+        self.assertEqual(calls, ['w', 'e', 'u'])
+
+
 class PlatformGuardTest(unittest.TestCase):
     def guard(self, hip):
         import platform
