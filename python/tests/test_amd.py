@@ -154,6 +154,39 @@ class KFDReplayTest(unittest.TestCase):
         self.assertEqual(called, ['prepare', 'restore'])
 
 
+class PlatformGuardTest(unittest.TestCase):
+    def guard(self, hip):
+        import platform
+
+        from warmctl_vllm import worker
+        torch = types.ModuleType('torch')
+        torch.version = types.SimpleNamespace(hip=hip)
+        calls = []
+
+        def architecture(executable=sys.executable, bits='', linkage=''):
+            calls.append(executable)
+            return ('64bit', 'ELF')
+        with mock.patch.dict(sys.modules, {'torch': torch}), mock.patch.object(platform, 'architecture', architecture):
+            guarded = worker.rocm_platform_guard()
+            first, second = platform.architecture(), platform.architecture()
+            other = platform.architecture('/bin/sh')
+        return guarded, calls, first, second, other
+
+    def test_rocm_asks_once(self):
+        guarded, calls, first, second, other = self.guard('7.16.26385')
+        self.assertTrue(guarded)
+        # Once at import (before the GPU runtime starts), then cached;
+        # another executable is still asked.
+        self.assertEqual(calls, [sys.executable, '/bin/sh'])
+        self.assertEqual(first, ('64bit', 'ELF'))
+        self.assertEqual(second, first)
+
+    def test_cuda_untouched(self):
+        guarded, calls, _, _, _ = self.guard(None)
+        self.assertFalse(guarded)
+        self.assertEqual(calls, [sys.executable, sys.executable, '/bin/sh'])
+
+
 class RuntimeNameTest(unittest.TestCase):
     def test_cuda_names_stay(self):
         for name in ('cudaStreamCreateWithFlags', 'cudaMemcpyAsync', 'cudaEventDestroy'):

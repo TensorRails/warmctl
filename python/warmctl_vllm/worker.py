@@ -13,6 +13,42 @@ from . import kfdr, pool, protocol, transfer
 from .primitives import require
 
 
+def rocm_platform_guard():
+    """On ROCm, answer platform.architecture() once, now, and from then on.
+
+    vLLM imports this extension in each worker before the worker initializes
+    the GPU. Python's platform.architecture() forks `file`, and Triton keys
+    its compiled-module cache (hip_utils, kernel launchers) on it. Under DMTCP
+    a process whose ROCm runtime is initialized cannot fork safely: the fork
+    fails or hangs, the key differs, Triton misses its cache and forks gcc,
+    which fails too. Asked before the runtime starts, the fork is harmless and
+    the answer is the one the bake's compile cache pass computed. Not on CUDA.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    if not getattr(getattr(torch, 'version', None), 'hip', None):
+        return False
+    import platform
+    import sys
+    original = platform.architecture
+    if getattr(original, 'warmctl_cached', False):
+        return True
+    answer = original()
+
+    def architecture(executable=sys.executable, bits='', linkage=''):
+        if executable == sys.executable and not bits and not linkage:
+            return answer
+        return original(executable, bits, linkage)
+    architecture.warmctl_cached = True
+    platform.architecture = architecture
+    return True
+
+
+rocm_platform_guard()
+
+
 def replica(config):
     """The data-parallel replica of a worker. vLLM sets data_parallel_rank to
     0 in every replica of a dense model (no expert parallelism: the replicas
