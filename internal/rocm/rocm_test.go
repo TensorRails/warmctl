@@ -236,6 +236,46 @@ func TestVerifyReleased(t *testing.T) {
 	}
 }
 
+// A file of the image anywhere (the ROCm image's Python is under
+// /root/.local) is older than the container's PID 1.
+func TestContainerStart(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "stat"), []byte("cpu  1 2 3\nbtime 1763164800\nprocesses 9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// starttime (field 22) of 1500 ticks: 15 s after boot; the command has a space and a parenthesis.
+	line := "1 (tini (x) y) S 0 1 1 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 1 0 1500 1 1 18446744073709551615\n"
+	if err := os.WriteFile(filepath.Join(root, "1", "stat"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := Proc
+	Proc = root
+	defer func() { Proc = old }()
+	got, ok := containerStart()
+	if !ok || !got.Equal(time.Unix(1763164815, 0)) {
+		t.Fatalf("%v %v", got, ok)
+	}
+	f := filepath.Join(t.TempDir(), "python3.14")
+	if err := os.WriteFile(f, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(f, time.Unix(1763164000, 0), time.Unix(1763164000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !imageFile(f, time.Now()) {
+		t.Error("a file older than the container is the image's")
+	}
+	if err := os.Chtimes(f, time.Unix(1763164900, 0), time.Unix(1763164900, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if imageFile(f, time.Now()) {
+		t.Error("a file written since the container started, outside the image's directories")
+	}
+}
+
 func TestCover(t *testing.T) {
 	root := t.TempDir()
 	model := filepath.Join(root, "models", "q")

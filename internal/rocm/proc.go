@@ -211,12 +211,53 @@ func under(p string, dirs []string) bool {
 	return false
 }
 
+// imageFile reports a file of the image: one older than the container
+// (its PID 1), wherever it is (the ROCm image keeps Python under
+// /root/.local), or under the image's usual directories and older than the
+// engine.
 func imageFile(p string, started time.Time) bool {
-	if !under(p, trimSlash(imageDirs)) {
+	info, err := os.Stat(p)
+	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
-	info, err := os.Stat(p)
-	return err == nil && info.Mode().IsRegular() && info.ModTime().Before(started)
+	if c, ok := containerStart(); ok && info.ModTime().Before(c) {
+		return true
+	}
+	return under(p, trimSlash(imageDirs)) && info.ModTime().Before(started)
+}
+
+// containerStart is when PID 1 started: the boot time from /proc/stat plus
+// its start time in clock ticks (USER_HZ, 100 on Linux).
+func containerStart() (time.Time, bool) {
+	stat, err := os.ReadFile(filepath.Join(Proc, "stat"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	var boot int64
+	for _, line := range strings.Split(string(stat), "\n") {
+		if v, ok := strings.CutPrefix(line, "btime "); ok {
+			boot, _ = strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(Proc, "1", "stat"))
+	if err != nil || boot == 0 {
+		return time.Time{}, false
+	}
+	// The command may hold spaces and parentheses: fields follow the last ")".
+	i := strings.LastIndexByte(string(raw), ')')
+	if i < 0 {
+		return time.Time{}, false
+	}
+	fields := strings.Fields(string(raw)[i+1:])
+	// starttime is field 22 of the line; fields here start at field 3.
+	if len(fields) < 20 {
+		return time.Time{}, false
+	}
+	ticks, err := strconv.ParseInt(fields[19], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(boot, 0).Add(time.Duration(ticks) * time.Second / 100), true
 }
 
 func trimSlash(dirs []string) []string {
