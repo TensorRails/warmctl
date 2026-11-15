@@ -13,7 +13,7 @@ func TestHoldersAndCatches(t *testing.T) {
 	hip := "/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib/libamdhip64.so.7"
 	fakeProc(t, map[int]struct{ maps, fds []string }{
 		20: {maps: []string{hip, lib}, fds: []string{"/dev/kfd", "/dev/dri/renderD136"}}, // the API server
-		21: {maps: []string{hip, lib}},                                                     // a checkpointed worker
+		21: {maps: []string{hip, lib}},                                                   // a checkpointed worker
 		22: {maps: []string{"/usr/bin/python3.12"}, fds: []string{"pipe:[7]"}},
 	})
 	got, err := Holders([]int{20, 21, 22, 99})
