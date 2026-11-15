@@ -1,8 +1,9 @@
 # qwen38-flash-next on one AMD Instinct MI350X: Qwen's FP8 release of the
-# 180B-A6B hybrid MoE on one GPU (288 GB: 183 GiB of weights with the PLE
+# 180B-A6B hybrid MoE on one GPU (288 GB: 173 GiB of weights with the PLE
 # n-gram table, which stays on the GPU as part of the weights pool, and 64 GiB
-# of FP8 KV cache). MTP with 3 draft tokens and the qwen3 / qwen3_coder parsers
-# per the vLLM recipe. Needs a ROCm vLLM that knows the model (0.33).
+# of KV cache, BF16: the model's QSA attention on ROCm takes BF16 or Octave,
+# not FP8). MTP with 3 draft tokens and the qwen3 / qwen3_coder parsers per
+# the vLLM recipe. Needs a ROCm vLLM that knows the model (0.33.0+rocm100).
 schema: warmctl.profile/v1
 id: qwen38-flash-next-mi350x-tp1
 model: {id: Qwen/Qwen3.8-Flash-Next-FP8, revision: 236dfdf285828023ca3bcd3f37366c58a3469b13, served_names: [qwen38-flash-next]}
@@ -13,7 +14,6 @@ vllm:
   max-num-seqs: 32
   max-num-batched-tokens: 8192
   kv-cache-memory-bytes: 68719476736
-  kv-cache-dtype: fp8
   enable-chunked-prefill: true
   enable-prefix-caching: true
   limit-mm-per-prompt: {image: 0, video: 0}

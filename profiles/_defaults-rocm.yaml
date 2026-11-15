@@ -23,9 +23,18 @@ env:
   # torch.distributed's libuv TCPStore accepts connections behind DMTCP's
   # back; the checkpoint then drains that socket forever.
   USE_LIBUV: "0"
+  # ROCm 10.0 (TheRock wheels) loads rocprofiler-sdk into every HIP process;
+  # its queue interception keeps ROCr's event thread polling in user space,
+  # which a checkpoint cannot stop. Off unless a profiler is wanted.
+  ROCPROFILER_REGISTER_ENABLED: "0"
   # ROCm's kernel caches live under /workspace like every other cache, so
   # the snapshot carries them and a restart finds what it mapped.
   MIOPEN_USER_DB_PATH: /workspace/miopen
   MIOPEN_CUSTOM_CACHE_DIR: /workspace/miopen-cache
+  # Code objects comgr compiles at run time, and the torch DLPack addon
+  # tvm-ffi builds on first import (vLLM 0.33): mapped by the engine, so
+  # under /workspace too rather than in ~/.cache.
+  AMD_COMGR_CACHE_DIR: /workspace/comgr
+  TVM_FFI_CACHE_DIR: /workspace/tvm-ffi
 # Cross-process GPU memory has no checkpoint on AMD: one GPU per engine.
 ipc: native
