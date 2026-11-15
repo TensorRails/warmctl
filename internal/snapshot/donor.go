@@ -14,6 +14,7 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/interpose"
 	"github.com/TensorRails/warmctl/v2/internal/pyext"
+	"github.com/TensorRails/warmctl/v2/internal/rocm"
 	"github.com/TensorRails/warmctl/v2/internal/run"
 )
 
@@ -93,10 +94,12 @@ func (b *bake) prepare(ctx context.Context) error {
 
 // gpuEnv sets what the engine's GPU driver needs: NVIDIA's driver version
 // check off and, on a multi-GPU engine under a newer driver, the host's
-// user-mode driver; on AMD, libkfdreplay, which the agent preloads.
+// user-mode driver; on AMD, libkfdreplay, which the agent preloads, and the
+// status directory that turns on warmctl's vLLM plugin (rocm.StatusEnv).
 func (b *bake) gpuEnv(cfg *agent.Config) {
 	if b.vendor == accel.AMD {
 		cfg.GPU, cfg.GPULib = agent.GPUAMD, b.gpuLib.Path
+		b.launch.Env[rocm.StatusEnv] = rocm.StatusDir
 		return
 	}
 	if _, set := b.launch.Env[DriverCheckEnv]; !set {

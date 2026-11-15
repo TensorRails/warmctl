@@ -6,7 +6,7 @@ import types
 import unittest
 from unittest import mock
 
-from warmctl_vllm import device, kfdr
+from warmctl_vllm import device, kfdr, plugin
 from warmctl_vllm.worker import Extension
 
 
@@ -152,6 +152,70 @@ class KFDReplayTest(unittest.TestCase):
         Hooked().warmctl_checkpoint_prepare()
         Hooked().warmctl_checkpoint_restore()
         self.assertEqual(called, ['prepare', 'restore'])
+
+
+class PluginTest(unittest.TestCase):
+    """Processes other than the workers checkpoint and restore their GPU
+    state on the agent's signals."""
+
+    def setUp(self):
+        plugin._checkpointed = False
+        self.addCleanup(setattr, plugin, '_checkpointed', False)
+
+    def lib(self, **kw):
+        return kfdr.Library(FakeKFDReplay(**kw))
+
+    def test_cycle(self):
+        lib = self.lib()
+        self.assertEqual(plugin.checkpoint(lib), 'checkpointed')
+        self.assertEqual(lib.state(), 'checkpointed_cold')
+        self.assertEqual(plugin.restore(lib), 'restored')
+        self.assertEqual(lib.state(), 'restored')
+
+    def test_a_process_the_signal_did_not_checkpoint_skips(self):
+        # A worker: the host restores it through the engine.
+        lib = self.lib()
+        lib.lib.state = 2
+        self.assertEqual(plugin.restore(lib), 'skipped')
+        self.assertEqual(lib.lib.calls, [])
+
+    def test_refusal_and_failure_carry_the_reason(self):
+        self.assertEqual(plugin.checkpoint(self.lib(refuse='REFUSE: drm')), 'error: REFUSE: drm')
+        lib = self.lib(fail='queue 3 stalled')
+        self.assertEqual(plugin.checkpoint(lib), 'checkpointed')
+        self.assertEqual(plugin.restore(lib), 'error: queue 3 stalled; this process cannot use the GPU')
+
+    def test_without_the_library_or_not_running(self):
+        self.assertIn('not loaded', plugin.checkpoint(kfdr.Library(NoKFDReplay())))
+        lib = self.lib()
+        lib.lib.state = 3
+        self.assertEqual(plugin.checkpoint(lib), 'error: libkfdreplay is restored, not running')
+
+    def test_register_needs_the_status_directory(self):
+        with mock.patch.dict('os.environ', {}, clear=True):
+            self.assertFalse(plugin.register())
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'real-time signals are Linux\'s')
+    def test_signals_report_to_the_status_directory(self):
+        import os
+        import signal
+        import tempfile
+        d = tempfile.mkdtemp()
+        lib = FakeKFDReplay()
+        with mock.patch.dict('os.environ', {plugin.STATUS_ENV: d}), \
+                mock.patch.object(kfdr.ctypes, 'CDLL', lambda name: lib):
+            old = signal.getsignal(plugin.CHECKPOINT_SIGNAL), signal.getsignal(plugin.RESTORE_SIGNAL)
+            try:
+                self.assertTrue(plugin.register())
+                os.kill(os.getpid(), plugin.CHECKPOINT_SIGNAL)
+                with open(os.path.join(d, str(os.getpid()))) as f:
+                    self.assertEqual(f.read(), 'checkpointed\n')
+                os.kill(os.getpid(), plugin.RESTORE_SIGNAL)
+                with open(os.path.join(d, str(os.getpid()))) as f:
+                    self.assertEqual(f.read(), 'restored\n')
+            finally:
+                signal.signal(plugin.CHECKPOINT_SIGNAL, old[0])
+                signal.signal(plugin.RESTORE_SIGNAL, old[1])
 
 
 class HostRegisterTest(unittest.TestCase):

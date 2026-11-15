@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/TensorRails/warmctl/v2/internal/criu"
@@ -19,9 +20,18 @@ import (
 const CoverageEnv = "WARMCTL_AMD_COVERAGE"
 
 // amdReleased is the cuda step of an AMD snapshot: the workers checkpointed
-// their GPU state themselves (the host asked them through the engine), and
-// no process of the tree may still hold a GPU device.
+// their GPU state themselves (the host asked them through the engine); the
+// other processes that still hold a GPU device and run warmctl's vLLM
+// plugin checkpoint theirs on a signal (rocm.CheckpointSignal); then no
+// process of the tree may hold one.
 func (a *agent) amdReleased(ctx context.Context, pids []int, start time.Time) (any, error) {
+	holders, err := rocm.Holders(pids)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.signalGPU(ctx, holders, rocm.CheckpointSignal, "checkpointed", false); err != nil {
+		return nil, fmt.Errorf("GPU checkpoint of the engine's other processes: %w", err)
+	}
 	owners, err := rocm.VerifyReleased(pids, a.cfg.GPULib)
 	if err != nil {
 		return nil, err
@@ -35,7 +45,7 @@ func (a *agent) amdReleased(ctx context.Context, pids []int, start time.Time) (a
 // amdPreloaded is the cuda step of an AMD restore: the workers replay their
 // GPU state themselves once the host asks; every restored process that runs
 // ROCm must have libkfdreplay to do so.
-func (a *agent) amdPreloaded(_ context.Context, args CUDARestoreArgs, start time.Time) (any, error) {
+func (a *agent) amdPreloaded(ctx context.Context, args CUDARestoreArgs, start time.Time) (any, error) {
 	tree, err := criu.VisibleTree(a.enginePID())
 	if err != nil {
 		return nil, err
@@ -43,7 +53,40 @@ func (a *agent) amdPreloaded(_ context.Context, args CUDARestoreArgs, start time
 	if err := rocm.VerifyPreloaded(tree.PIDs(), a.cfg.GPULib); err != nil {
 		return nil, err
 	}
+	// The processes a signal checkpointed restore the same way; workers
+	// answer "skipped" and restore when the host asks them.
+	hosts, err := a.tree.hostPIDs(ctx, args.Owners)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.signalGPU(ctx, hosts, rocm.RestoreSignal, "restored", true); err != nil {
+		return nil, fmt.Errorf("GPU restore of the engine's other processes: %w", err)
+	}
 	return CUDAResult{Owners: args.Owners, Seconds: time.Since(start).Seconds(), Backend: "libkfdreplay"}, nil
+}
+
+// signalGPU sends sig to those of pids that catch it and waits for each to
+// report want.
+func (a *agent) signalGPU(ctx context.Context, pids []int, sig syscall.Signal, want string, skip bool) error {
+	var hosts []int
+	for _, pid := range pids {
+		if rocm.Catches(pid, sig) {
+			hosts = append(hosts, pid)
+		}
+	}
+	if len(hosts) == 0 {
+		return nil
+	}
+	snaps, err := a.tree.snapshotPIDs(ctx, hosts)
+	if err != nil {
+		return err
+	}
+	procs := make([]rocm.Process, len(hosts))
+	for i := range hosts {
+		procs[i] = rocm.Process{Host: hosts[i], Snapshot: snaps[i]}
+	}
+	a.logf("GPU %s by signal: %d processes", want, len(procs))
+	return rocm.Signal(ctx, procs, sig, rocm.StatusDir, want, skip)
 }
 
 // freeze readies the tree for the dump; on AMD it also checks that the

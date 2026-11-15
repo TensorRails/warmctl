@@ -14,3 +14,6 @@ target-version = "py39"
 select = ["E", "F", "W", "I", "B", "UP"]
 # Percent formatting is the house style; type hints stay 3.9-compatible.
 ignore = ["UP006", "UP007", "UP031", "UP035"]
+
+[project.entry-points."vllm.general_plugins"]
+warmctl = "warmctl_vllm.plugin:register"

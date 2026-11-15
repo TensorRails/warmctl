@@ -27,6 +27,7 @@ queues) and can replay them in a new process at the same addresses.
 | start | the engine under `dmtcp_launch` (or CRIU's PID floor) | the same under DMTCP, with libkfdreplay in the engine's `LD_PRELOAD` |
 | warm up, canary, export, sleep | through the engine | the same |
 | GPU checkpoint | the agent, over the processes' PIDs (`cuda-checkpoint`) | each worker itself, asked by warmctl through `/collective_rpc` (`warmctl_gpu_checkpoint` → `kfdr_checkpoint(1)`): GPU memory to host memory, the runtime's threads parked, the devices released |
+| other processes | — | vLLM's API server and engine core initialize ROCm too when they import kernels that probe the GPU (vLLM 0.33). warmctl's vLLM plugin (`warmctl_vllm.plugin`, on only for AMD engines) lets each checkpoint and restore its own GPU state on a signal from the agent (SIGRTMIN+6 / +7) |
 | check | the CUDA states | the agent checks that no process of the tree still holds `/dev/kfd` or a render node, that every process running ROCm has libkfdreplay, and that the snapshot carries every file the processes map |
 | dump, restart | DMTCP (or CRIU) | DMTCP |
 | GPU restore | the agent, with a device map by UUID | each worker itself (`warmctl_gpu_restore` → `kfdr_restore()`), before the engine wakes; on another GPU of the same model libkfdreplay translates its `gpu_id` |
@@ -72,8 +73,9 @@ translates the GPU's `gpu_id` and reopens its render node.
 |---|---|
 | GPU | MI350X (gfx950), one per engine |
 | Driver | amdgpu DKMS 7.1.3 |
-| ROCm | 10.1 (TheRock), PyTorch 2.13, vLLM 0.29 (`rocm/vllm` image, `_defaults-rocm.yaml`) |
-| libkfdreplay | v0.1.0 (`internal/kfdreplay`) |
+| ROCm | 10.1 (TheRock), PyTorch 2.13, vLLM 0.29 (`rocm/vllm` image, `_defaults-rocm.yaml`); 10.0 (TheRock wheels), PyTorch 2.13, vLLM `0.33.0+rocm100` in a Python 3.12 venv |
+| libkfdreplay | v0.1.0 (`internal/kfdreplay`); vLLM 0.33's sleep-mode allocator needs the next release (live GEM handles tracked without a limit) |
+| Models | Qwen3-0.6B, Qwen3-8B; Qwen3.8-Flash-Next FP8 (180B-A6B, 173 GiB of weights) on one MI350X: 184.6 GiB snapshot, served 26–40 s after `up` |
 | DMTCP | `v5.0.0-warmctl.2` |
 
 A bake on another ISA is refused; on another driver release it warns.
@@ -91,6 +93,12 @@ A bake on another ISA is refused; on another driver release it warns.
 - **The same host's GPUs.** Restores on another GPU of the same host are
   verified; on another host of the same model, driver and image they are
   expected to work and not yet verified.
+- **ROCm 10.0 wheels load rocprofiler-sdk** into every HIP process, which
+  keeps ROCr's event thread polling; `_defaults-rocm.yaml` turns it off
+  (`ROCPROFILER_REGISTER_ENABLED=0`).
+- **A queue's fast-forward can stall** (seen once in 7 restores of the 180B
+  model, on the first restore after the bake: the GPU stopped 5 packets short
+  of a lap). The restore fails closed; `up` again succeeds.
 - **SDMA queues are not replayed:** `HSA_ENABLE_SDMA=0` (ROCr copies with
   blit kernels instead).
 - **Large images:** the DMTCP image is the process tree's whole memory
