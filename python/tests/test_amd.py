@@ -181,7 +181,8 @@ class HostRegisterTest(unittest.TestCase):
     def test_the_wrappers_own_when_it_has_them(self):
         calls = []
         rt = types.SimpleNamespace(lib=object(), cudaHostRegister=lambda p, n, f: calls.append('w') or 1,
-                                   cudaGetLastError=lambda: calls.append('e'), cudaHostUnregister=lambda p: calls.append('u'))
+                                   cudaGetLastError=lambda: calls.append('e'),
+                                   cudaHostUnregister=lambda p: calls.append('u'))
         d = self.device(rt, False)
         self.assertFalse(d.register(1, 2))
         d.unregister(1)
