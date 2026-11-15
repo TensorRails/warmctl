@@ -78,9 +78,8 @@ func TestROCmLayer(t *testing.T) {
 			t.Errorf("argv lacks %s", want)
 		}
 	}
-	// The ROCm image finds amdsmi through PYTHONPATH; vLLM finds the ROCm
-	// platform through amdsmi.
-	if !strings.HasPrefix(l.Env["PYTHONPATH"], "/opt/warmctl/adapter:") || !strings.Contains(l.Env["PYTHONPATH"], "amd_smi") {
+	// The image's own PYTHONPATH is added at bake time (snapshot.imagePythonPath).
+	if l.Env["PYTHONPATH"] != "/opt/warmctl/adapter" {
 		t.Errorf("PYTHONPATH %q", l.Env["PYTHONPATH"])
 	}
 	if l.Env["HSA_ENABLE_SDMA"] != "0" || l.Env["HOME"] != "/workspace/home" || l.Env["MIOPEN_USER_DB_PATH"] == "" {

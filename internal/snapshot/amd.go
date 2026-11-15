@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -101,6 +102,25 @@ func (b *bake) chooseVendor() error {
 	return nil
 }
 
+// imagePythonPath keeps the image's own PYTHONPATH after the adapter's: a
+// ROCm image may find its modules through it (rocm/vllm finds amdsmi there,
+// and vLLM finds the ROCm platform through amdsmi), and the profile's
+// PYTHONPATH would hide them.
+func imagePythonPath(env map[string]string, image string) {
+	if image == "" {
+		return
+	}
+	have := map[string]bool{}
+	var out []string
+	for _, p := range strings.Split(env["PYTHONPATH"]+":"+image, ":") {
+		if p != "" && !have[p] {
+			have[p] = true
+			out = append(out, p)
+		}
+	}
+	env["PYTHONPATH"] = strings.Join(out, ":")
+}
+
 // amdPreflight checks the GPUs against what AMD snapshots are verified on,
 // and finds the pinned libkfdreplay.
 func (b *bake) amdPreflight() error {
@@ -114,6 +134,7 @@ func (b *bake) amdPreflight() error {
 	if b.gpuLib, err = kfdreplay.Locate(); err != nil {
 		return err
 	}
+	imagePythonPath(b.launch.Env, os.Getenv("PYTHONPATH"))
 	b.p.Printf("libkfdreplay %s at %s (sha256 %.12s)", orAny(b.gpuLib.Version), b.gpuLib.Path, b.gpuLib.SHA256)
 	return nil
 }
