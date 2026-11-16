@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/ebitengine/purego v0.11.3
-	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/compress v1.20.4
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	golang.org/x/sys v0.50.0
