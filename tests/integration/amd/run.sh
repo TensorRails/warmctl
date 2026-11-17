@@ -104,10 +104,10 @@ expect "AMD manifest" "$work/manifest.txt" \
   "lib /opt/warmctl/kfdreplay/$lib_tag/libkfdreplay.so $lib_version ${lib_sha:0:12} True" \
   "checkpoint libkfdreplay $lib_version sha256:$lib_sha" "driver 7.1.3.31500000 row mi350x-288gb"
 
-# serve NAME KFD ARGS...: up in place, detached; waits for the gateway.
+# serve NAME KFD COMMAND...: start the command in place and wait for the gateway.
 serve() {
   local name=$1 kfd=$2; shift 2
-  box "$name" "$kfd" -d -p "127.0.0.1:$port:8080" "$image" warmctl up --test-cpu /snap/s1 "$@" >/dev/null
+  box "$name" "$kfd" -d -p "127.0.0.1:$port:8080" "$image" "$@" >/dev/null
   for _ in $(seq 1 120); do
     curl -fsS "http://127.0.0.1:$port/v1/models" >/dev/null 2>&1 && return 0
     [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || return 1
@@ -124,7 +124,7 @@ complete() {
 # gpu_id and render node: libkfdreplay translates), each in a new container.
 for case in "a:the donor's GPU" "b:another GPU"; do
   kfd=${case%%:*}; what=${case#*:}; name=amd-e2e-up-$kfd
-  if serve "$name" "$kfd"; then
+  if serve "$name" "$kfd" warmctl up --test-cpu /snap/s1; then
     answer=$(complete); docker logs "$name" > "$work/up-$kfd.txt" 2>&1
     echo "answer $answer" >> "$work/up-$kfd.txt"
     expect "restore on $what" "$work/up-$kfd.txt" "GPU state restored by 1 workers \(libkfdreplay\)" \
@@ -140,6 +140,36 @@ if [ -s "$work/answer-a.json" ] && cmp -s "$work/answer-a.json" "$work/answer-b.
 else
   fail "answers differ between the GPUs"
 fi
+
+# Repeat build and up in the same container, as on a pod. The stand-in
+# engine has no extra ROCm owner; publish its late reply through the real
+# plugin in the directory the baked engine was given.
+cat > "$work/profiles/bake-up.sh" <<'SH'
+set -eu
+"$@" --output /snap/same
+PYTHONPATH=/opt/warmctl/adapter python3 - <<'PY'
+import json
+import os
+from warmctl_vllm import plugin
+with open('/snap/same/manifest.json') as f:
+    os.environ[plugin.STATUS_ENV] = json.load(f)['launch']['env'][plugin.STATUS_ENV]
+plugin._report('checkpointed')
+assert os.path.isfile(os.path.join(os.environ[plugin.STATUS_ENV], str(os.getpid())))
+PY
+exec warmctl up --test-cpu /snap/same
+SH
+name=amd-e2e-same-container
+if serve "$name" a sh /profiles/bake-up.sh "${bake[@]}"; then
+  answer=$(complete)
+  docker logs "$name" > "$work/same-container.txt" 2>&1
+  echo "answer $answer" >> "$work/same-container.txt"
+  expect "same-container build then default up" "$work/same-container.txt" "serving started" "answer .*token_id"
+else
+  docker logs "$name" > "$work/same-container.txt" 2>&1
+  fail "same-container build then default up"
+  tail -40 "$work/same-container.txt"
+fi
+docker rm -f "$name" >/dev/null 2>&1
 
 # refuse NAME KFD PATTERN [BOX-ARGS] -- [UP-ARGS]: a restore that must not start.
 refuse() {
