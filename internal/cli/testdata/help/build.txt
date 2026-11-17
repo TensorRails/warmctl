@@ -1,0 +1,57 @@
+exit 1
+--- stdout
+--- stderr
+Usage of build:
+  -backend string
+    	how the process tree is snapshotted: auto (DMTCP in place, else CRIU), criu or dmtcp (default "auto")
+  -compress
+    	store the process images and weights as zstd frames, for a snapshot restored from network storage (up decodes them as it stages a local copy)
+  -criu string
+    	host CRIU binary to use instead of the image's
+  -cuda-backend string
+    	how CUDA state moves: driver (libcuda's checkpoint API), cli (cuda-checkpoint), or auto (driver when usable) (default "auto")
+  -cuda-checkpoint string
+    	host cuda-checkpoint to use instead of the image's
+  -cuda-execution string
+    	CUDA restore: auto (everything concurrent when no collective links the processes), serial, parallel (only the workers concurrent) or parallel-all (default "auto")
+  -cuinterpose string
+    	cuInterpose build directory (default: cuinterpose/ next to warmctl)
+  -dmtcp-dir string
+    	directory of DMTCP's programs, for the dmtcp backend (default "/opt/warmctl/dmtcp/bin")
+  -dmtcp-plugin string
+    	warmctl's fdkeep DMTCP plugin, for the dmtcp backend (default "/opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so")
+  -docker string
+    	Docker socket (default "/var/run/docker.sock")
+  -gpus string
+    	GPU indices, e.g. 0-7
+  -id string
+    	run id (default: the output's name)
+  -in-place
+    	bake in this container, without Docker (a pod without privileges: docs/dmtcp.md)
+  -model-dir string
+    	model directory on this host
+  -no-verify
+    	canary only warns
+  -output string
+    	snapshot directory to create
+  -part-bytes int
+    	size of a weights part (default 1073741824)
+  -profile string
+    	profile id or YAML file
+  -profile-dir value
+    	extra directory of profile YAML files (repeatable)
+  -progress string
+    	progress format: plain or jsonl (default "plain")
+  -ready-timeout duration
+    	how long the engine may take to load (default 1h30m0s)
+  -scratch string
+    	accepted for compatibility
+  -set value
+    	profile override vllm.<flag>=<value>, env.<NAME>=<value> or ipc=<mode> (repeatable)
+  -state-dir string
+    	state directory (default "/var/lib/warmctl")
+  -test-cpu
+    	end-to-end test on a CPU host: no GPU devices, no io_uring check
+  -threads int
+    	pool copy threads per rank (default 4)
+error: flag: help requested

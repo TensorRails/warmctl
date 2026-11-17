@@ -69,6 +69,33 @@ jobs:
             DMTCP_PLUGIN="$root/lib/libdmtcp_fdkeep.so" "$root/bin/dmtcp_launch" --join-coordinator --coord-port "$port" /bin/true
           '
 
+  # The ROCm runtime image's native stage on a small base: the pinned DMTCP and
+  # libkfdreplay releases fetch, verify and load.
+  rocm-runtime-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch and load DMTCP and libkfdreplay in the ROCm runtime Docker build
+        run: |
+          docker build --target native -t warmctl-rocm-runtime-package -f deploy/rocm/Dockerfile \
+            --build-arg BASE=debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 .
+
+  # The AMD path end to end on a CPU runner: bake and restores in unprivileged
+  # containers with the real DMTCP and libkfdreplay, fake MI350X GPUs.
+  amd-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - run: make amd-e2e-test
+
   lint:
     runs-on: ubuntu-24.04
     steps:

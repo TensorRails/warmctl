@@ -224,8 +224,13 @@ func (r *restore) processes(ctx context.Context) error {
 	if err := r.c.Step(ctx, "cuda", args, &res); err != nil {
 		return err
 	}
-	r.p.Printf("CUDA restored: %d owners (%d in parallel) in %.1fs%s, %s",
-		len(args.Owners), len(args.Parallel), res.Seconds, phases(res.Phases), res.Backend)
+	if r.amd() {
+		r.p.Printf("%d restored processes run ROCm with libkfdreplay; their GPU state comes back as the engine wakes",
+			len(args.Owners))
+	} else {
+		r.p.Printf("CUDA restored: %d owners (%d in parallel) in %.1fs%s, %s",
+			len(args.Owners), len(args.Parallel), res.Seconds, phases(res.Phases), res.Backend)
+	}
 	if !r.interposed() || len(r.m.Process.IPCProcesses) == 0 {
 		return nil
 	}
@@ -246,6 +251,15 @@ func (r *restore) processes(ctx context.Context) error {
 func (r *restore) interposed() bool { return r.m.Process.IPC == interpose.Interpose }
 
 func (r *restore) cudaArgs() (agent.CUDARestoreArgs, error) {
+	if r.amd() {
+		// The workers replay their GPU state themselves (wake): the agent
+		// only checks that they can.
+		var args agent.CUDARestoreArgs
+		for _, o := range r.m.Process.GPUOwners {
+			args.Owners = append(args.Owners, o.PID)
+		}
+		return args, nil
+	}
 	pairs := make([]cuda.Pair, len(r.gpus))
 	for i, g := range r.gpus {
 		pairs[i] = cuda.Pair{Source: r.m.Hardware.GPUs[i].UUID, Target: g.UUID}

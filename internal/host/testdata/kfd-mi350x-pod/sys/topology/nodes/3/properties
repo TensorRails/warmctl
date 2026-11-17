@@ -1,0 +1,15 @@
+cpu_cores_count 0
+simd_count 1024
+mem_banks_count 1
+gfx_target_version 90500
+vendor_id 4098
+device_id 30112
+location_id 2304
+domain 0
+drm_render_minor 136
+local_mem_size 0
+fw_version 44
+capability 2755109504
+sdma_fw_version 14
+unique_id 1229782938247303441
+num_xcc 8

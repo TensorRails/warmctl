@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.0.0-beta.19 — 2026-11-17
+
+warmctl can checkpoint a warmed vLLM engine and restore it on one AMD
+Instinct MI350X in an unprivileged container. AMD support is in preview.
+See [AMD setup, measurements and limits](docs/amd.md).
+
+- On an AMD host, `build` discovers visible GPUs through KFD, verifies
+  that the worker uses the selected GPU and checkpoints the process tree
+  with DMTCP. Workers use libkfdreplay to save and restore GPU state.
+  The ROCm runtime supports vLLM 0.29 with ROCm 10.1 and vLLM 0.33 with
+  ROCm 10.0 wheels, including Qwen3.8-27B FP8.
+- AMD snapshots use the `warmctl.snapshot/v2-rocm` schema. Older clients
+  continue to select NVIDIA entries in mixed repositories. Restore checks
+  the GPU vendor before pulling and checks external files before restarting
+  DMTCP. Keep the original runtime for snapshots that reference older
+  mapped libraries.
+- Existing NVIDIA manifests round-trip unchanged. All 102 previously shipped
+  profiles resolve identically. Newly baked snapshots record the updated
+  adapter digest. An A40 restored an NVIDIA snapshot baked with beta.17.
+- On MI350X, the Qwen3.8-27B FP8 release-candidate test reached its first
+  correct answer in 9.71 s from a local restore. Sequential fixed prompts
+  matched fresh starts. At concurrency eight, one of two restores differed
+  from fresh starts on three of sixteen completions. Exact output
+  reproducibility under batching is still open.
+
 ## v2.0.0-beta.18 — 2026-11-04
 
 Snapshots carry fewer zero pages, and restores copy fewer.

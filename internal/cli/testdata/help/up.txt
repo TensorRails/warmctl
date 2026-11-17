@@ -1,0 +1,63 @@
+exit 1
+--- stdout
+--- stderr
+Usage of up:
+  -accept-license
+    	accept the license of a model the catalog marks gated
+  -canary string
+    	override the canary policy: bitwise, tolerance, warn or off
+  -concurrency int
+    	blobs transferred at once (0: 64)
+  -criu string
+    	host CRIU binary to use instead of the image's
+  -cuda-backend string
+    	how CUDA state moves: driver (libcuda's checkpoint API), cli (cuda-checkpoint), or auto (driver when usable) (default "auto")
+  -cuda-checkpoint string
+    	host cuda-checkpoint to use instead of the image's
+  -cuda-execution string
+    	CUDA restore: auto (everything concurrent when no collective links the processes), serial, parallel (only the workers concurrent) or parallel-all (default "auto")
+  -dmtcp-dir string
+    	directory of DMTCP's programs, for the dmtcp backend (default "/opt/warmctl/dmtcp/bin")
+  -dmtcp-plugin string
+    	warmctl's fdkeep DMTCP plugin, for the dmtcp backend (default "/opt/warmctl/dmtcp/lib/libdmtcp_fdkeep.so")
+  -docker string
+    	Docker socket (default "/var/run/docker.sock")
+  -gpus string
+    	GPU indices (default: the first free GPUs of the snapshot's model)
+  -id string
+    	instance id (default: the snapshot's or the repository's name)
+  -listen string
+    	gateway address (default "127.0.0.1:8000")
+  -mode string
+    	where to restore: auto (in place in the warmctl runtime image, else through Docker), host or in-place (docs/kubernetes.md); in place the gateway defaults to :8080 (default "auto")
+  -model-dir string
+    	model directory, when the snapshot needs it
+  -no-verify
+    	canary only warns
+  -plain-http
+    	talk to the registry over plain HTTP
+  -progress string
+    	progress format: plain or jsonl (default "plain")
+  -run-dir string
+    	in place: the agent's config, sockets and CRIU work (default "/run/warmctl")
+  -scratch string
+    	accepted for compatibility
+  -state-dir string
+    	state directory (default "/var/lib/warmctl")
+  -sync-weights
+    	reload the weights with synchronous copies, not pipelined ones
+  -test-cpu
+    	end-to-end test on a CPU host: no GPU devices, no io_uring check
+  -threads int
+    	pool copy threads per rank (default 4)
+  -tls-cert string
+    	serve HTTPS with this PEM certificate, read again when it changes
+  -tls-key string
+    	the PEM private key of --tls-cert
+  -verify-weights
+    	check each weights part's SHA-256 while reloading
+  -wait
+    	accepted for compatibility
+  -wait-timeout duration
+    	accepted for compatibility
+error: flag: help requested

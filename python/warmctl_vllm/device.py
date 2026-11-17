@@ -1,6 +1,7 @@
 """The CUDA side of the pool: copies through vLLM's own CUDA runtime wrapper
 (the one CuMemAllocator itself uses for sleep backups) and fingerprints
-computed on the GPU over raw allocation addresses."""
+computed on the GPU over raw allocation addresses. On ROCm the wrapper loads
+libamdhip64 and the same calls go by their hip names."""
 from __future__ import annotations
 
 import ctypes
@@ -15,8 +16,16 @@ _MEMCPY_HOST_TO_DEVICE = 1
 _bound = {}
 
 
-def _runtime(lib):
-    """Stream, event and async-copy functions of a libcudart, bound once."""
+def runtime_name(name, hip):
+    """The runtime's name of a CUDA runtime function: on ROCm, HIP's
+    (cudaStreamCreateWithFlags is hipStreamCreateWithFlags, with the same
+    arguments and constants)."""
+    return 'hip' + name[len('cuda'):] if hip else name
+
+
+def _runtime(lib, hip=False):
+    """Stream, event and async-copy functions of a libcudart (or, on ROCm,
+    libamdhip64), bound once, by their CUDA names."""
     if id(lib) not in _bound:
         handle, size, kind, err = ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int
         signatures = {
@@ -31,11 +40,30 @@ def _runtime(lib):
         }
         functions = {}
         for name, argtypes in signatures.items():
-            fn = getattr(lib, name)
+            fn = getattr(lib, runtime_name(name, hip))
             fn.restype, fn.argtypes = err, argtypes
             functions[name] = fn
         _bound[id(lib)] = functions
     return _bound[id(lib)]
+
+
+_host_bound = {}
+
+
+def _host_runtime(lib, hip=False):
+    """Host-memory registration of a libcudart (or libamdhip64), bound once
+    by CUDA names: for a vLLM whose CudaRTLibrary lacks them (vLLM 0.29 on
+    ROCm wraps neither cudaHostRegister nor cudaHostUnregister)."""
+    if id(lib) not in _host_bound:
+        handle, size, err = ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int
+        functions = {}
+        for name, argtypes in {'cudaHostRegister': [handle, size, ctypes.c_uint], 'cudaHostUnregister': [handle],
+                               'cudaGetLastError': []}.items():
+            fn = getattr(lib, runtime_name(name, hip))
+            fn.restype, fn.argtypes = err, argtypes
+            functions[name] = fn
+        _host_bound[id(lib)] = functions
+    return _host_bound[id(lib)]
 
 
 class _CudaArray:
@@ -53,18 +81,34 @@ class CudaDevice:
         self.torch, self.device = torch, torch.device(device)
         self.index = self.device.index if self.device.index is not None else torch.cuda.current_device()
         self.rt = CudaRTLibrary()
+        self.hip = bool(getattr(torch.version, 'hip', None))
+
+    def hip_pci_bus_id(self):
+        # HIP reports the full BDF, including the PCI function. Some PyTorch
+        # builds omit the PCI fields on get_device_properties().
+        fn = self.rt.lib.hipDeviceGetPCIBusId
+        fn.argtypes, fn.restype = [ctypes.POINTER(ctypes.c_char), ctypes.c_int, ctypes.c_int], ctypes.c_int
+        buf = ctypes.create_string_buffer(32)
+        err = fn(buf, len(buf), self.index)
+        if err:
+            raise RuntimeError('hipDeviceGetPCIBusId(%d) returned %d' % (self.index, err))
+        return buf.value.decode('ascii')
 
     def bind(self):
         self.rt.cudaSetDevice(self.index)
 
+    def _host(self, name):
+        fn = getattr(self.rt, name, None)
+        return fn if fn is not None else _host_runtime(self.rt.lib, self.hip)[name]
+
     def register(self, ptr, nbytes):
-        if self.rt.cudaHostRegister(ptr, nbytes, 0) != 0:
-            self.rt.cudaGetLastError()
+        if self._host('cudaHostRegister')(ptr, nbytes, 0) != 0:
+            self._host('cudaGetLastError')()
             return False
         return True
 
     def unregister(self, ptr):
-        self.rt.cudaHostUnregister(ptr)
+        self._host('cudaHostUnregister')(ptr)
 
     def to_host(self, host_ptr, dev_ptr, nbytes):
         self.rt.cudaMemcpy(ctypes.c_void_p(host_ptr), ctypes.c_void_p(dev_ptr), nbytes)
@@ -75,7 +119,7 @@ class CudaDevice:
     # The pipelined reload's calls, bound from the same libcudart: vLLM's
     # wrapper has no streams or events.
     def _call(self, name, *args):
-        fn = _runtime(self.rt.lib).get(name)
+        fn = _runtime(self.rt.lib, self.hip).get(name)
         err = fn(*args)
         if err != 0:
             message = self.rt.cudaGetErrorString(err)

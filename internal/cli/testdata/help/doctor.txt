@@ -1,0 +1,9 @@
+exit 1
+--- stdout
+--- stderr
+Usage of doctor:
+  -docker string
+    	Docker socket (default "/var/run/docker.sock")
+  -profile-dir value
+    	extra directory of profile YAML files and a hardware.yaml (repeatable)
+error: flag: help requested

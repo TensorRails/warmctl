@@ -12,5 +12,5 @@ var Assets embed.FS
 
 // Adapter holds the Python package mounted into every engine container.
 //
-//go:embed python/warmctl_vllm/*.py
+//go:embed python/warmctl_vllm/*.py python/warmctl_vllm-2.0.0a0.dist-info/*
 var Adapter embed.FS

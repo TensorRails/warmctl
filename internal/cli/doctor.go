@@ -9,8 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/accel"
+	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/host"
+	"github.com/TensorRails/warmctl/v2/internal/kfdreplay"
+	"github.com/TensorRails/warmctl/v2/internal/rocm"
+	"github.com/TensorRails/warmctl/v2/internal/run"
 )
 
 // runDoctor checks what snapshots need from this host and prints one line
@@ -36,6 +41,9 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) err
 			mark, failed = "FAIL", failed+1
 		}
 		line(mark, name, detail)
+	}
+	if accel.Host() == accel.AMD {
+		return doctorAMD(ctx, dirs, check, line, &failed)
 	}
 	dk, err := docker.New(ctx, *sock)
 	if err == nil {
@@ -79,4 +87,50 @@ func checkHardware(dirs []string, gpus []host.GPU, check func(string, bool, stri
 		}
 		check("hardware", true, fmt.Sprintf("%s (%d x %s)", m.row.ID, m.count, m.name))
 	}
+}
+
+// doctorAMD checks what AMD snapshots need: they run in place under DMTCP in
+// the ROCm runtime image, without Docker, CRIU or the NVIDIA runtime.
+func doctorAMD(ctx context.Context, dirs []string, check func(string, bool, string),
+	line func(string, string, string), failed *int) error {
+	gpus, err := host.Inventory(ctx)
+	if err == nil {
+		check("gpus", true, fmt.Sprintf("%d x %s (%s), amdgpu %s", len(gpus), gpus[0].Name, gpus[0].Arch, gpus[0].Driver))
+		checkHardware(dirs, gpus, check, line)
+		note, err := rocm.Supported(gpus)
+		switch {
+		case err != nil:
+			check("amd-support", false, err.Error())
+		case note != "":
+			line("warn", "amd-support", note)
+		default:
+			check("amd-support", true, "verified platform (docs/amd.md)")
+		}
+	} else {
+		check("gpus", false, err.Error())
+	}
+	_, inImage, err := run.ReadRuntime(run.RuntimeFile)
+	check("runtime-image", err == nil && inImage, "ROCm runtime image marker "+run.RuntimeFile+": "+fmt.Sprint(inImage))
+	if err := dmtcp.DefaultTools().Check(); err != nil {
+		check("dmtcp", false, err.Error())
+	} else {
+		check("dmtcp", true, "installed")
+	}
+	if lib, err := kfdreplay.Locate(); err != nil {
+		check("libkfdreplay", false, err.Error())
+	} else {
+		check("libkfdreplay", true, fmt.Sprintf("%s at %s", orResearch(lib.Version), lib.Path))
+	}
+	check("kernel", true, host.Kernel())
+	if *failed > 0 {
+		return fmt.Errorf("%d checks failed: see above", *failed)
+	}
+	return nil
+}
+
+func orResearch(v string) string {
+	if v == "" {
+		return "research build"
+	}
+	return v
 }

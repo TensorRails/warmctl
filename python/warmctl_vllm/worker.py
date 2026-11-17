@@ -9,8 +9,44 @@ import json
 import os
 import time
 
-from . import pool, protocol, transfer
+from . import kfdr, pool, protocol, transfer
 from .primitives import require
+
+
+def rocm_platform_guard():
+    """On ROCm, answer platform.architecture() once, now, and from then on.
+
+    vLLM imports this extension in each worker before the worker initializes
+    the GPU. Python's platform.architecture() forks `file`, and Triton keys
+    its compiled-module cache (hip_utils, kernel launchers) on it. Under DMTCP
+    a process whose ROCm runtime is initialized cannot fork safely: the fork
+    fails or hangs, the key differs, Triton misses its cache and forks gcc,
+    which fails too. Asked before the runtime starts, the fork is harmless and
+    the answer is the one the bake's compile cache pass computed. Not on CUDA.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    if not getattr(getattr(torch, 'version', None), 'hip', None):
+        return False
+    import platform
+    import sys
+    original = platform.architecture
+    if getattr(original, 'warmctl_cached', False):
+        return True
+    answer = original()
+
+    def architecture(executable=sys.executable, bits='', linkage=''):
+        if executable == sys.executable and not bits and not linkage:
+            return answer
+        return original(executable, bits, linkage)
+    architecture.warmctl_cached = True
+    platform.architecture = architecture
+    return True
+
+
+rocm_platform_guard()
 
 
 def replica(config):
@@ -39,15 +75,23 @@ class Extension:
         import vllm
 
         props = torch.cuda.get_device_properties(self.device)
-        bus = getattr(props, 'pci_bus_id', None)
-        return protocol.plain({
+        hip = getattr(torch.version, 'hip', None)
+        bus = None if hip else getattr(props, 'pci_bus_id', None)
+        row = {
             'rank': self._warmctl_rank(), 'pid': os.getpid(), 'device': torch.cuda.current_device(),
             'name': props.name, 'arch': 'sm_%d%d' % (props.major, props.minor),
             'pci_bus_id': '%04x:%02x:%02x.0' % (getattr(props, 'pci_domain_id', 0), bus, props.pci_device_id)
             if bus is not None else '',
             'uuid': str(getattr(props, 'uuid', '')), 'vllm': vllm.__version__, 'torch': torch.__version__,
             'adapter_sha256': os.environ.get('WARMCTL_ADAPTER_SHA256', ''),
-        })
+        }
+        if hip:
+            row['pci_bus_id'] = self._warmctl_device().hip_pci_bus_id()
+            # ROCm: the ISA by its gfx name, and what moves the GPU state.
+            row['arch'] = str(getattr(props, 'gcnArchName', row['arch'])).split(':')[0]
+            row['hip'], row['rocm'] = str(hip), kfdr_runtime()
+            row['kfdr_version'] = kfdr.Library().version()
+        return protocol.plain(row)
 
     def warmctl_allocations(self):
         """The allocator table: what the pool holds right now."""
@@ -80,6 +124,74 @@ class Extension:
 
     def warmctl_restore_prepare(self):
         return {'rank': self._warmctl_rank()}
+
+    # AMD: GPU state moves in the worker itself, through libkfdreplay. The
+    # NVIDIA path never calls these; its GPU state moves in warmctl's agent.
+
+    def warmctl_checkpoint_prepare(self):
+        """vLLM's checkpoint_prepare where this vLLM has one (the ROCm images
+        may predate it), then warmctl's."""
+        prepare = getattr(self, 'checkpoint_prepare', None)
+        if prepare is not None:
+            prepare()
+        return self.warmctl_sleep_prepare()
+
+    def warmctl_checkpoint_restore(self):
+        restore = getattr(self, 'checkpoint_restore', None)
+        if restore is not None:
+            restore()
+        return self.warmctl_restore_prepare()
+
+    def warmctl_gpu_checkpoint(self, version=''):
+        """Cold checkpoint of this process's GPU state, on the sleeping engine:
+        GPU memory dumped to host memory, the runtime's threads parked, the
+        devices released, so that DMTCP can snapshot the process."""
+        import torch
+
+        lib = self._warmctl_kfdr(version)
+        state = lib.state()
+        require(state != 'restored', 'this engine was restored from a snapshot; a snapshot of it is not '
+                'supported (take one of a freshly started engine)')
+        require(state == 'running', 'libkfdreplay is %s, not running' % state)
+        torch.cuda.synchronize()
+        max_wptr = lib.max_wptr()
+        started = time.monotonic()
+        if lib.checkpoint() != 0:
+            raise RuntimeError('libkfdreplay refused the checkpoint: %s' % (lib.last_error() or 'no reason given'))
+        state = lib.state()
+        require(state == 'checkpointed_cold', 'libkfdreplay is %s after the checkpoint' % state)
+        return {'rank': self._warmctl_rank(), 'pid': os.getpid(), 'version': lib.version(), 'state': state,
+                'seconds': time.monotonic() - started, 'max_wptr': max_wptr}
+
+    def warmctl_gpu_restore(self, version=''):
+        """Replay this restored process's GPU state, before anything uses the
+        GPU (the engine is still asleep)."""
+        lib = self._warmctl_kfdr(version)
+        state = lib.state()
+        require(state == 'checkpointed_cold', 'libkfdreplay is %s, not checkpointed' % state)
+        started = time.monotonic()
+        if lib.restore() != 0:
+            raise RuntimeError('libkfdreplay could not restore the GPU state: %s; this process cannot use the '
+                               'GPU' % (lib.last_error() or 'no reason given'))
+        state = lib.state()
+        require(state == 'restored', 'libkfdreplay is %s after the restore' % state)
+        return {'rank': self._warmctl_rank(), 'pid': os.getpid(), 'version': lib.version(), 'state': state,
+                'seconds': time.monotonic() - started}
+
+    def warmctl_gpu_state(self):
+        lib = kfdr.Library()
+        if not lib.loaded:
+            return {'rank': self._warmctl_rank(), 'loaded': False}
+        return {'rank': self._warmctl_rank(), 'loaded': True, 'version': lib.version(), 'state': lib.state(),
+                'last_error': lib.last_error()}
+
+    def _warmctl_kfdr(self, version):
+        lib = kfdr.Library()
+        require(lib.loaded, 'libkfdreplay is not loaded in this process: the engine was not started with it '
+                'preloaded (LD_PRELOAD)')
+        require(not version or lib.version() == version,
+                'this process runs libkfdreplay %s, warmctl expects %s' % (lib.version(), version))
+        return lib
 
     def warmctl_reload_pool(self, manifest, directory, threads=transfer.THREADS, slot_bytes=transfer.SLOT_BYTES,
                             verify=False, sync=False, wait=False):
@@ -150,3 +262,21 @@ class Extension:
                 if value is not None and not getattr(value, 'disabled', False):
                     active.add(name)
         return sorted(active)
+
+
+def kfdr_runtime():
+    """The ROCm userspace's version: the TheRock wheels' or /opt/rocm's."""
+    try:
+        from importlib import metadata
+        for name in ('rocm-sdk-core', 'rocm_sdk_core', '_rocm_sdk_core'):
+            try:
+                return 'rocm-sdk-core ' + metadata.version(name)
+            except metadata.PackageNotFoundError:
+                continue
+    except ImportError:
+        pass
+    try:
+        with open('/opt/rocm/.info/version') as f:
+            return 'rocm ' + f.read().strip()
+    except OSError:
+        return ''

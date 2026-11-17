@@ -38,6 +38,9 @@ type agent struct {
 	// interposed is whether the engine runs under cuInterpose, and why.
 	interposed bool
 	ipcReason  string
+	// started is when the engine started: an AMD freeze takes the image's
+	// files not modified since as the image's own.
+	started time.Time
 
 	mu      sync.Mutex
 	engine  int
@@ -202,7 +205,7 @@ func (a *agent) run(ctx context.Context, step string, args json.RawMessage) (any
 	case "restore/cuda":
 		return a.cudaRestore(ctx, args)
 	case "snapshot/freeze":
-		return a.tree.freeze(ctx, a.enginePID())
+		return a.freeze(ctx)
 	case "snapshot/dump":
 		return a.tree.dump(ctx, a.enginePID(), a.exited)
 	case "snapshot/fs":
@@ -284,6 +287,7 @@ func (a *agent) startEngine(ctx context.Context) error {
 	}
 	cmd.Dir, cmd.Stdout, cmd.Stderr = a.cfg.Dir, log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	a.started = time.Now()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -308,6 +312,9 @@ func (a *agent) cudaCheckpoint(ctx context.Context) (any, error) {
 	tree, err := criu.VisibleTree(a.enginePID())
 	if err != nil {
 		return nil, err
+	}
+	if a.cfg.GPU == GPUAMD {
+		return a.amdReleased(ctx, tree.PIDs(), start)
 	}
 	owners, err := cuda.Owners(tree.PIDs())
 	if err != nil {
@@ -341,6 +348,9 @@ func (a *agent) cudaRestore(ctx context.Context, raw json.RawMessage) (any, erro
 		}
 	}
 	start := time.Now()
+	if a.cfg.GPU == GPUAMD {
+		return a.amdPreloaded(ctx, args, start)
+	}
 	var phases map[string]float64
 	var name string
 	if len(args.Owners) > 0 {

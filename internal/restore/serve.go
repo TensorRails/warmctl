@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/TensorRails/warmctl/v2/internal/accel"
 	"github.com/TensorRails/warmctl/v2/internal/gateway"
 	"github.com/TensorRails/warmctl/v2/internal/profile"
 	"github.com/TensorRails/warmctl/v2/internal/run"
@@ -62,7 +63,26 @@ func (r *restore) wake(ctx context.Context) error {
 	if asleep, err := e.Sleeping(ctx); err != nil || !asleep {
 		return fmt.Errorf("restored engine is not asleep (%t, %v)", asleep, err)
 	}
-	if err := e.FinishRestore(ctx); err != nil {
+	// GPU state the engine's processes move themselves (AMD), before vLLM's
+	// own restore hook touches a GPU; nothing on NVIDIA.
+	version := ""
+	if l := r.m.Process.GPULib; l != nil {
+		version = l.Version
+	}
+	state, err := accel.For(accel.Of(r.m.Hardware), version)
+	if err != nil {
+		return err
+	}
+	res, err := state.Restore(ctx, e)
+	if err != nil {
+		return err
+	}
+	finish := e.FinishRestore
+	if r.amd() {
+		r.p.Printf("GPU state restored by %d workers (libkfdreplay) in %.1fs", len(res.Ranks), res.Seconds)
+		finish = e.FinishRestoreIfAny
+	}
+	if err := finish(ctx); err != nil {
 		return err
 	}
 	if err := e.WakeUp(ctx, "weights"); err != nil {

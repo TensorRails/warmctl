@@ -19,8 +19,14 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/profile"
 )
 
-// Schema identifies manifest.json.
-const Schema = "warmctl.snapshot/v2"
+// Schema identifies manifest.json. A snapshot of AMD GPUs carries
+// SchemaROCm instead: releases before AMD support refuse to read it, so that
+// one of them, choosing among a repository's snapshots, skips the AMD ones
+// rather than picks one it cannot restore.
+const (
+	Schema     = "warmctl.snapshot/v2"
+	SchemaROCm = "warmctl.snapshot/v2-rocm"
+)
 
 // Manifest is manifest.json.
 type Manifest struct {
@@ -62,9 +68,15 @@ type GPU struct {
 	PCIBusID  string `json:"pci_bus_id"`
 	Name      string `json:"name"`
 	MemoryMiB int64  `json:"memory_mib"`
-	// Device is the node the donor's processes opened, /dev/nvidiaN; a
-	// receiver's GPU of the same rank may have another number.
+	// Device is the node the donor's processes opened, /dev/nvidiaN (on AMD
+	// the render node, /dev/dri/renderDN); a receiver's GPU of the same rank
+	// may have another number.
 	Device string `json:"device,omitempty"`
+	// An AMD GPU's ISA (gfx950), the kernel's gpu_id for it and its
+	// firmware (MEC and SDMA versions), which a restore must match.
+	Arch     string `json:"arch,omitempty"`
+	KFDGPUID uint64 `json:"kfd_gpu_id,omitempty"`
+	Firmware string `json:"firmware,omitempty"`
 }
 
 // Hardware is what a restore host has to match.
@@ -85,6 +97,37 @@ type Hardware struct {
 	// driver/ and mounted back at these paths under another release.
 	DriverPortable bool     `json:"driver_portable,omitempty"`
 	DriverFiles    []string `json:"driver_files,omitempty"`
+	// Vendor is VendorAMD for a snapshot of AMD GPUs; empty is NVIDIA, as
+	// every snapshot before AMD support. GPUCheckpoint names what moved an
+	// AMD process's GPU state ("libkfdreplay 0.1.1"), as CUDACheckpoint
+	// does for NVIDIA; ROCm is the GPU runtime the engine ran.
+	Vendor        string `json:"vendor,omitempty"`
+	GPUCheckpoint string `json:"gpu_checkpoint,omitempty"`
+	ROCm          *ROCm  `json:"rocm,omitempty"`
+}
+
+// GPU vendors, as Hardware.Vendor names them.
+const (
+	VendorNVIDIA = "nvidia"
+	VendorAMD    = "amd"
+)
+
+// VendorName is the vendor of the snapshot's GPUs; snapshots older than the
+// field are NVIDIA's.
+func (h Hardware) VendorName() string {
+	if h.Vendor == "" {
+		return VendorNVIDIA
+	}
+	return h.Vendor
+}
+
+// ROCm is the AMD GPU runtime the donor's engine ran, as its workers
+// reported it.
+type ROCm struct {
+	// HIP is torch.version.hip; Runtime the ROCm userspace's version (the
+	// TheRock wheels' or /opt/rocm's).
+	HIP     string `json:"hip,omitempty"`
+	Runtime string `json:"runtime,omitempty"`
 }
 
 // DriverBranch is the branch of an NVIDIA driver version: 580 of 580.173.02.
@@ -128,6 +171,31 @@ type Process struct {
 	// nothing mounts the snapshot's copy for it, so the restoring pod must
 	// have the same build there.
 	IPCBuild string `json:"ipc_build,omitempty"`
+	// On AMD: GPUState is what moved the GPU state (GPUStateKFDReplay), in
+	// the engine's processes themselves; GPULib the library they mapped,
+	// which a restart maps again from the same file; GPUOwners the
+	// processes that held the GPU; GPUMaxWptr the most packets any GPU
+	// queue had taken, which the restore replays to bring the queue back.
+	GPUState   string      `json:"gpu_state,omitempty"`
+	GPULib     *MappedFile `json:"gpu_lib,omitempty"`
+	GPUOwners  []Owner     `json:"gpu_owners,omitempty"`
+	GPUMaxWptr uint64      `json:"gpu_max_wptr,omitempty"`
+	// Mapped are files outside the snapshot that DMTCP reopens from the receiver
+	// filesystem, including model shards and external volume files.
+	Mapped []MappedFile `json:"mapped,omitempty"`
+}
+
+// GPUStateKFDReplay is Process.GPUState of an AMD snapshot.
+const GPUStateKFDReplay = "libkfdreplay"
+
+// MappedFile is a file a restore needs at the same path with the same size
+// and modification time (DMTCP maps unmodified file areas from the file).
+type MappedFile struct {
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	MtimeNS int64  `json:"mtime_ns"`
+	SHA256  string `json:"sha256,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 // Snapshot backends, as Process.Backend names them.
@@ -309,8 +377,13 @@ func (m Manifest) Write(name string) error {
 
 // Validate checks what a restore depends on.
 func (m Manifest) Validate() error {
-	if m.Schema != Schema {
-		return fmt.Errorf("manifest schema %q, want %s", m.Schema, Schema)
+	switch {
+	case m.Schema == Schema && m.Hardware.Vendor == "":
+	case m.Schema == SchemaROCm && m.Hardware.Vendor == VendorAMD:
+	case m.Schema == Schema || m.Schema == SchemaROCm:
+		return fmt.Errorf("manifest schema %s does not go with GPU vendor %q", m.Schema, m.Hardware.Vendor)
+	default:
+		return fmt.Errorf("manifest schema %q, want %s or %s", m.Schema, Schema, SchemaROCm)
 	}
 	if m.ID == "" || m.Launch.Ranks < 1 || len(m.Launch.Argv) < 3 || m.Process.RootPID < 1 {
 		return errors.New("manifest: id, launch and process are required")

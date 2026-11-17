@@ -51,3 +51,26 @@ rows:
 		}
 	}
 }
+
+func TestVendorOfProfile(t *testing.T) {
+	l, _ := loader(t)
+	table, err := l.Hardware()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"qwen3-8b-mi350x-tp1": "amd", "qwen3-8b-tp1": "", "qwen3-8b-l40s-tp1": ""} {
+		p, err := l.Load(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := table.VendorOf(p); got != want {
+			t.Errorf("%s: vendor %q, want %q", id, got, want)
+		}
+	}
+	// The NVIDIA defaults are the defaults as they were.
+	p, _ := l.Load("qwen3-8b-tp1")
+	d, err := l.DefaultsFor(p)
+	if err != nil || d.VLLM["enable-nccl-comm-suspend"] != true {
+		t.Fatalf("NVIDIA defaults changed: %v %v", err, d.VLLM["enable-nccl-comm-suspend"])
+	}
+}

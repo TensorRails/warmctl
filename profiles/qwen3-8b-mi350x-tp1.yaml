@@ -1,0 +1,14 @@
+# Qwen3-8B on one AMD Instinct MI350X, restored in place under DMTCP with
+# libkfdreplay (docs/amd.md). vLLM's own graph mode, as verified on MI350X.
+schema: warmctl.profile/v1
+id: qwen3-8b-mi350x-tp1
+model: {id: Qwen/Qwen3-8B, revision: b968826d9c46dd6066d109eabc6255188de91218, served_names: [qwen3-8b]}
+parallel: {tp: 1}
+hardware: [mi350x-288gb, mi355x-288gb]
+vllm:
+  max-model-len: 8192
+  # 8 GiB of KV cache: an 8192-token sequence of Qwen3-8B needs 1.2 GiB.
+  kv-cache-memory-bytes: 8589934592
+graphs:
+  mode: FULL_AND_PIECEWISE
+resources: {memory: 96GiB}

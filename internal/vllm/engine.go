@@ -53,6 +53,19 @@ func New(socket string, ranks int) *Engine {
 	return &Engine{http: &http.Client{Transport: transport}, Ranks: ranks}
 }
 
+// NewTCP connects to an engine listening on addr (host:port), as New does
+// through a socket.
+func NewTCP(addr string, ranks int) *Engine {
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+		},
+		DisableKeepAlives: true,
+	}
+	return &Engine{http: &http.Client{Transport: transport}, Ranks: ranks}
+}
+
 // ReplyThrough sends every RPC through the adapter's warmctl_rpc, which
 // publishes each rank's result under guest, seen here as host. A
 // data-parallel engine needs it: /collective_rpc runs on every engine core

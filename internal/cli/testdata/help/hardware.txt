@@ -1,0 +1,7 @@
+exit 1
+--- stdout
+--- stderr
+Usage of hardware:
+  -dir value
+    	extra directory with a hardware.yaml (repeatable)
+error: flag: help requested

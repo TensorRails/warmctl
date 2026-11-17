@@ -1,0 +1,9 @@
+exit 1
+--- stdout
+--- stderr
+Usage of gc:
+  -dry-run
+    	only report
+  -state-dir string
+    	state directory (default "/var/lib/warmctl")
+error: flag: help requested

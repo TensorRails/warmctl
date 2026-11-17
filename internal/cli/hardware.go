@@ -68,7 +68,7 @@ func printHardware(w io.Writer, rows []profile.Hardware, here map[string]int) er
 		if r.NVLink {
 			nvlink = "yes"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d MiB\t%s\t%s\t%s", r.ID, r.NvidiaSMIName, r.MemoryMiB, r.Arch, nvlink, r.TopologyClass)
+		fmt.Fprintf(tw, "%s\t%s\t%d MiB\t%s\t%s\t%s", r.ID, r.Name(), r.MemoryMiB, r.Arch, nvlink, r.TopologyClass)
 		switch n := here[r.ID]; {
 		case n == 1:
 			fmt.Fprint(tw, "\t1 GPU")

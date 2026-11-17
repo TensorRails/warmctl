@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/TensorRails/warmctl/v2/internal/accel"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/profile"
+	"github.com/TensorRails/warmctl/v2/internal/rocm"
 	"github.com/TensorRails/warmctl/v2/internal/vllm"
 )
 
@@ -51,7 +53,12 @@ func (b *bake) sleep(ctx context.Context) error {
 		b.exports[i].Allocations, n = Surviving(b.exports[i].Allocations, tables[i].Allocations)
 		dropped += n
 	}
-	if b.prepared, err = b.c.Engine.PrepareCheckpoint(ctx); err != nil {
+	prepare := b.c.Engine.PrepareCheckpoint
+	if b.vendor == accel.AMD {
+		// ROCm's vLLM images may predate checkpoint_prepare.
+		prepare = b.c.Engine.PrepareCheckpointIfAny
+	}
+	if b.prepared, err = prepare(ctx); err != nil {
 		return err
 	}
 	b.p.Printf("engine asleep; %d released segments dropped; collectives detached: %t", dropped, b.detached())
@@ -84,9 +91,33 @@ func (b *bake) detached() bool {
 	return len(b.prepared) > 0
 }
 
+// engineGPUState checkpoints the GPU state the engine's own processes move
+// (AMD); nothing on NVIDIA, whose state the agent's cuda step moves.
+func (b *bake) engineGPUState(ctx context.Context) error {
+	state, err := accel.For(b.vendor, b.gpuLib.Version)
+	if err != nil {
+		return err
+	}
+	if b.gpuRes, err = state.Checkpoint(ctx, b.c.Engine); err != nil {
+		return err
+	}
+	if b.vendor != accel.AMD {
+		return nil
+	}
+	b.p.Printf("GPU state checkpointed by %d workers (libkfdreplay) in %.1fs", len(b.gpuRes.Ranks), b.gpuRes.Seconds)
+	if n := b.gpuRes.MaxWptr(); n > rocm.MaxWptrWarn {
+		b.p.Printf("warning: a GPU queue has taken %d packets; a restore replays them (~1 µs each): "+
+			"snapshot a freshly warmed engine", n)
+	}
+	return nil
+}
+
 // checkpoint drives the agent: cross-process memory released, CUDA to host
 // memory, freeze, dump, archive.
 func (b *bake) checkpoint(ctx context.Context) error {
+	if err := b.engineGPUState(ctx); err != nil {
+		return err
+	}
 	if err := b.c.Step(ctx, "ipc", nil, &b.ipc); err != nil {
 		return err
 	}
@@ -97,9 +128,18 @@ func (b *bake) checkpoint(ctx context.Context) error {
 	if err := b.c.Step(ctx, "cuda", nil, &b.cudaRes); err != nil {
 		return err
 	}
-	b.p.Printf("CUDA checkpointed: %d owners in %.1fs, %s", len(b.cudaRes.Owners), b.cudaRes.Seconds, b.cudaRes.Backend)
+	if b.vendor == accel.AMD {
+		b.p.Printf("GPU devices released by every process: %d run ROCm with libkfdreplay", len(b.cudaRes.Owners))
+	} else {
+		b.p.Printf("CUDA checkpointed: %d owners in %.1fs, %s", len(b.cudaRes.Owners), b.cudaRes.Seconds, b.cudaRes.Backend)
+	}
 	if err := b.c.Step(ctx, "freeze", nil, &b.frozen); err != nil {
 		return err
+	}
+	if b.frozen.Coverage != nil {
+		b.coverage = b.frozen.Coverage
+		b.p.Printf("files outside the snapshot: %d to check at restore, %d uncovered",
+			len(b.coverage.Mapped), len(b.coverage.Uncovered))
 	}
 	if err := b.c.Step(ctx, "dump", nil, &b.dumped); err != nil {
 		return err

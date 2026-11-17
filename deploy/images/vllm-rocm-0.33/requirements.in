@@ -1,0 +1,7 @@
+# The ROCm 10.0 vLLM stack warmctl's AMD path is verified with (docs/amd.md).
+# requirements.lock is compiled from this file (see Dockerfile).
+vllm==0.33.0+rocm100
+torch==2.13.0+rocm10.0.0
+# torchvision for torch 2.13: the AMD index's 0.29 registers operators
+# torch 2.13 lacks (torchvision::nms), and transformers then fails to import.
+torchvision==0.28.0+rocm10.0.0

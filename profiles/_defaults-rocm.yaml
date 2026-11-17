@@ -1,0 +1,40 @@
+# Laid over _defaults.yaml on an AMD host (warmctl detects it: no NVIDIA
+# device, a readable /dev/kfd), before the profile. Everything here is what
+# libkfdreplay needs for a cold checkpoint and restore under DMTCP
+# (docs/amd.md); nothing here is read on an NVIDIA host.
+schema: warmctl.profile-defaults/v1
+# The ROCm vLLM image the AMD path was verified on (vLLM 0.29, ROCm 10.1
+# TheRock, PyTorch 2.13). An in-place bake records the runtime image's own
+# base instead.
+image: rocm/vllm:rocm10.1.0_ubuntu24.04_py3.14-pytorch_2.13.0_vllm-0.29.0@sha256:e0ea9a10b729573ea8598bdc073bda0ea382fe1037eec7c0761b6fa7f46baaf4
+vllm:
+  # RCCL has no ncclCommSuspend, and the ROCm vLLM (0.29) has no such flag:
+  # vllm serve would refuse to start with it.
+  enable-nccl-comm-suspend: null
+env:
+  # SDMA queues are not replayed: ROCr copies with blit kernels instead.
+  HSA_ENABLE_SDMA: "0"
+  # Scratch memory stays where it was between checkpoint and restore.
+  HSA_ENABLE_SCRATCH_ASYNC_RECLAIM: "0"
+  HSA_NO_SCRATCH_RECLAIM: "1"
+  # Expandable segments allocate through HIP VMM, live DRM state that a
+  # checkpoint refuses.
+  PYTORCH_HIP_ALLOC_CONF: expandable_segments:False
+  # torch.distributed's libuv TCPStore accepts connections behind DMTCP's
+  # back; the checkpoint then drains that socket forever.
+  USE_LIBUV: "0"
+  # ROCm 10.0 (TheRock wheels) loads rocprofiler-sdk into every HIP process;
+  # its queue interception keeps ROCr's event thread polling in user space,
+  # which a checkpoint cannot stop. Off unless a profiler is wanted.
+  ROCPROFILER_REGISTER_ENABLED: "0"
+  # ROCm's kernel caches live under /workspace like every other cache, so
+  # the snapshot carries them and a restart finds what it mapped.
+  MIOPEN_USER_DB_PATH: /workspace/miopen
+  MIOPEN_CUSTOM_CACHE_DIR: /workspace/miopen-cache
+  # Code objects comgr compiles at run time, and the torch DLPack addon
+  # tvm-ffi builds on first import (vLLM 0.33): mapped by the engine, so
+  # under /workspace too rather than in ~/.cache.
+  AMD_COMGR_CACHE_DIR: /workspace/comgr
+  TVM_FFI_CACHE_DIR: /workspace/tvm-ffi
+# Cross-process GPU memory has no checkpoint on AMD: one GPU per engine.
+ipc: native

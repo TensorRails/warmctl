@@ -1,0 +1,3 @@
+simd_count 1024
+gfx_target_version 90500
+drm_render_minor 140

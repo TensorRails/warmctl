@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/TensorRails/warmctl/v2"
+	"github.com/TensorRails/warmctl/v2/internal/accel"
 	"github.com/TensorRails/warmctl/v2/internal/agent"
 	"github.com/TensorRails/warmctl/v2/internal/dmtcp"
 	"github.com/TensorRails/warmctl/v2/internal/docker"
 	"github.com/TensorRails/warmctl/v2/internal/host"
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 	"github.com/TensorRails/warmctl/v2/internal/profile"
+	"github.com/TensorRails/warmctl/v2/internal/rocm"
 	"github.com/TensorRails/warmctl/v2/internal/run"
 	"github.com/TensorRails/warmctl/v2/internal/vllm"
 )
@@ -106,6 +108,14 @@ type bake struct {
 	manifest    manifest.Manifest
 	// backend snapshots the process tree: agent.BackendCRIU or BackendDMTCP.
 	backend string
+	// vendor is the host's GPU vendor (accel.Host): an AMD bake runs in
+	// place under DMTCP and its workers move their GPU state themselves,
+	// through gpuLib (libkfdreplay); gpuRes is what that took and coverage
+	// the files outside the snapshot its processes mapped.
+	vendor   string
+	gpuLib   manifest.MappedFile
+	gpuRes   rocm.Result
+	coverage *rocm.Coverage
 }
 
 // Run bakes and returns the published manifest.
@@ -133,6 +143,9 @@ func Run(ctx context.Context, o Options) (manifest.Manifest, error) {
 }
 
 func (b *bake) resolve(context.Context) error {
+	if err := b.chooseVendor(); err != nil {
+		return err
+	}
 	if b.o.InPlace {
 		// First, as up does: a run in place owns the container, and the
 		// preflight below already probes its GPUs.
@@ -145,6 +158,9 @@ func (b *bake) resolve(context.Context) error {
 		return err
 	}
 	b.loader = profile.Loader{Assets: warmctl.Assets, Dirs: b.o.ProfileDirs}
+	if b.vendor == accel.AMD {
+		b.loader.Vendor = accel.AMD
+	}
 	defaults, err := b.loader.Defaults()
 	if err != nil {
 		return err
@@ -165,6 +181,11 @@ func (b *bake) resolve(context.Context) error {
 		return err
 	}
 	b.defaults, b.prof = defaults, p
+	if b.vendor == accel.AMD {
+		if err := rocm.CheckLaunch(b.launch); err != nil {
+			return err
+		}
+	}
 	b.table, err = b.loader.Hardware()
 	b.p.Printf("profile %s: %d ranks, %d graph sizes, %d warmup cases", b.launch.Profile.ID,
 		b.launch.Profile.Parallel.Ranks(), len(b.launch.CaptureSizes), len(b.launch.WarmupCases()))
@@ -181,11 +202,8 @@ func (b *bake) preflight(ctx context.Context) error {
 		b.p.Printf("warning: kernel.io_uring_disabled is %d, not 2 (%v): the engine runs with UV_USE_IO_URING=0, "+
 			"and a process that sets up io_uring anyway will not restart", disabled, err)
 	}
-	all, err := host.Inventory(ctx)
-	if err != nil {
-		return err
-	}
-	if b.gpus, err = host.Select(all, b.o.GPUs); err != nil {
+	var err error
+	if b.gpus, err = b.selectGPUs(ctx); err != nil {
 		return err
 	}
 	if b.row, err = Hardware(b.table, b.gpus, b.launch.Profile.Parallel.Ranks()); err != nil {
@@ -193,6 +211,11 @@ func (b *bake) preflight(ctx context.Context) error {
 	}
 	if !b.launch.Profile.Supports(b.row) {
 		b.p.Printf("warning: profile %s does not list %s; running anyway", b.launch.Profile.ID, b.row.ID)
+	}
+	if b.vendor == accel.AMD {
+		if err := b.amdPreflight(); err != nil {
+			return err
+		}
 	}
 	busy, err := host.Busy(ctx, b.gpus)
 	if err != nil {
@@ -219,6 +242,19 @@ func (b *bake) preflight(ctx context.Context) error {
 	return b.dk.CheckInit(ctx)
 }
 
+func (b *bake) selectGPUs(ctx context.Context) ([]host.GPU, error) {
+	all, err := host.Inventory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// In-place AMD launches inherit the container's devices.
+	if b.vendor == accel.AMD && len(all) != 1 {
+		return nil, fmt.Errorf("AMD bake needs exactly one visible GPU render node, found %d; "+
+			"expose only the target GPU in the container", len(all))
+	}
+	return host.Select(all, b.o.GPUs)
+}
+
 // inPlaceImage names the image an in-place engine runs in: the runtime
 // image's base, which a receiver pod compares with its own. Without the
 // runtime image nothing names it, and the manifest keeps the profile's.
@@ -241,6 +277,9 @@ func (b *bake) chooseBackend() error {
 	backend, err := bakeBackend(b.o.Backend, b.o.InPlace)
 	if err != nil {
 		return err
+	}
+	if b.vendor == accel.AMD && backend != agent.BackendDMTCP {
+		return errors.New("backend criu: AMD snapshots are taken in place under DMTCP")
 	}
 	b.backend = backend
 	if backend == agent.BackendDMTCP {
@@ -352,7 +391,8 @@ func quitLeft(tools dmtcp.Tools, p *run.Progress) {
 
 func keepLogs(dir, logs string) {
 	_ = os.MkdirAll(logs, 0o755)
-	for _, name := range []string{"workspace/logs/engine.log", "io/out/criu-work/dump.log", "work/agent.json"} {
+	for _, name := range []string{"workspace/logs/engine.log", "io/out/criu-work/dump.log", "work/agent.json",
+		"cache-pass.log"} {
 		_ = run.CopyFile(filepath.Join(dir, name), filepath.Join(logs, filepath.Base(name)), 0o644)
 	}
 }

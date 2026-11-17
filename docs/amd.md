@@ -1,0 +1,144 @@
+# AMD Instinct GPUs (preview)
+
+warmctl snapshots and restores a warmed vLLM engine on AMD Instinct GPUs,
+in an unprivileged container, without CRIU's privileges. Nothing is asked of
+the user: on an AMD host warmctl finds the GPUs itself, and a snapshot of
+AMD GPUs says so in its manifest.
+
+```bash
+# In the ROCm runtime image (deploy/rocm/Dockerfile), on a pod with one MI350X:
+warmctl build --profile qwen3-8b-mi350x-tp1 --model-dir /models/qwen3-8b --output /snap/q8
+# In another pod of the same image, GPU model and driver:
+warmctl up /snap/q8
+```
+
+The Qwen3.8 profiles use vLLM `0.33.0+rocm100`. Build the 0.33 runtime
+before using them. The shared ROCm defaults shown by `profile show` name
+the 0.29 base used by the Qwen3 profiles. An in-place bake records the base
+of the running container. [Local build instructions](../deploy/images/vllm-rocm-0.33/README.md#local-build)
+
+## How it works
+
+There is no `cuda-checkpoint` for AMD. The kernel's own checkpoint interface
+(`AMDKFD_IOC_CRIU_OP`, which CRIU's `amdgpu` plugin uses) needs
+`CAP_CHECKPOINT_RESTORE` or `CAP_SYS_ADMIN` in the initial user namespace,
+which no ordinary container has. Instead, the engine's processes preload
+[libkfdreplay](https://github.com/TensorRails/libkfdreplay), which records
+every GPU object the ROCm runtime creates (buffers, their mappings, events,
+queues) and can replay them in a new process at the same addresses.
+
+| Step | NVIDIA | AMD |
+|---|---|---|
+| start | the engine under `dmtcp_launch` (or CRIU's PID floor) | the same under DMTCP, with libkfdreplay in the engine's `LD_PRELOAD` |
+| warm up, canary, export, sleep | through the engine | the same |
+| GPU checkpoint | the agent, over the processes' PIDs (`cuda-checkpoint`) | each worker itself, asked by warmctl through `/collective_rpc` (`warmctl_gpu_checkpoint` → `kfdr_checkpoint(1)`): GPU memory to host memory, the runtime's threads parked, the devices released |
+| other processes | — | vLLM's API server and engine core initialize ROCm too when they import kernels that probe the GPU (vLLM 0.33). warmctl's vLLM plugin (`warmctl_vllm.plugin`, on only for AMD engines) lets each checkpoint and restore its own GPU state on a signal from the agent (SIGRTMIN+6 / +7) |
+| check | the CUDA states | the agent checks that no process of the tree still holds `/dev/kfd` or a render node, that every process running ROCm has libkfdreplay, and that the snapshot carries every file the processes map |
+| dump, restart | DMTCP (or CRIU) | DMTCP |
+| GPU restore | the agent, with a device map by UUID | each worker itself (`warmctl_gpu_restore` → `kfdr_restore()`), before the engine wakes; on another GPU of the same model libkfdreplay translates its `gpu_id` |
+| wake, reload, canary, admit | through the engine | the same |
+
+The snapshot's files, its distribution (OCI layers, index, catalog), the
+weights export and reload with fingerprints, the canary and the gateway are
+the NVIDIA path's.
+
+## Choosing the vendor
+
+| | Decided by |
+|---|---|
+| `build` | the host: AMD where no NVIDIA device exists and `/dev/kfd` lists GPUs warmctl may read; NVIDIA everywhere else, as before. On an AMD host the bake runs in place under DMTCP (implied in the runtime image), and `profiles/_defaults-rocm.yaml` is laid over the defaults: the ROCm environment libkfdreplay needs. Any profile works if it runs on one GPU. |
+| manifest | `hardware.vendor: amd` and the schema `warmctl.snapshot/v2-rocm`. Snapshots without the field are NVIDIA's. Releases before AMD support refuse the schema, so they skip AMD entries of a repository's index instead of picking one. |
+| `up` | the snapshot: an AMD snapshot restores only on AMD GPUs, in place, and an NVIDIA one only on NVIDIA GPUs. `up NAME` takes the index entry this host can restore. |
+
+## What a restore needs
+
+A DMTCP restart maps every unmodified file area again from its file, after
+checking the file's size and modification time. So the receiver must have,
+at the same paths:
+
+- **the same runtime image** (its digest): ROCm, PyTorch, vLLM, DMTCP and
+  libkfdreplay (`/opt/warmctl/kfdreplay/<release>/`, recorded in
+  `process.gpu_lib` with its size, mtime and SHA-256);
+- **External dependencies must remain at the same paths.** `process.mapped` records
+  the size and mtime of the files the processes need from the model, other
+  volumes or a writable container root. This includes the resolved blob paths
+  behind model symlinks. Restore checks them before restarting DMTCP. A
+  read-only image root supplies its own files. Mounts below it are checked
+  separately.
+- everything else the engine wrote: compile and JIT caches, `/tmp` and
+  `/dev/shm` travel in the snapshot's trees, with their modification times to
+  the nanosecond. `_defaults-rocm.yaml` points ROCm's caches (MIOpen) under
+  `/workspace`; a bake refuses an engine that maps a file none of these
+  covers, and names it.
+
+And: the same GPU model (ISA) and the same amdgpu driver release. Another GPU
+of the host is fine when the container sees only that one: libkfdreplay
+translates the GPU's `gpu_id` and reopens its render node.
+
+## Verified
+
+A clean runtime installs libkfdreplay v0.1.2. It refuses a checkpoint
+if the GPU object journal drops a record. The table records the versions
+used for the original hardware measurements. To restore an older snapshot,
+use its original runtime or install the recorded library alongside the new
+one at its original path, preserving the mtime from the release archive.
+Restore also verifies its SHA-256.
+
+| | |
+|---|---|
+| GPU | MI350X (gfx950), one per engine |
+| Driver | amdgpu DKMS 7.1.3 |
+| ROCm | 10.1 (TheRock), PyTorch 2.13, vLLM 0.29 (`rocm/vllm` image, `_defaults-rocm.yaml`); 10.0 (TheRock wheels), PyTorch 2.13, vLLM `0.33.0+rocm100` in a Python 3.12 venv |
+| libkfdreplay | v0.1.1 for the vLLM 0.33 runs |
+| Models | Qwen3-0.6B, Qwen3-8B; on vLLM 0.33, one MI350X each: Qwen3.8-27B FP8 (29.4 GiB of weights, MTP): 39.7 GiB snapshot, served 13–20 s after `up`; Qwen3.8-Flash-Next FP8 (180B-A6B, 173 GiB of weights): 184.6 GiB snapshot, served 26–40 s after `up` |
+| DMTCP | `v5.0.0-warmctl.2` |
+
+A separate Qwen3.8-27B FP8 bake with libkfdreplay v0.1.2-rc.1 took
+288.8 s. A local restore answered a request correctly in 9.71 s. In a
+comparison of two fresh starts and two restores, all three sequential
+prompts matched across all four runs. At concurrency eight, one restore
+differed on three of sixteen completions. The other restore matched both
+fresh starts on all sixteen. See the [hardware acceptance results](https://github.com/TensorRails/warmctl/pull/78#issuecomment-6957933763).
+
+A bake on another ISA is refused; on another driver release it warns.
+
+## Limits
+
+- **One visible GPU for a bake.** Pass `/dev/kfd` and only the selected
+  `/dev/dri/renderD*` into the donor container. warmctl counts the render
+  nodes present and checks the worker's HIP PCI address against the selected
+  GPU before publishing a snapshot. `--gpus` selects from that inventory.
+- **One GPU per engine.** Tensor parallelism needs cross-process GPU memory
+  (RCCL's), which libkfdreplay does not replay yet; a profile with more ranks
+  is refused.
+- **Snapshot a freshly warmed engine.** A restore brings each GPU queue back
+  by replaying as many packets as it had taken (~1 µs each); a long-running
+  server's queues would take minutes. A bake always starts its engine, and
+  warns when a queue took more than 10⁷ packets. A restored engine is not
+  snapshotted again.
+- **The same host's GPUs.** Restores on another GPU of the same host are
+  verified; on another host of the same model, driver and image they are
+  expected to work and not yet verified.
+- **ROCm 10.0 wheels load rocprofiler-sdk** into every HIP process, which
+  keeps ROCr's event thread polling; `_defaults-rocm.yaml` turns it off
+  (`ROCPROFILER_REGISTER_ENABLED=0`).
+- **A queue's fast-forward can stall** (seen once in 7 restores of the 180B
+  model, on the first restore after the bake: the GPU stopped 5 packets short
+  of a lap). The restore fails closed; `up` again succeeds.
+- **SDMA queues are not replayed:** `HSA_ENABLE_SDMA=0` (ROCr copies with
+  blit kernels instead).
+- **Large images:** the DMTCP image is the process tree's whole memory
+  (8.4 GB for Qwen3-0.6B, 23 GB for Qwen3-8B on vLLM 0.29, which keeps the
+  CUDA-graph pool in VRAM while asleep).
+- libkfdreplay mirrors how the ROCm runtime uses the driver. It refuses
+  rather than produce a broken image when it meets a call it does not
+  model; a new ROCm release may need a new libkfdreplay.
+
+## Testing without a GPU
+
+`make amd-e2e-test` bakes and restores in unprivileged containers of a
+stand-in runtime image with the real DMTCP and libkfdreplay releases, on a
+KFD topology of MI350X GPUs and a stand-in vLLM whose "GPU memory" is host
+memory: the vendor's detection, the profile layer, the libkfdreplay calls,
+the agent's checks, the manifest, a restore on the same and on another GPU,
+and the refusals.

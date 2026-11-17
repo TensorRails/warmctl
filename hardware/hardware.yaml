@@ -64,3 +64,42 @@ rows:
     topology_class: pcie
     device_config_name: NVIDIA_RTX_PRO_6000_Blackwell_Server_Edition
     driver_min: "580"
+  # AMD Instinct: restored in place under DMTCP with libkfdreplay
+  # (docs/amd.md). product_name is the name warmctl gives the GPU from its
+  # PCI device ID; arch is the KFD gfx target; driver_min the amdgpu driver.
+  - id: mi300x-192gb
+    vendor: amd
+    product_name: "AMD Instinct MI300X"
+    memory_mib: 196592
+    arch: gfx942
+    nvlink: false
+    topology_class: xgmi
+    device_config_name: AMD_Instinct_MI300X
+    driver_min: "6.10"
+  - id: mi325x-256gb
+    vendor: amd
+    product_name: "AMD Instinct MI325X"
+    memory_mib: 262128
+    arch: gfx942
+    nvlink: false
+    topology_class: xgmi
+    device_config_name: AMD_Instinct_MI325X
+    driver_min: "6.10"
+  - id: mi350x-288gb
+    vendor: amd
+    product_name: "AMD Instinct MI350X"
+    memory_mib: 294896
+    arch: gfx950
+    nvlink: false
+    topology_class: xgmi
+    device_config_name: AMD_Instinct_MI350X
+    driver_min: "7.1"
+  - id: mi355x-288gb
+    vendor: amd
+    product_name: "AMD Instinct MI355X"
+    memory_mib: 294912
+    arch: gfx950
+    nvlink: false
+    topology_class: xgmi
+    device_config_name: AMD_Instinct_MI355X
+    driver_min: "7.1"

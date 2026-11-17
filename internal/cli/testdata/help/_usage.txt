@@ -1,0 +1,23 @@
+exit 2
+--- stdout
+--- stderr
+usage: warmctl <command> [flags]
+
+  build         bake a warmed engine into a snapshot (aliases: snapshot, bake)
+  up            serve a snapshot: a directory, a NAME[:TAG] of the registry or
+                oci://REGISTRY/REPO[:TAG], pulled first when needed (alias: restore)
+  ps            list the instances serving on this host
+  down          stop an instance (alias: stop)
+  images        list the snapshots on this host, or oci://REPO's tags (alias: ls)
+  catalog       list the registry's models this host can restore
+  push|pull     move snapshots through an OCI registry or a directory (dir:PATH)
+  mirror        copy models into another registry or a directory (a shared cache)
+  verify        check a snapshot directory against its manifest
+  compress      copy a snapshot directory with its images and weights stored as
+                zstd frames, for network storage (as build --compress)
+  gc            remove blobs no recorded snapshot uses
+  doctor        check this host
+  hardware      list the GPU models snapshots support and mark this host's
+  profile       inspect profiles: list, check, show ID, argv ID
+  agent         container side of build and up (internal)
+  version
