@@ -75,7 +75,7 @@ translates the GPU's `gpu_id` and reopens its render node.
 | Driver | amdgpu DKMS 7.1.3 |
 | ROCm | 10.1 (TheRock), PyTorch 2.13, vLLM 0.29 (`rocm/vllm` image, `_defaults-rocm.yaml`); 10.0 (TheRock wheels), PyTorch 2.13, vLLM `0.33.0+rocm100` in a Python 3.12 venv |
 | libkfdreplay | v0.1.1 (`internal/kfdreplay`), which tracks live GEM handles without a limit, as vLLM 0.33's sleep-mode allocator needs |
-| Models | Qwen3-0.6B, Qwen3-8B; Qwen3.8-Flash-Next FP8 (180B-A6B, 173 GiB of weights) on one MI350X: 184.6 GiB snapshot, served 26–40 s after `up` |
+| Models | Qwen3-0.6B, Qwen3-8B; on vLLM 0.33, one MI350X each: Qwen3.8-27B FP8 (29.4 GiB of weights, MTP): 39.7 GiB snapshot, served 13–20 s after `up`; Qwen3.8-Flash-Next FP8 (180B-A6B, 173 GiB of weights): 184.6 GiB snapshot, served 26–40 s after `up` |
 | DMTCP | `v5.0.0-warmctl.2` |
 
 A bake on another ISA is refused; on another driver release it warns.

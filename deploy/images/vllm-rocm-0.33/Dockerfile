@@ -20,7 +20,7 @@ COPY requirements.lock /opt/vllm-rocm/requirements.lock
 RUN uv venv -q -p /usr/bin/python3.12 /opt/venv \
     && VIRTUAL_ENV=/opt/venv uv pip sync -q --require-hashes \
         --index-url https://pypi.org/simple \
-        --extra-index-url https://wheels.vllm.ai/rocm/ \
+        --extra-index-url https://wheels.vllm.ai/rocm/0.33.0/rocm100/ \
         --extra-index-url https://download.pytorch.org/whl/rocm10.0 \
         --extra-index-url https://stable.repo.amd.com/rocm/whl-next/ \
         --index-strategy unsafe-best-match \

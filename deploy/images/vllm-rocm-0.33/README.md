@@ -16,7 +16,7 @@ take `transformers` down with them. Recompile the lock after changing it:
 docker run --rm -v "$PWD":/w -w /w ghcr.io/astral-sh/uv:0.9.30-python3.12-bookworm \
   uv pip compile requirements.in -o requirements.lock --python-version 3.12 \
   --python-platform x86_64-manylinux_2_39 --index-url https://pypi.org/simple \
-  --extra-index-url https://wheels.vllm.ai/rocm/ --extra-index-url https://download.pytorch.org/whl/rocm10.0 \
+  --extra-index-url https://wheels.vllm.ai/rocm/0.33.0/rocm100/ --extra-index-url https://download.pytorch.org/whl/rocm10.0 \
   --extra-index-url https://stable.repo.amd.com/rocm/whl-next/ --index-strategy unsafe-best-match --generate-hashes
 ```
 

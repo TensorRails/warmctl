@@ -1,0 +1,31 @@
+# qwen38-27b on one AMD Instinct MI350X (hybrid dense, Qwen's block FP8): the
+# full native 262 144 context, 64 sequences, 96 GiB of KV cache and Mamba
+# state, BF16 (the model's QSA attention on ROCm takes BF16 or Octave, not
+# FP8), MTP with 3 draft tokens and the qwen3 / qwen3_coder parsers as in the
+# vLLM recipe. Needs a ROCm vLLM that knows the model (0.33.0+rocm100).
+schema: warmctl.profile/v1
+id: qwen38-27b-mi350x-tp1
+model: {id: Qwen/Qwen3.8-27B-FP8, revision: 017b9c7af6b5689d5dd426a76e0bc077eb5ca20a, served_names: [qwen38-27b]}
+parallel: {tp: 1}
+hardware: [mi350x-288gb, mi355x-288gb]
+vllm:
+  max-model-len: 262144
+  max-num-seqs: 64
+  max-num-batched-tokens: 8192
+  kv-cache-memory-bytes: 103079215104
+  enable-chunked-prefill: true
+  limit-mm-per-prompt: {image: 0, video: 0}
+  mamba-cache-mode: align
+  speculative-config: {method: mtp, num_speculative_tokens: 3}
+  reasoning-parser: qwen3
+  enable-auto-tool-choice: true
+  tool-call-parser: qwen3_coder
+graphs:
+  mode: FULL_AND_PIECEWISE
+  decode_batches: [1, 2, 4, 8, 16, 24, 32, 48, 64]
+warmup:
+  decode_prompt_tokens: 32
+  prefill_tokens: [512, 2048, 8192]
+# MTP kernels are not bitwise repeatable: compare within a tolerance.
+canary: {mode: warn, tolerance: 1.0e-3}
+resources: {memory: 128GiB}
