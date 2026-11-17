@@ -1,18 +1,25 @@
 name: runtime image
 
-# Publish only an already released CLI. GPU cold-start qualification follows
-# separately; this workflow deliberately does not move the latest image tag.
+# CUDA publication uses a released CLI. ROCm stages a candidate from the
+# dispatched ref, with the same version that its release preparation declares.
 on:
   workflow_dispatch:
     inputs:
       release:
-        description: Published warmctl release tag
-        required: true
+        description: Published warmctl release tag (CUDA runtime)
+        required: false
+      rocm_candidate_tag:
+        description: Build the ROCm 0.33 base and runtime from the selected ref under this staging-* tag
+        required: false
+      rocm_base_only:
+        description: Build and publish only the staged vLLM ROCm base
+        type: boolean
+        default: false
       image_tag:
         description: Optional image tag (defaults to the release tag)
         required: false
       base:
-        description: Optional pinned base image (defaults to the Dockerfile base)
+        description: Optional pinned CUDA base, or the prior vllm-rocm@sha256 digest for a ROCm candidate
         required: false
 
 permissions:
@@ -20,11 +27,12 @@ permissions:
   attestations: read
 
 concurrency:
-  group: runtime-image-${{ inputs.image_tag || inputs.release }}
+  group: runtime-image-${{ inputs.rocm_candidate_tag || inputs.image_tag || inputs.release }}
   cancel-in-progress: false
 
 jobs:
   publish:
+    if: inputs.rocm_candidate_tag == '' && !inputs.rocm_base_only
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -116,3 +124,123 @@ jobs:
       - name: Remove credentials
         if: always()
         run: rm -f "$HOME/.docker/config.json"
+
+  rocm-candidate:
+    if: inputs.rocm_candidate_tag != '' || inputs.rocm_base_only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      STAGING_TAG: ${{ inputs.rocm_candidate_tag }}
+      PUBLIC: registry.warmctl.io/warmctl
+      LOCAL: localhost:5000/warmctl
+    steps:
+      - name: Validate ROCm staging inputs
+        env:
+          CUDA_INPUTS: ${{ inputs.release || inputs.image_tag }}
+          REUSE_BASE: ${{ inputs.base }}
+          BASE_ONLY: ${{ inputs.rocm_base_only }}
+        run: |
+          [[ "$STAGING_TAG" =~ ^staging-[a-z0-9][a-z0-9_.-]{0,119}$ && -z "$CUDA_INPUTS" ]]
+          if [[ -n "$REUSE_BASE" ]]; then
+            [[ "$BASE_ONLY" == false && "$REUSE_BASE" =~ ^registry\.warmctl\.io/warmctl/vllm-rocm@sha256:[0-9a-f]{64}$ ]]
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare the Linux/amd64 builder and local registry
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+          df -h /
+          curl -fsSL --retry 3 https://github.com/regclient/regclient/releases/download/v0.11.7/regctl-linux-amd64 -o "$RUNNER_TEMP/regctl"
+          echo "3737fbbdd791e04e7a831640b681f3397a376498e80e2ad9b1b2d27296f239bc  $RUNNER_TEMP/regctl" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/regctl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          docker run -d --name staging-registry -p 127.0.0.1:5000:5000 registry:2
+          "$RUNNER_TEMP/regctl" registry set localhost:5000 --tls disabled
+      - name: Configure access to the staging registry
+        env:
+          WARMCTL_REGISTRY_AUTH: ${{ secrets.WARMCTL_REGISTRY_AUTH }}
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/staging-auth"
+          umask 077
+          jq -ec 'select((.auths | keys) == ["registry.warmctl.io"])' <<< "$WARMCTL_REGISTRY_AUTH" > "$RUNNER_TEMP/staging-auth/config.json"
+          regctl registry set registry.warmctl.io --blob-chunk 67108864 --blob-max 67108864
+      - name: Build or fetch the pinned base and verify its content
+        env:
+          REUSE_BASE: ${{ inputs.base }}
+        run: |
+          base="$LOCAL/vllm-rocm:$STAGING_TAG"
+          recipe=$(cat deploy/images/vllm-rocm-0.33/{Dockerfile,requirements.lock} | sha256sum | cut -d' ' -f1)
+          if [[ -z "$REUSE_BASE" ]]; then
+            docker build --platform linux/amd64 --label "io.warmctl.base-recipe=$recipe" -t "$base" deploy/images/vllm-rocm-0.33
+            docker push "$base"
+          else
+            DOCKER_CONFIG="$RUNNER_TEMP/staging-auth" regctl image copy "$REUSE_BASE" "$base"
+          fi
+          digest=$(regctl image digest "$base")
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          base_ref="$PUBLIC/vllm-rocm@$digest"
+          [[ -z "$REUSE_BASE" || "$REUSE_BASE" == "$base_ref" ]]
+          docker pull "$base@$digest"
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.warmctl.base-recipe" }}' "$base@$digest")" = "$recipe"
+          lock=$(sha256sum deploy/images/vllm-rocm-0.33/requirements.lock | cut -d' ' -f1)
+          docker run --rm --entrypoint /bin/bash -e "LOCK=$lock" "$base@$digest" -ec '
+            echo "$LOCK  /opt/vllm-rocm/requirements.lock" | sha256sum -c -
+            python -c "import torch, torchvision, vllm; from importlib.metadata import version; assert version(\"vllm\") == \"0.33.0+rocm100\" and version(\"torch\") == \"2.13.0+rocm10.0.0\" and torch.version.hip"
+          '
+          echo "BASE_REF=$base_ref" >> "$GITHUB_ENV"
+      - name: Build the runtime, check its release version, DMTCP and libkfdreplay
+        if: '!inputs.rocm_base_only'
+        run: |
+          version=$(awk '$1 == "##" { print $2; exit }' CHANGELOG.md)
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          scripts/release-notes.sh "$version" > /dev/null
+          pin=$(cat internal/kfdreplay/VERSION)
+          base="$LOCAL/vllm-rocm:$STAGING_TAG@${BASE_REF##*@}"
+          runtime="$LOCAL/runtime-rocm:$STAGING_TAG"
+          docker build --platform linux/amd64 -t "$runtime" -f deploy/rocm/Dockerfile \
+            --build-arg "BASE=$base" --build-arg "BASE_REF=$BASE_REF" --build-arg "VERSION=$version" .
+          docker run --rm --entrypoint /usr/local/bin/tini -e BASE_REF -e "VERSION=$version" -e "PIN=$pin" "$runtime" -- /bin/bash -ec '
+            test "$(warmctl version)" = "warmctl $VERSION"
+            grep -Fx "base=$BASE_REF" /opt/warmctl/RUNTIME
+            grep -Fx "warmctl=$VERSION" /opt/warmctl/RUNTIME
+            export KFDR_LIB="/opt/warmctl/kfdreplay/$PIN/libkfdreplay.so"
+            python -c "import ctypes as c, os; f=c.CDLL(os.environ[\"KFDR_LIB\"]).kfdr_version; f.restype=c.c_char_p; assert f().decode() == os.environ[\"PIN\"][1:]"
+            root=/opt/warmctl/dmtcp
+            "$root/bin/dmtcp_coordinator" --daemon --exit-on-last --port 0 --port-file /tmp/dmtcp.port
+            LD_PRELOAD="$KFDR_LIB" DMTCP_PLUGIN="$root/lib/libdmtcp_fdkeep.so" "$root/bin/dmtcp_launch" --join-coordinator --coord-port "$(cat /tmp/dmtcp.port)" /bin/true
+          '
+          docker push "$runtime"
+          printf 'version=%s\nlibkfdreplay=%s\n' "$version" "$pin" >> rocm-candidate.txt
+      - name: Publish checked images to staging and verify the remote digests
+        env:
+          BASE_ONLY: ${{ inputs.rocm_base_only }}
+          REUSE_BASE: ${{ inputs.base }}
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/staging-auth"
+          printf 'source=%s\nbase=%s\n' "$GITHUB_SHA" "$BASE_REF" >> rocm-candidate.txt
+          images=()
+          if [[ -z "$REUSE_BASE" ]]; then images+=(vllm-rocm); fi
+          if [[ "$BASE_ONLY" != true ]]; then images+=(runtime-rocm); fi
+          for image in "${images[@]}"; do
+            from="$LOCAL/$image:$STAGING_TAG"
+            to="$PUBLIC/$image:$STAGING_TAG"
+            digest=$(regctl image digest "$from")
+            if current=$(regctl image digest "$to" 2>"$RUNNER_TEMP/tag-lookup"); then
+              [[ "$current" == "$digest" ]] || { echo "Staging tag $to already names another digest" >&2; exit 1; }
+            else
+              grep -Eiq '404|manifest unknown|not found' "$RUNNER_TEMP/tag-lookup" || { cat "$RUNNER_TEMP/tag-lookup" >&2; exit 1; }
+              regctl image copy "$from" "$to"
+            fi
+            test "$digest" = "$(regctl image digest "$to")"
+            printf '%s@%s\n' "$to" "$digest" >> rocm-candidate.txt
+          done
+          cat rocm-candidate.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rocm-candidate
+          path: rocm-candidate.txt
+          if-no-files-found: error
+      - name: Remove staging credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/staging-auth/config.json"

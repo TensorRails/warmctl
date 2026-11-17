@@ -62,3 +62,25 @@ The image has no ROCm installation of its own: the wheels carry it
 (`_rocm_sdk_core`). `_defaults-rocm.yaml` turns off what that ROCm loads by
 default and a checkpoint cannot stop (rocprofiler-sdk) and points its JIT
 caches under `/workspace`.
+
+## Build a Linux/amd64 staging image in GitHub Actions
+
+Dispatch the runtime workflow from the ref containing the intended CLI and
+libkfdreplay pin. Prepare the base ahead of the release, then pass the
+`base=` reference from its job summary to the runtime build.
+
+```bash
+gh workflow run runtime-image.yml --repo TensorRails/warmctl --ref amd-rocm-backend \
+  -f rocm_candidate_tag=staging-pr78-qwen38-base-001 -f rocm_base_only=true
+
+gh workflow run runtime-image.yml --repo TensorRails/warmctl --ref amd-rocm-backend \
+  -f rocm_candidate_tag=staging-pr78-qwen38-runtime-001 \
+  -f base="registry.warmctl.io/warmctl/vllm-rocm@sha256:$DIGEST"
+```
+
+Use unique `staging-*` tags. The second build checks the pinned base digest,
+recipe, wheel lock and Python versions. Its first changelog section supplies
+the CLI version. Before publication it checks the CLI, runtime marker,
+DMTCP and libkfdreplay on the CPU runner. The job summary and the
+`rocm-candidate` artifact record the source commit and verified pull references.
+Use the runtime reference by digest for the GPU bake and restore.
