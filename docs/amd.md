@@ -79,8 +79,10 @@ translates the GPU's `gpu_id` and reopens its render node.
 
 New bakes pin libkfdreplay v0.1.2-rc.1. This candidate refuses a checkpoint
 if the GPU object journal drops a record. The hardware measurements below
-were collected with earlier releases. Restoring an existing snapshot requires
-the library that snapshot recorded.
+were collected with earlier releases. A clean runtime build installs the
+current pin. To restore an older snapshot, use its original runtime or install
+the recorded library alongside the new one at its original path, preserving
+the release archive's mtime. Restore verifies its SHA-256 as well.
 
 | | |
 |---|---|

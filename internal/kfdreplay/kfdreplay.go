@@ -30,8 +30,8 @@ var sums string
 // records the path and digest it ran with, and a restore needs the same.
 const Env = "WARMCTL_KFDREPLAY"
 
-// Root holds one directory per release, as the runtime image installs them:
-// an image keeps older releases for the snapshots taken with them.
+// Root holds one directory per release. Existing snapshots use the directory
+// recorded by the donor, even after the default pin changes.
 const Root = "/opt/warmctl/kfdreplay"
 
 // Tag is the pinned GitHub release tag.

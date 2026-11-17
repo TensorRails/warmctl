@@ -32,8 +32,22 @@ const (
 	// StatusDir is where the plugin writes "checkpointed", "restored",
 	// "skipped" (a process the signal did not checkpoint, as a worker), or
 	// "error: <reason>".
-	StatusDir = "/run/warmctl/kfdr"
+	StatusDir       = "/workspace/.warmctl-kfdr"
+	legacyStatusDir = "/run/warmctl/kfdr"
 )
+
+// PluginStatusDir selects the location saved in the engine's launch
+// environment. Older snapshots can contain the original receiver path.
+func PluginStatusDir() (string, error) {
+	switch dir := os.Getenv(StatusEnv); dir {
+	case StatusDir:
+		return StatusDir, nil
+	case "", legacyStatusDir:
+		return legacyStatusDir, nil
+	default:
+		return "", fmt.Errorf("unsupported %s directory %q", StatusEnv, dir)
+	}
+}
 
 // SignalTimeout bounds one process's checkpoint or restore.
 var SignalTimeout = 2 * time.Minute
@@ -93,7 +107,7 @@ func Signal(ctx context.Context, procs []Process, sig syscall.Signal, dir, want 
 	}
 	for _, p := range procs {
 		name := filepath.Join(dir, strconv.Itoa(p.Snapshot))
-		if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
+		if err := clearPreviousStatus(name); err != nil {
 			return err
 		}
 		if err := syscall.Kill(p.Host, sig); err != nil {
@@ -108,11 +122,37 @@ func Signal(ctx context.Context, procs []Process, sig syscall.Signal, dir, want 
 	return nil
 }
 
+// A legacy snapshot can leave a previous reply at the same virtual PID. A
+// different file at that path is not part of the signal protocol.
+func clearPreviousStatus(name string) error {
+	info, err := os.Lstat(name)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode().IsRegular() {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		got := strings.TrimSpace(string(raw))
+		if got == "restored" || got == "skipped" || got == "checkpointed" || strings.HasPrefix(got, "error: ") {
+			return os.Remove(name)
+		}
+	}
+	return fmt.Errorf("status path %s already contains an unrelated file", name)
+}
+
 func wait(ctx context.Context, name string, pid int, want string, skip bool) error {
 	deadline := time.Now().Add(SignalTimeout)
 	for {
 		raw, err := os.ReadFile(name)
 		if err == nil {
+			if err := os.Remove(name); err != nil {
+				return err
+			}
 			got := strings.TrimSpace(string(raw))
 			switch {
 			case got == want, skip && got == "skipped":

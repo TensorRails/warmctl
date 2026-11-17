@@ -86,7 +86,11 @@ func (a *agent) signalGPU(ctx context.Context, pids []int, sig syscall.Signal, w
 		procs[i] = rocm.Process{Host: hosts[i], Snapshot: snaps[i]}
 	}
 	a.logf("GPU %s by signal: %d processes", want, len(procs))
-	return rocm.Signal(ctx, procs, sig, rocm.StatusDir, want, skip)
+	dir, err := rocm.PluginStatusDir()
+	if err != nil {
+		return err
+	}
+	return rocm.Signal(ctx, procs, sig, dir, want, skip)
 }
 
 // freeze readies the tree for the dump; on AMD it also checks that the
