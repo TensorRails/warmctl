@@ -63,6 +63,17 @@ The image has no ROCm installation of its own: the wheels carry it
 default and a checkpoint cannot stop (rocprofiler-sdk) and points its JIT
 caches under `/workspace`.
 
+## Verify the complete images in GitHub Actions
+
+The Linux/amd64 runner builds the wheel-pinned base and ROCm runtime in its
+local Docker engine and runs CPU smoke checks. Both images expire with the
+runner. The marker records the base image ID.
+
+```bash
+gh workflow run runtime-image.yml --repo TensorRails/warmctl --ref amd-rocm-backend \
+  -f rocm_verify_only=true
+```
+
 ## Build a Linux/amd64 staging image in GitHub Actions
 
 Dispatch the runtime workflow from the ref containing the intended CLI and

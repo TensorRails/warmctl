@@ -8,6 +8,10 @@ on:
       release:
         description: Published warmctl release tag (CUDA runtime)
         required: false
+      rocm_verify_only:
+        description: Build and smoke-test ROCm images only in the temporary runner
+        type: boolean
+        default: false
       rocm_candidate_tag:
         description: Build the ROCm 0.33 base and runtime from the selected ref under this staging-* tag
         required: false
@@ -27,12 +31,12 @@ permissions:
   attestations: read
 
 concurrency:
-  group: runtime-image-${{ inputs.rocm_candidate_tag || inputs.image_tag || inputs.release }}
+  group: runtime-image-${{ inputs.rocm_candidate_tag || inputs.image_tag || inputs.release || github.sha }}
   cancel-in-progress: false
 
 jobs:
   publish:
-    if: inputs.rocm_candidate_tag == '' && !inputs.rocm_base_only
+    if: ${{ !inputs.rocm_verify_only && inputs.rocm_candidate_tag == '' && !inputs.rocm_base_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -126,7 +130,7 @@ jobs:
         run: rm -f "$HOME/.docker/config.json"
 
   rocm-candidate:
-    if: inputs.rocm_candidate_tag != '' || inputs.rocm_base_only
+    if: ${{ !inputs.rocm_verify_only && (inputs.rocm_candidate_tag != '' || inputs.rocm_base_only) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -244,3 +248,46 @@ jobs:
       - name: Remove staging credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/staging-auth/config.json"
+
+  rocm-verify:
+    if: inputs.rocm_verify_only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Reject publication inputs in verify-only mode
+        env:
+          PUBLICATION_INPUT: ${{ inputs.release != '' || inputs.image_tag != '' || inputs.base != '' || inputs.rocm_candidate_tag != '' || inputs.rocm_base_only }}
+        run: test "$PUBLICATION_INPUT" = false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the locked Linux/amd64 vLLM base locally
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+          df -h /
+          docker build --platform linux/amd64 -t warmctl-vllm-rocm:verify deploy/images/vllm-rocm-0.33
+      - name: Build and check the complete local ROCm runtime
+        run: |
+          base=$(docker image inspect --format '{{.Id}}' warmctl-vllm-rocm:verify)
+          version=$(awk '$1 == "##" { print $2; exit }' CHANGELOG.md)
+          if [[ "$version" == Unreleased ]]; then version="dev-${GITHUB_SHA:0:12}"; fi
+          pin=$(cat internal/kfdreplay/VERSION)
+          docker build --platform linux/amd64 -f deploy/rocm/Dockerfile -t warmctl-runtime-rocm:verify \
+            --build-arg BASE=warmctl-vllm-rocm:verify --build-arg "BASE_REF=$base" --build-arg "VERSION=$version" .
+          echo "source=$GITHUB_SHA, warmctl=$version, libkfdreplay=$pin, local base ID=$base"
+          lock=$(sha256sum deploy/images/vllm-rocm-0.33/requirements.lock | cut -d' ' -f1)
+          docker run --rm --network none --entrypoint /usr/local/bin/tini -e "LOCK=$lock" -e "BASE_ID=$base" \
+            -e "VERSION=$version" -e "PIN=$pin" warmctl-runtime-rocm:verify -- /bin/bash -ec '
+              test "$(warmctl version)" = "warmctl $VERSION"
+              grep -Fx "base=$BASE_ID" /opt/warmctl/RUNTIME
+              grep -Fx "warmctl=$VERSION" /opt/warmctl/RUNTIME
+              echo "$LOCK  /opt/vllm-rocm/requirements.lock" | sha256sum -c -
+              python -c "import torch, torchvision, transformers, vllm; from importlib.metadata import version; assert version(\"vllm\") == \"0.33.0+rocm100\" and version(\"torch\") == \"2.13.0+rocm10.0.0\" and torch.version.hip"
+              export KFDR_LIB="/opt/warmctl/kfdreplay/$PIN/libkfdreplay.so"
+              python -c "import ctypes as c, os; f=c.CDLL(os.environ[\"KFDR_LIB\"]).kfdr_version; f.restype=c.c_char_p; assert f().decode() == os.environ[\"PIN\"][1:]"
+              root=/opt/warmctl/dmtcp
+              "$root/bin/dmtcp_coordinator" --daemon --exit-on-last --port 0 --port-file /tmp/dmtcp.port
+              LD_PRELOAD="$KFDR_LIB" DMTCP_PLUGIN="$root/lib/libdmtcp_fdkeep.so" "$root/bin/dmtcp_launch" --join-coordinator --coord-port "$(cat /tmp/dmtcp.port)" /bin/true
+            '
