@@ -60,7 +60,7 @@ func compatible(h manifest.Hardware, gpus []host.GPU, topology string, visible i
 }
 
 // amdFiles checks, before the restart, the files outside the snapshot the
-// donor's processes mapped (the model's): a restart maps them again.
+// donor's processes mapped. A restart maps them again.
 func (r *restore) amdFiles() error {
 	if !r.amd() {
 		return nil

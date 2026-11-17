@@ -54,9 +54,12 @@ at the same paths:
 - **the same runtime image** (its digest): ROCm, PyTorch, vLLM, DMTCP and
   libkfdreplay (`/opt/warmctl/kfdreplay/<release>/`, recorded in
   `process.gpu_lib` with its size, mtime and SHA-256);
-- **the same model files** at the same path (the same volume): the ones the
-  processes mapped are recorded in `process.mapped` and checked before the
-  restart;
+- **External dependencies must remain at the same paths.** `process.mapped` records
+  the size and mtime of the files the processes need from the model, other
+  volumes or a writable container root. This includes the resolved blob paths
+  behind model symlinks. Restore checks them before restarting DMTCP. A
+  read-only image root supplies its own files. Mounts below it are checked
+  separately.
 - everything else the engine wrote: compile and JIT caches, `/tmp` and
   `/dev/shm` travel in the snapshot's trees, with their modification times to
   the nanosecond. `_defaults-rocm.yaml` points ROCm's caches (MIOpen) under
@@ -68,6 +71,11 @@ of the host is fine when the container sees only that one: libkfdreplay
 translates the GPU's `gpu_id` and reopens its render node.
 
 ## Verified
+
+New bakes pin libkfdreplay v0.1.2-rc.1. This candidate refuses a checkpoint
+if the GPU object journal drops a record. The hardware measurements below
+were collected with earlier releases. Restoring an existing snapshot requires
+the library that snapshot recorded.
 
 | | |
 |---|---|
@@ -82,6 +90,10 @@ A bake on another ISA is refused; on another driver release it warns.
 
 ## Limits
 
+- **One visible GPU for a bake.** Pass `/dev/kfd` and only the selected
+  `/dev/dri/renderD*` into the donor container. warmctl counts the render
+  nodes present and checks the worker's HIP PCI address against the selected
+  GPU before publishing a snapshot. `--gpus` selects from that inventory.
 - **One GPU per engine.** Tensor parallelism needs cross-process GPU memory
   (RCCL's), which libkfdreplay does not replay yet; a profile with more ranks
   is refused.

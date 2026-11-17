@@ -7,7 +7,7 @@ AMD Instinct GPUs (preview, [docs/amd.md](docs/amd.md)).
 - On an AMD host warmctl finds the GPUs itself (the KFD topology, where no
   NVIDIA device exists) and bakes in place under DMTCP; the engine's
   processes preload [libkfdreplay](https://github.com/TensorRails/libkfdreplay)
-  v0.1.1 and checkpoint and restore their own GPU state, asked through the
+  v0.1.2-rc.1 and checkpoint and restore their own GPU state, asked through the
   engine. One MI350X per engine, ROCm 10.1, vLLM 0.29, unprivileged
   containers. `deploy/rocm/Dockerfile` is the ROCm runtime image.
 - AMD snapshots carry the manifest schema `warmctl.snapshot/v2-rocm`, which

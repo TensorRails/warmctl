@@ -227,6 +227,21 @@ class HostRegisterTest(unittest.TestCase):
         d.rt, d.hip = rt, hip
         return d
 
+    def test_hip_pci_bus_id(self):
+        def pci_bus_id(buf, size, index):
+            self.assertEqual(index, 1)
+            self.assertGreater(size, len(b'0000:c1:00.2'))
+            buf.value = b'0000:c1:00.2'
+            return 0
+
+        lib = types.SimpleNamespace(hipDeviceGetPCIBusId=Fn(pci_bus_id))
+        d = self.device(types.SimpleNamespace(lib=lib), True)
+        d.index = 1
+        self.assertEqual(d.hip_pci_bus_id(), '0000:c1:00.2')
+        lib.hipDeviceGetPCIBusId = Fn(lambda *args: 42)
+        with self.assertRaisesRegex(RuntimeError, 'hipDeviceGetPCIBusId'):
+            d.hip_pci_bus_id()
+
     def test_falls_back_to_the_runtime(self):
         calls = []
 

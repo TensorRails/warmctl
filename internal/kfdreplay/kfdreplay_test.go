@@ -9,7 +9,7 @@ import (
 )
 
 func TestPin(t *testing.T) {
-	if Tag() != "v0.1.1" || Version() != "0.1.1" {
+	if Tag() != "v0.1.2-rc.1" || Version() != "0.1.2-rc.1" {
 		t.Fatalf("tag %q version %q", Tag(), Version())
 	}
 	if len(SHA256("libkfdreplay.so")) != 64 || len(SHA256("libkfdreplay-"+Tag()+"-linux-amd64.tar.gz")) != 64 {
@@ -19,7 +19,7 @@ func TestPin(t *testing.T) {
 		t.Fatal("unknown asset")
 	}
 	t.Setenv(Env, "")
-	if Path() != "/opt/warmctl/kfdreplay/v0.1.1/libkfdreplay.so" {
+	if Path() != "/opt/warmctl/kfdreplay/"+Tag()+"/libkfdreplay.so" {
 		t.Fatal(Path())
 	}
 }

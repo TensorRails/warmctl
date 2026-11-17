@@ -34,10 +34,10 @@ const Env = "WARMCTL_KFDREPLAY"
 // an image keeps older releases for the snapshots taken with them.
 const Root = "/opt/warmctl/kfdreplay"
 
-// Tag is the pinned release, "v0.1.1".
+// Tag is the pinned GitHub release tag.
 func Tag() string { return strings.TrimSpace(tag) }
 
-// Version is what kfdr_version() answers for the pinned release, "0.1.1".
+// Version is what kfdr_version() answers for the pinned release.
 func Version() string { return strings.TrimPrefix(Tag(), "v") }
 
 // SHA256 is the pinned digest of a release asset.

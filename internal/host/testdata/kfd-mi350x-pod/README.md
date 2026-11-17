@@ -5,3 +5,4 @@ OAM"); nodes 2 and 4-9 are the other GPUs, whose properties the container may
 list but not read (EPERM, simulated by the test); nodes 0 and 1 are CPU nodes.
 The gpu_id and unique_id are anonymised; properties warmctl does not read are
 left out.
+The render minors of the seven hidden nodes are synthetic for the host-wide test.

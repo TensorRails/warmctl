@@ -83,6 +83,17 @@ class CudaDevice:
         self.rt = CudaRTLibrary()
         self.hip = bool(getattr(torch.version, 'hip', None))
 
+    def hip_pci_bus_id(self):
+        # HIP reports the full BDF, including the PCI function. Some PyTorch
+        # builds omit the PCI fields on get_device_properties().
+        fn = self.rt.lib.hipDeviceGetPCIBusId
+        fn.argtypes, fn.restype = [ctypes.POINTER(ctypes.c_char), ctypes.c_int, ctypes.c_int], ctypes.c_int
+        buf = ctypes.create_string_buffer(32)
+        err = fn(buf, len(buf), self.index)
+        if err:
+            raise RuntimeError('hipDeviceGetPCIBusId(%d) returned %d' % (self.index, err))
+        return buf.value.decode('ascii')
+
     def bind(self):
         self.rt.cudaSetDevice(self.index)
 

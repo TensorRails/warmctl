@@ -39,7 +39,14 @@ func readProc(pid int) (procFiles, error) {
 		// address perms offset dev inode path
 		fields := strings.Fields(line)
 		if len(fields) >= 6 {
-			out.maps = append(out.maps, strings.Join(fields[5:], " "))
+			// /proc/maps preserves spaces in the pathname. Strip only the
+			// five header columns; the file name can contain repeated spaces.
+			path := line
+			for range 5 {
+				end := strings.IndexAny(path, " \t")
+				path = strings.TrimLeft(path[end:], " \t")
+			}
+			out.maps = append(out.maps, path)
 		}
 	}
 	dir := filepath.Join(Proc, strconv.Itoa(pid), "fd")
@@ -137,29 +144,19 @@ func VerifyPreloaded(pids []int, lib string) error {
 	return nil
 }
 
-// Coverage is what a snapshot carries of the files a tree maps or holds
-// open. A restart maps them again from their paths and checks their size
-// and modification time, so each must be one of:
-//   - under a tree the snapshot archives (its mtime is kept to the ns);
-//   - under the model's directory (the same volume at the same path);
-//   - a file of the image older than the engine (the same image digest);
-//   - the GPU library itself.
-//
-// Uncovered lists the others; Model the model's mapped files, recorded so a
-// restore can check them before it starts.
+// Coverage describes the dependencies outside the archived trees. Mapped
+// entries must be present at restart. Uncovered entries could not be tracked.
 type Coverage struct {
 	Uncovered []string
-	Model     []manifest.MappedFile
+	Mapped    []manifest.MappedFile
 }
 
-// imageDirs hold the image's files.
-var imageDirs = []string{"/usr/", "/opt/", "/lib/", "/lib64/", "/etc/", "/bin/", "/sbin/"}
-
-// Cover checks the files of pids against the trees, the model directory and
-// the image (files not modified since started).
+// Cover checks the files of pids against the archived trees, the model
+// directory and the mounts visible to each process.
 func Cover(pids []int, trees []string, modelDir, lib string, started time.Time) (Coverage, error) {
 	var c Coverage
-	seen := map[string]bool{}
+	mapped := map[string]manifest.MappedFile{}
+	uncovered := map[string]bool{}
 	for _, pid := range pids {
 		f, err := readProc(pid)
 		if os.IsNotExist(err) {
@@ -168,28 +165,91 @@ func Cover(pids []int, trees []string, modelDir, lib string, started time.Time) 
 		if err != nil {
 			return c, err
 		}
-		for _, p := range append(append([]string(nil), f.maps...), f.fds...) {
-			if seen[p] || !strings.HasPrefix(p, "/") || strings.HasSuffix(p, " (deleted)") || pseudo(p) {
+		mounts := processMounts(pid)
+		for _, p := range append(f.maps, f.fds...) {
+			if !strings.HasPrefix(p, "/") || strings.HasSuffix(p, " (deleted)") || pseudo(p) ||
+				p == lib || under(p, trees) {
 				continue
 			}
-			seen[p] = true
-			switch {
-			case p == lib, under(p, trees):
-			case modelDir != "" && under(p, []string{modelDir}):
-				if m, err := stat(p); err == nil {
-					c.Model = append(c.Model, m)
-				} else {
-					c.Uncovered = append(c.Uncovered, p+" ("+err.Error()+")")
-				}
-			case imageFile(p, started):
-			default:
-				c.Uncovered = append(c.Uncovered, p)
+			isModel := modelDir != "" && under(p, []string{modelDir})
+			// A read-only container root can supply its image files. A bind
+			// mount below it is a separate dependency even if also read-only.
+			mount := mounts.at(p)
+			if !isModel && mount.path == "/" && mount.readOnly {
+				continue
 			}
+			info, err := os.Stat(p)
+			if err != nil {
+				uncovered[p+" ("+err.Error()+")"] = true
+				continue
+			}
+			// Files newly created on the writable container layer (JIT
+			// caches, for example) belong in an archived tree. A mapped
+			// model or a separate volume can be supplied at restore.
+			onVolume := mount.path != "" && mount.path != "/"
+			if !isModel && (!info.Mode().IsRegular() || (!onVolume && !info.ModTime().Before(started))) {
+				uncovered[p] = true
+				continue
+			}
+			// /proc names the actual file, including the blobs behind
+			// Hugging Face snapshot links. For a writable or unknown root,
+			// age alone cannot prove the base image contains the file.
+			mapped[p] = manifest.MappedFile{Path: p, Size: info.Size(), MtimeNS: info.ModTime().UnixNano()}
 		}
 	}
+	for p := range uncovered {
+		c.Uncovered = append(c.Uncovered, p)
+	}
+	for _, f := range mapped {
+		c.Mapped = append(c.Mapped, f)
+	}
 	sort.Strings(c.Uncovered)
-	sort.Slice(c.Model, func(i, j int) bool { return c.Model[i].Path < c.Model[j].Path })
+	sort.Slice(c.Mapped, func(i, j int) bool { return c.Mapped[i].Path < c.Mapped[j].Path })
 	return c, nil
+}
+
+type mountPoint struct {
+	path     string
+	readOnly bool
+}
+
+type mountTable []mountPoint
+
+// An incomplete or inaccessible mount table gives no file an image exemption.
+func processMounts(pid int) mountTable {
+	raw, err := os.ReadFile(filepath.Join(Proc, strconv.Itoa(pid), "mountinfo"))
+	if err != nil {
+		return nil
+	}
+	escape := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	var mounts mountTable
+	hasRoot := false
+	for _, line := range strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n") {
+		before, _, ok := strings.Cut(line, " - ")
+		fields := strings.Fields(before)
+		if !ok || len(fields) < 6 || !filepath.IsAbs(fields[4]) {
+			return nil
+		}
+		p := escape.Replace(fields[4])
+		mounts = append(mounts, mountPoint{path: p, readOnly: strings.Contains(","+fields[5]+",", ",ro,")})
+		hasRoot = hasRoot || p == "/"
+	}
+	if !hasRoot {
+		return nil
+	}
+	return mounts
+}
+
+// at returns the deepest containing mount, including file bind mounts.
+func (m mountTable) at(p string) mountPoint {
+	var best mountPoint
+	for _, mount := range m {
+		if len(mount.path) >= len(best.path) && (mount.path == "/" || p == mount.path ||
+			strings.HasPrefix(p, mount.path+"/")) {
+			best = mount
+		}
+	}
+	return best
 }
 
 func pseudo(p string) bool {
@@ -209,63 +269,6 @@ func under(p string, dirs []string) bool {
 		}
 	}
 	return false
-}
-
-// imageFile reports a file of the image: one older than the container
-// (its PID 1), wherever it is (the ROCm image keeps Python under
-// /root/.local), or under the image's usual directories and older than the
-// engine.
-func imageFile(p string, started time.Time) bool {
-	info, err := os.Stat(p)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	if c, ok := containerStart(); ok && info.ModTime().Before(c) {
-		return true
-	}
-	return under(p, trimSlash(imageDirs)) && info.ModTime().Before(started)
-}
-
-// containerStart is when PID 1 started: the boot time from /proc/stat plus
-// its start time in clock ticks (USER_HZ, 100 on Linux).
-func containerStart() (time.Time, bool) {
-	stat, err := os.ReadFile(filepath.Join(Proc, "stat"))
-	if err != nil {
-		return time.Time{}, false
-	}
-	var boot int64
-	for _, line := range strings.Split(string(stat), "\n") {
-		if v, ok := strings.CutPrefix(line, "btime "); ok {
-			boot, _ = strconv.ParseInt(strings.TrimSpace(v), 10, 64)
-		}
-	}
-	raw, err := os.ReadFile(filepath.Join(Proc, "1", "stat"))
-	if err != nil || boot == 0 {
-		return time.Time{}, false
-	}
-	// The command may hold spaces and parentheses: fields follow the last ")".
-	i := strings.LastIndexByte(string(raw), ')')
-	if i < 0 {
-		return time.Time{}, false
-	}
-	fields := strings.Fields(string(raw)[i+1:])
-	// starttime is field 22 of the line; fields here start at field 3.
-	if len(fields) < 20 {
-		return time.Time{}, false
-	}
-	ticks, err := strconv.ParseInt(fields[19], 10, 64)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return time.Unix(boot, 0).Add(time.Duration(ticks) * time.Second / 100), true
-}
-
-func trimSlash(dirs []string) []string {
-	out := make([]string, len(dirs))
-	for i, d := range dirs {
-		out[i] = strings.TrimSuffix(d, "/")
-	}
-	return out
 }
 
 // stat is a file's size and modification time.

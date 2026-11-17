@@ -427,7 +427,7 @@ func (b *bake) process() manifest.Process {
 		lib := b.gpuLib
 		p.GPUState, p.GPULib, p.GPUMaxWptr = manifest.GPUStateKFDReplay, &lib, b.gpuRes.MaxWptr()
 		if b.coverage != nil {
-			p.Mapped = b.coverage.Model
+			p.Mapped = b.coverage.Mapped
 		}
 		owners = &p.GPUOwners
 	}

@@ -206,6 +206,11 @@ func (b *bake) preflight(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// In-place AMD launches inherit the container's devices. Selecting a
+	// host index alone cannot bind HIP or the other ROCm processes to it.
+	if b.vendor == accel.AMD && len(all) != 1 {
+		return fmt.Errorf("AMD bake needs exactly one visible GPU render node, found %d; expose only the target GPU in the container", len(all))
+	}
 	if b.gpus, err = host.Select(all, b.o.GPUs); err != nil {
 		return err
 	}

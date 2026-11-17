@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -20,7 +21,7 @@ func useKFDFixture(t *testing.T, name string, refused ...string) {
 	old := []string{KFDDevice, KFDTopology, AMDGPUModule, DRIDir, NVIDIADevice}
 	oldRead, oldOpen := readFile, Open
 	KFDDevice, KFDTopology = filepath.Join(root, "dev", "kfd"), filepath.Join(root, "sys", "topology")
-	AMDGPUModule, DRIDir = filepath.Join(root, "sys", "amdgpu"), "/dev/dri"
+	AMDGPUModule, DRIDir = filepath.Join(root, "sys", "amdgpu"), filepath.Join(root, "dev", "dri")
 	NVIDIADevice = filepath.Join(root, "dev", "nvidiactl")
 	readFile = func(name string) ([]byte, error) {
 		for _, r := range refused {
@@ -70,9 +71,29 @@ func TestKFDInventoryOfAPod(t *testing.T) {
 	}
 }
 
-// Every node readable: the GPUs come in node order.
+// A shared sysfs can expose every GPU node to a container with one render
+// device. Node 3 has host index 1 but is GPU 0 inside this container.
+func TestKFDInventoryWithSharedSysfs(t *testing.T) {
+	useKFDFixture(t, "kfd-mi350x-pod")
+	gpus, err := Inventory(context.Background())
+	if err != nil || len(gpus) != 1 || gpus[0].Index != 0 || gpus[0].KFDGPUID != 41001 {
+		t.Fatalf("inventory of the container's render nodes: %+v, %v", gpus, err)
+	}
+	DRIDir = t.TempDir()
+	if KFDPresent() {
+		t.Fatal("readable sysfs without any render node")
+	}
+}
+
+// Every node readable and every render node mounted: the GPUs come in node order.
 func TestKFDInventoryOfAHost(t *testing.T) {
 	useKFDFixture(t, "kfd-mi350x-pod")
+	DRIDir = t.TempDir()
+	for minor := 135; minor <= 142; minor++ {
+		if err := os.WriteFile(filepath.Join(DRIDir, fmt.Sprintf("renderD%d", minor)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	gpus, err := Inventory(context.Background())
 	if err != nil {
 		t.Fatal(err)

@@ -75,7 +75,8 @@ class Extension:
         import vllm
 
         props = torch.cuda.get_device_properties(self.device)
-        bus = getattr(props, 'pci_bus_id', None)
+        hip = getattr(torch.version, 'hip', None)
+        bus = None if hip else getattr(props, 'pci_bus_id', None)
         row = {
             'rank': self._warmctl_rank(), 'pid': os.getpid(), 'device': torch.cuda.current_device(),
             'name': props.name, 'arch': 'sm_%d%d' % (props.major, props.minor),
@@ -84,8 +85,8 @@ class Extension:
             'uuid': str(getattr(props, 'uuid', '')), 'vllm': vllm.__version__, 'torch': torch.__version__,
             'adapter_sha256': os.environ.get('WARMCTL_ADAPTER_SHA256', ''),
         }
-        hip = getattr(torch.version, 'hip', None)
         if hip:
+            row['pci_bus_id'] = self._warmctl_device().hip_pci_bus_id()
             # ROCm: the ISA by its gfx name, and what moves the GPU state.
             row['arch'] = str(getattr(props, 'gcnArchName', row['arch'])).split(':')[0]
             row['hip'], row['rocm'] = str(hip), kfdr_runtime()

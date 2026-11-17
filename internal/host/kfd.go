@@ -49,6 +49,7 @@ func init() {
 		KFDDevice = path.Join(root, "dev", "kfd")
 		KFDTopology = path.Join(root, "sys", "topology")
 		AMDGPUModule = path.Join(root, "sys", "amdgpu")
+		DRIDir = path.Join(root, "dev", "dri")
 	}
 }
 
@@ -104,8 +105,17 @@ func kfdNodes() ([]kfdNode, error) {
 			return nil, fmt.Errorf("kfd: node %d: %w", n, err)
 		}
 		props := parseProperties(string(raw))
-		if props["simd_count"] == 0 || props["gfx_target_version"] == 0 {
+		minor, hasRender := props["drm_render_minor"]
+		if props["simd_count"] == 0 || props["gfx_target_version"] == 0 || !hasRender {
 			continue
+		}
+		// KFD sysfs can describe every card on the host while the container
+		// has one render node. Match libkfdreplay's device discovery.
+		if _, err := os.Stat(path.Join(DRIDir, fmt.Sprintf("renderD%d", minor))); err != nil {
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+				continue
+			}
+			return nil, fmt.Errorf("kfd: node %d render device: %w", n, err)
 		}
 		idRaw, err := readFile(path.Join(dir, "gpu_id"))
 		if errors.Is(err, fs.ErrPermission) {
@@ -221,9 +231,7 @@ func (s *kfdSession) GPU(i int) (GPU, error) {
 		MemoryMiB: int64(n.memBytes >> 20), Arch: GFX(n.props["gfx_target_version"]), KFDGPUID: n.gpuID,
 		UUID: fmt.Sprintf("GPU-%016x", n.props["unique_id"]),
 	}
-	if minor, ok := n.props["drm_render_minor"]; ok {
-		g.RenderNode = path.Join(DRIDir, fmt.Sprintf("renderD%d", minor))
-	}
+	g.RenderNode = fmt.Sprintf("/dev/dri/renderD%d", n.props["drm_render_minor"])
 	if n.props["unique_id"] == 0 {
 		// Without a unique ID the GPU ID stands in; it is unique on a host.
 		g.UUID = fmt.Sprintf("GPU-kfd-%d", n.gpuID)

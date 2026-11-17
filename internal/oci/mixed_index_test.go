@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -14,9 +15,8 @@ import (
 	"github.com/TensorRails/warmctl/v2/internal/manifest"
 )
 
-// retagWithSchema replaces the snapshot under tag by the same snapshot whose
-// manifest.json carries schema: what a newer warmctl publishes for another
-// GPU vendor (warmctl.snapshot/v2-rocm).
+// retagWithSchema changes only the schema; the legacy manifest still has
+// no vendor. That combination must be skipped by both readers.
 func retagWithSchema(t *testing.T, reg *memory.Store, tag, schema string) {
 	t.Helper()
 	ctx := context.Background()
@@ -108,5 +108,44 @@ func TestChooseSkipsForeignSchema(t *testing.T) {
 	// Asked for the foreign snapshot by its tag, the refusal names the schema.
 	if _, _, _, _, err := resolve(ctx, reg, foreignTag); err == nil {
 		t.Fatal("a foreign schema must not resolve")
+	}
+}
+
+// Both vendors use DMTCP, so backend preference cannot select the right
+// entry. Exercise the same read, validate and host-check path as an indexed
+// pull, with a real ROCm schema/vendor pair and a pre-AMD NVIDIA manifest.
+func TestChooseMixedVendors(t *testing.T) {
+	ctx := context.Background()
+	reg := memory.New()
+	amdDir, amd := platformSnapshot(t, "mi350x-288gb", "7.1.3")
+	nvidiaDir, nvidia := platformSnapshot(t, "h100-80gb-sxm", "580.95.05")
+	amd.Schema, amd.Hardware.Vendor = manifest.SchemaROCm, manifest.VendorAMD
+	amd.Process.GPUState = manifest.GPUStateKFDReplay
+	amd.Process.GPULib = &manifest.MappedFile{Path: "/opt/warmctl/kfdreplay/v0.1.1/libkfdreplay.so", Version: "0.1.1"}
+	for _, entry := range []struct {
+		dir string
+		m   *manifest.Manifest
+	}{{amdDir, &amd}, {nvidiaDir, &nvidia}} {
+		entry.m.Process.Backend = manifest.BackendDMTCP
+		if err := entry.m.Write(filepath.Join(entry.dir, "manifest.json")); err != nil {
+			t.Fatal(err)
+		}
+		pushIndexed(t, reg, entry.dir, *entry.m)
+	}
+	for _, host := range []struct{ vendor, tag string }{
+		{manifest.VendorNVIDIA, PlatformTag(nvidia)},
+		{manifest.VendorAMD, PlatformTag(amd)},
+	} {
+		t.Run(host.vendor, func(t *testing.T) {
+			tag, err := Choose(ctx, reg, IndexTag, func(m manifest.Manifest) error {
+				if vendor := m.Hardware.VendorName(); vendor != host.vendor {
+					return fmt.Errorf("snapshot vendor %s, host vendor %s", vendor, host.vendor)
+				}
+				return nil
+			})
+			if err != nil || tag != host.tag {
+				t.Fatalf("chose %q (%v), want %q", tag, err, host.tag)
+			}
+		})
 	}
 }

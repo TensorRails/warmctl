@@ -151,6 +151,8 @@ func orAny(v string) string {
 func (b *bake) checkWorkers(workers []vllm.Worker) error {
 	for _, w := range workers {
 		switch {
+		case !strings.EqualFold(w.PCIBusID, b.gpus[0].PCIBusID):
+			return fmt.Errorf("rank %d reports PCI device %q, the selected GPU is %s", w.Rank, w.PCIBusID, b.gpus[0].PCIBusID)
 		case w.KFDReplay == "":
 			return fmt.Errorf("rank %d runs without libkfdreplay (LD_PRELOAD of %s did not reach it)", w.Rank, b.gpuLib.Path)
 		case b.gpuLib.Version != "" && w.KFDReplay != b.gpuLib.Version:

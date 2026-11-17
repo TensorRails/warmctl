@@ -15,13 +15,17 @@ gpu() { # dir node gpu_id minor location unique
   cp "$src/sys/topology/nodes/3/mem_banks/0/properties" "$d/mem_banks/0/properties"
 }
 base() {
-  mkdir -p "$1/dev" "$1/sys/amdgpu" "$1/sys/topology/nodes/0"
+  mkdir -p "$1/dev/dri" "$1/sys/amdgpu" "$1/sys/topology/nodes/0"
   : > "$1/dev/kfd"
   cp "$src/sys/amdgpu/version" "$1/sys/amdgpu/version"
   cp "$src/sys/topology/nodes/0/properties" "$src/sys/topology/nodes/0/gpu_id" "$1/sys/topology/nodes/0/"
 }
 for f in a b ab; do base "$out/$f"; done
-gpu "$out/a" 3 41001 136 2304 1229782938247303441
-gpu "$out/b" 4 41002 144 49408 2459565876494606882
-gpu "$out/ab" 3 41001 136 2304 1229782938247303441
-gpu "$out/ab" 4 41002 144 49408 2459565876494606882
+# All containers can read both sysfs nodes. Their mounted render nodes
+# determine which cards the engine and libkfdreplay can actually use.
+for f in a b ab; do
+  gpu "$out/$f" 3 41001 136 2304 1229782938247303441
+  gpu "$out/$f" 4 41002 144 49408 2459565876494606882
+done
+for f in a ab; do : > "$out/$f/dev/dri/renderD136"; done
+for f in b ab; do : > "$out/$f/dev/dri/renderD144"; done

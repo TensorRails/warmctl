@@ -131,6 +131,7 @@ class Worker(Extension):
                'adapter_sha256': os.environ.get('WARMCTL_ADAPTER_SHA256', '')}
         if AMD:
             row.update(name='AMD Instinct MI350X', arch='gfx950', hip='7.16.26385', rocm='fake',
+                       pci_bus_id=os.environ.get('WARMCTL_E2E_WORKER_PCI', '0000:09:00.0'),
                        kfdr_version=kfdr.Library().version())
         return row
 

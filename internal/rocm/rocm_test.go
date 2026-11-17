@@ -235,46 +235,6 @@ func TestVerifyReleased(t *testing.T) {
 	}
 }
 
-// A file of the image anywhere (the ROCm image's Python is under
-// /root/.local) is older than the container's PID 1.
-func TestContainerStart(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "stat"), []byte("cpu  1 2 3\nbtime 1763164800\nprocesses 9\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// starttime (field 22) of 1500 ticks: 15 s after boot; the command has a space and a parenthesis.
-	line := "1 (tini (x) y) S 0 1 1 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 1 0 1500 1 1 18446744073709551615\n"
-	if err := os.WriteFile(filepath.Join(root, "1", "stat"), []byte(line), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	old := Proc
-	Proc = root
-	defer func() { Proc = old }()
-	got, ok := containerStart()
-	if !ok || !got.Equal(time.Unix(1763164815, 0)) {
-		t.Fatalf("%v %v", got, ok)
-	}
-	f := filepath.Join(t.TempDir(), "python3.14")
-	if err := os.WriteFile(f, []byte("x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(f, time.Unix(1763164000, 0), time.Unix(1763164000, 0)); err != nil {
-		t.Fatal(err)
-	}
-	if !imageFile(f, time.Now()) {
-		t.Error("a file older than the container is the image's")
-	}
-	if err := os.Chtimes(f, time.Unix(1763164900, 0), time.Unix(1763164900, 0)); err != nil {
-		t.Fatal(err)
-	}
-	if imageFile(f, time.Now()) {
-		t.Error("a file written since the container started, outside the image's directories")
-	}
-}
-
 func TestCover(t *testing.T) {
 	root := t.TempDir()
 	model := filepath.Join(root, "models", "q")
@@ -300,21 +260,100 @@ func TestCover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Uncovered) != 0 || len(c.Model) != 1 || c.Model[0].Path != weights || c.Model[0].Size != 1 {
+	if len(c.Uncovered) != 0 || len(c.Mapped) != 1 || c.Mapped[0].Path != weights || c.Mapped[0].Size != 1 {
 		t.Fatalf("%+v", c)
 	}
-	if err := SameFiles(c.Model); err != nil {
+	if err := SameFiles(c.Mapped); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(weights, time.Now(), time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := SameFiles(c.Model); err == nil {
+	if err := SameFiles(c.Mapped); err == nil {
 		t.Fatal("a model file touched since the snapshot")
 	}
 	fakeProc(t, map[int]struct{ maps, fds []string }{21: {maps: []string{stray, weights}}})
-	c, err = Cover([]int{21}, []string{"/workspace"}, model, lib, time.Now())
+	c, err = Cover([]int{21}, []string{"/workspace"}, model, lib, time.Now().Add(-time.Hour))
 	if err != nil || len(c.Uncovered) != 1 || c.Uncovered[0] != stray {
 		t.Fatalf("a cache outside the trees: %+v %v", c, err)
+	}
+}
+
+// A Hugging Face snapshot can point to a blob outside the model directory.
+// Its /proc path is the resolved target. A read-only bind mount over that
+// path has its own contents even when the image root is also read-only.
+func TestCoverExternalMount(t *testing.T) {
+	root := t.TempDir()
+	model := filepath.Join(root, "model")
+	volume := filepath.Join(root, "model  volume")
+	for _, dir := range []string{model, volume} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blob := filepath.Join(volume, "weights  part")
+	if err := os.WriteFile(blob, []byte("weights"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(1, 0)
+	if err := os.Chtimes(blob, old, old); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(model, "model.safetensors")
+	if err := os.Symlink(blob, link); err != nil {
+		t.Fatal(err)
+	}
+	target, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// macOS temporary directories can themselves be symlinks.
+	volume = filepath.Dir(target)
+	imageFile := volume + "-sibling/python"
+	fakeProc(t, map[int]struct{ maps, fds []string }{20: {
+		maps: []string{target, imageFile}, fds: []string{target},
+	}})
+	mounts := "1 0 0:1 / / ro,relatime - overlay overlay ro\n" +
+		"3 1 0:2 /mounted " + strings.ReplaceAll(volume, " ", `\040`) + " ro - ext4 /dev/test ro\n"
+	mountInfo := filepath.Join(Proc, "20", "mountinfo")
+	if err := os.WriteFile(mountInfo, []byte(mounts), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Cover([]int{20}, nil, model, lib, time.Now())
+	if err != nil || len(got.Uncovered) != 0 || len(got.Mapped) != 1 || got.Mapped[0].Path != target {
+		t.Fatalf("covered: %+v, %v", got, err)
+	}
+	if err := SameFiles(got.Mapped); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(blob); err != nil {
+		t.Fatal(err)
+	}
+	if err := SameFiles(got.Mapped); err == nil || !strings.Contains(err.Error(), target) {
+		t.Fatalf("receiver missing external dependency: %v", err)
+	}
+}
+
+func TestCoverUncertainImageFile(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "kernel.so")
+	if err := os.WriteFile(f, []byte("kernel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(1, 0)
+	if err := os.Chtimes(f, old, old); err != nil {
+		t.Fatal(err)
+	}
+	for _, mounts := range []string{"", "malformed", "1 0 0:1 / / rw - overlay overlay rw\n",
+		"1 0 0:1 / / ro - overlay overlay ro\ntruncated"} {
+		fakeProc(t, map[int]struct{ maps, fds []string }{20: {maps: []string{f}}})
+		if mounts != "" {
+			if err := os.WriteFile(filepath.Join(Proc, "20", "mountinfo"), []byte(mounts), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := Cover([]int{20}, nil, "", lib, time.Now())
+		if err != nil || len(got.Uncovered) != 0 || len(got.Mapped) != 1 || got.Mapped[0].Path != f {
+			t.Fatalf("mountinfo %q: %+v, %v", mounts, got, err)
+		}
 	}
 }

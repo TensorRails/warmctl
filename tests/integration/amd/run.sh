@@ -9,6 +9,11 @@
 # Usage: tests/integration/amd/run.sh IMAGE
 set -uo pipefail
 image=${1:?usage: run.sh IMAGE}
+pin=$(dirname "$0")/../../../internal/kfdreplay
+lib_tag=$(cat "$pin/VERSION")
+lib_version=${lib_tag#v}
+lib_sha=$(awk '$2 == "libkfdreplay.so" {print $1}' "$pin/SHA256SUMS")
+[[ $lib_sha =~ ^[0-9a-f]{64}$ ]] || exit 1
 # Outside /tmp: the engine's /tmp is a tree warmctl claims, and the model
 # must be at the same path in every container.
 work=$(mktemp -d /var/tmp/warmctl-amd-e2e.XXXXXX)
@@ -70,13 +75,13 @@ bake=(warmctl build --test-cpu --profile fake-amd-tp1 --profile-dir /profiles --
 box amd-e2e-bake a --rm "$image" "${bake[@]}" --output /snap/s1 > "$work/bake.txt" 2>&1
 echo "bake exit $?" >> "$work/bake.txt"
 expect "bake on an AMD host" "$work/bake.txt" \
-  "AMD Instinct host" "in the runtime image: baking in place" "libkfdreplay 0.1.1 at /opt/warmctl/kfdreplay/v0.1.1" \
+  "AMD Instinct host" "in the runtime image: baking in place" "libkfdreplay $lib_version at /opt/warmctl/kfdreplay/$lib_tag" \
   "GPU state checkpointed by 1 workers \(libkfdreplay\)" "GPU devices released by every process: 1 run ROCm with libkfdreplay" "bake exit 0"
 
 # 1b. doctor on the AMD host: what AMD needs, none of NVIDIA's checks.
 box amd-e2e-doctor a --rm "$image" warmctl doctor > "$work/doctor.txt" 2>&1
 expect "doctor on an AMD host" "$work/doctor.txt" "ok   gpus +1 x AMD Instinct MI350X \(gfx950\)" \
-  "ok   amd-support" "ok   runtime-image" "ok   dmtcp" "ok   libkfdreplay +0.1.1"
+  "ok   amd-support" "ok   runtime-image" "ok   dmtcp" "ok   libkfdreplay +$lib_version"
 if grep -qE "nvidia-runtime|io_uring|docker" "$work/doctor.txt"; then fail "doctor runs NVIDIA checks on AMD"; fi
 
 # 2. The manifest: AMD schema and fields, no CUDA owner.
@@ -96,8 +101,8 @@ PY
 expect "AMD manifest" "$work/manifest.txt" \
   "schema warmctl.snapshot/v2-rocm" "vendor amd gpu AMD Instinct MI350X gfx950 41001 /dev/dri/renderD136" \
   "backend dmtcp state libkfdreplay cuda_owners 0 gpu_owners 1" \
-  "lib /opt/warmctl/kfdreplay/v0.1.1/libkfdreplay.so 0.1.1 7ce63e3c2b6a True" \
-  "checkpoint libkfdreplay 0.1.1 sha256:7ce63e3c" "driver 7.1.3.31500000 row mi350x-288gb"
+  "lib /opt/warmctl/kfdreplay/$lib_tag/libkfdreplay.so $lib_version ${lib_sha:0:12} True" \
+  "checkpoint libkfdreplay $lib_version sha256:$lib_sha" "driver 7.1.3.31500000 row mi350x-288gb"
 
 # serve NAME KFD ARGS...: up in place, detached; waits for the gateway.
 serve() {
@@ -146,7 +151,11 @@ refuse() {
 refuse another-gpu-among-two ab "libkfdreplay moves a process to another GPU only when one is visible" \
   "warmctl up --test-cpu --gpus 1 /snap/s1"
 refuse library-touched a "libkfdreplay.*mtime" \
-  "touch /opt/warmctl/kfdreplay/v0.1.1/libkfdreplay.so; timeout 180 warmctl up --test-cpu /snap/s1"
+  "touch /opt/warmctl/kfdreplay/$lib_tag/libkfdreplay.so; timeout 180 warmctl up --test-cpu /snap/s1"
+refuse multi-visible-donor ab "AMD bake needs exactly one visible GPU render node, found 2" \
+  "warmctl build --test-cpu --gpus 1 --profile fake-amd-tp1 --profile-dir /profiles --model-dir $model --id x --output /snap/x"
+refuse mismatched-worker a "rank 0 reports PCI device.*0000:c1:00.0.*selected GPU is 0000:09:00.0" \
+  "env WARMCTL_E2E_WORKER_PCI=0000:c1:00.0 warmctl build --test-cpu --profile fake-amd-tp1 --profile-dir /profiles --model-dir $model --id x --output /snap/x"
 refuse two-gpus-per-engine a "one GPU per engine" \
   "warmctl build --test-cpu --profile fake-amd-tp2 --profile-dir /profiles --model-dir $model --id x --output /snap/x"
 

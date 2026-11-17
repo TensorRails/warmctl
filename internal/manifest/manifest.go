@@ -180,8 +180,8 @@ type Process struct {
 	GPULib     *MappedFile `json:"gpu_lib,omitempty"`
 	GPUOwners  []Owner     `json:"gpu_owners,omitempty"`
 	GPUMaxWptr uint64      `json:"gpu_max_wptr,omitempty"`
-	// Mapped are files outside the snapshot the dumped processes mapped (the
-	// model's): a restart maps them again, so they must be the same.
+	// Mapped are files outside the snapshot that DMTCP reopens from the receiver
+	// filesystem, including model shards and external volume files.
 	Mapped []MappedFile `json:"mapped,omitempty"`
 }
 

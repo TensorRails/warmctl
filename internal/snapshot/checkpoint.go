@@ -138,8 +138,8 @@ func (b *bake) checkpoint(ctx context.Context) error {
 	}
 	if b.frozen.Coverage != nil {
 		b.coverage = b.frozen.Coverage
-		b.p.Printf("files the processes map outside the snapshot: %d of the model; none uncovered",
-			len(b.coverage.Model))
+		b.p.Printf("files outside the snapshot: %d to check at restore, %d uncovered",
+			len(b.coverage.Mapped), len(b.coverage.Uncovered))
 	}
 	if err := b.c.Step(ctx, "dump", nil, &b.dumped); err != nil {
 		return err
