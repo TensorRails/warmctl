@@ -77,10 +77,10 @@ translates the GPU's `gpu_id` and reopens its render node.
 
 ## Verified
 
-New bakes pin libkfdreplay v0.1.2-rc.1. This candidate refuses a checkpoint
-if the GPU object journal drops a record. The hardware measurements below
-were collected with earlier releases. A clean runtime build installs the
-current pin. To restore an older snapshot, use its original runtime or install
+A clean runtime installs the libkfdreplay release pinned in
+`internal/kfdreplay/VERSION`. It refuses a checkpoint if the GPU object
+journal drops a record. The table records the versions used for the original
+hardware measurements. To restore an older snapshot, use its original runtime or install
 the recorded library alongside the new one at its original path, preserving
 the release archive's mtime. Restore verifies its SHA-256 as well.
 
@@ -92,6 +92,13 @@ the release archive's mtime. Restore verifies its SHA-256 as well.
 | libkfdreplay | v0.1.1 for the vLLM 0.33 runs |
 | Models | Qwen3-0.6B, Qwen3-8B; on vLLM 0.33, one MI350X each: Qwen3.8-27B FP8 (29.4 GiB of weights, MTP): 39.7 GiB snapshot, served 13–20 s after `up`; Qwen3.8-Flash-Next FP8 (180B-A6B, 173 GiB of weights): 184.6 GiB snapshot, served 26–40 s after `up` |
 | DMTCP | `v5.0.0-warmctl.2` |
+
+A separate Qwen3.8-27B FP8 bake with libkfdreplay v0.1.2-rc.1 took
+288.8 s. A local restore answered a request correctly in 9.71 s. In a
+comparison of two fresh starts and two restores, all three sequential
+prompts matched across all four runs. At concurrency eight, one restore
+differed on three of sixteen completions. The other restore matched both
+fresh starts on all sixteen. See the [hardware acceptance results](https://github.com/TensorRails/warmctl/pull/78#issuecomment-6957933763).
 
 A bake on another ISA is refused; on another driver release it warns.
 

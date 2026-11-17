@@ -1,25 +1,29 @@
 # Changelog
 
-## Unreleased
+## v2.0.0-beta.19 — 2026-11-17
 
-AMD Instinct GPUs (preview, [docs/amd.md](docs/amd.md)).
+warmctl can checkpoint a warmed vLLM engine and restore it on one AMD
+Instinct MI350X in an unprivileged container. AMD support is in preview.
+See [AMD setup, measurements and limits](docs/amd.md).
 
-- On an AMD host warmctl finds the GPUs itself (the KFD topology, where no
-  NVIDIA device exists) and bakes in place under DMTCP; the engine's
-  processes preload [libkfdreplay](https://github.com/TensorRails/libkfdreplay)
-  v0.1.2-rc.1 and checkpoint and restore their own GPU state, asked through the
-  engine. One MI350X per engine, ROCm 10.1, vLLM 0.29, unprivileged
-  containers. `deploy/rocm/Dockerfile` is the ROCm runtime image.
-- AMD snapshots carry the manifest schema `warmctl.snapshot/v2-rocm`, which
-  earlier releases refuse: they keep choosing the NVIDIA entries of a
-  repository that holds both. A restore checks the snapshot's GPU vendor
-  against the host's before anything is pulled.
-- Nothing changes for NVIDIA: manifests, profiles, flags and defaults are
-  byte for byte as before, now pinned by tests (published manifests read and
-  write back unchanged, every profile resolves as before, every command's
-  help). New snapshots' adapter has another SHA-256: it carries the AMD
-  methods, which an NVIDIA engine never calls.
-- `warmctl hardware` lists the AMD Instinct rows.
+- On an AMD host, `build` discovers visible GPUs through KFD, verifies
+  that the worker uses the selected GPU and checkpoints the process tree
+  with DMTCP. Workers use libkfdreplay to save and restore GPU state.
+  The ROCm runtime supports vLLM 0.29 with ROCm 10.1 and vLLM 0.33 with
+  ROCm 10.0 wheels, including Qwen3.8-27B FP8.
+- AMD snapshots use the `warmctl.snapshot/v2-rocm` schema. Older clients
+  continue to select NVIDIA entries in mixed repositories. Restore checks
+  the GPU vendor before pulling and checks external files before restarting
+  DMTCP. Keep the original runtime for snapshots that reference older
+  mapped libraries.
+- Existing NVIDIA manifests round-trip unchanged. All 102 previously shipped
+  profiles resolve identically. Newly baked snapshots record the updated
+  adapter digest. An A40 restored an NVIDIA snapshot baked with beta.17.
+- On MI350X, the Qwen3.8-27B FP8 release-candidate test reached its first
+  correct answer in 9.71 s from a local restore. Sequential fixed prompts
+  matched fresh starts. At concurrency eight, one of two restores differed
+  from fresh starts on three of sixteen completions. Exact output
+  reproducibility under batching is still open.
 
 ## v2.0.0-beta.18 — 2026-11-04
 
