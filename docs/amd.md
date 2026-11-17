@@ -77,12 +77,12 @@ translates the GPU's `gpu_id` and reopens its render node.
 
 ## Verified
 
-A clean runtime installs the libkfdreplay release pinned in
-`internal/kfdreplay/VERSION`. It refuses a checkpoint if the GPU object
-journal drops a record. The table records the versions used for the original
-hardware measurements. To restore an older snapshot, use its original runtime or install
-the recorded library alongside the new one at its original path, preserving
-the release archive's mtime. Restore verifies its SHA-256 as well.
+A clean runtime installs libkfdreplay v0.1.2. It refuses a checkpoint
+if the GPU object journal drops a record. The table records the versions
+used for the original hardware measurements. To restore an older snapshot,
+use its original runtime or install the recorded library alongside the new
+one at its original path, preserving the mtime from the release archive.
+Restore also verifies its SHA-256.
 
 | | |
 |---|---|
