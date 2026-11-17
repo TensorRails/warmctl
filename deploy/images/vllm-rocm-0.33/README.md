@@ -1,11 +1,33 @@
 # vLLM 0.33 for ROCm 10.0
 
-`registry.warmctl.io/warmctl/vllm-rocm:0.33.0-rocm100` is Ubuntu 24.04 with a
+This Dockerfile builds an Ubuntu 24.04 image with a
 Python 3.12 venv (`/opt/venv`, on `PATH`) holding `vllm==0.33.0+rocm100`,
 `torch==2.13.0+rocm10.0.0` and the ROCm 10.0 (TheRock) wheels they bring, every
 wheel pinned with its hash in `requirements.lock`. It is the base of warmctl's
 AMD runtime image for vLLM 0.33 (`deploy/rocm/Dockerfile`), which AMD snapshots
-of models vLLM 0.29 lacks (Qwen3.8-Flash-Next) are taken and restored in.
+of the Qwen3.8-27B and Qwen3.8-Flash-Next models are taken and restored in.
+
+## Local build
+
+Run both commands with the same Linux/amd64 Docker builder, from the
+repository root. The runtime marker records the exact local base image ID.
+
+```bash
+base=warmctl-vllm-rocm:0.33.0-rocm100
+docker build -t "$base" deploy/images/vllm-rocm-0.33
+base_id=$(docker image inspect --format '{{.Id}}' "$base")
+docker build -f deploy/rocm/Dockerfile --build-arg BASE="$base" \
+  --build-arg BASE_REF="$base_id" -t warmctl-runtime-rocm:qwen38 .
+```
+
+Use that runtime for both `warmctl build` and `warmctl up`. To verify a
+manually assembled venv, run this with the Python that launches vLLM.
+
+```bash
+python -c 'from importlib.metadata import version; assert version("vllm") == "0.33.0+rocm100"; assert version("torch") == "2.13.0+rocm10.0.0"'
+```
+
+## Updating the lock and publishing
 
 `requirements.in` names the three pins that matter; `torchvision` is pinned
 because the AMD index also serves 0.29, built for torch 2.14, whose operators

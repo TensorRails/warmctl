@@ -105,17 +105,12 @@ func kfdNodes() ([]kfdNode, error) {
 			return nil, fmt.Errorf("kfd: node %d: %w", n, err)
 		}
 		props := parseProperties(string(raw))
-		minor, hasRender := props["drm_render_minor"]
-		if props["simd_count"] == 0 || props["gfx_target_version"] == 0 || !hasRender {
-			continue
-		}
-		// KFD sysfs can describe every card on the host while the container
-		// has one render node. Match libkfdreplay's device discovery.
-		if _, err := os.Stat(path.Join(DRIDir, fmt.Sprintf("renderD%d", minor))); err != nil {
-			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
-				continue
-			}
+		visible, err := visibleRenderNode(props)
+		if err != nil {
 			return nil, fmt.Errorf("kfd: node %d render device: %w", n, err)
+		}
+		if !visible {
+			continue
 		}
 		idRaw, err := readFile(path.Join(dir, "gpu_id"))
 		if errors.Is(err, fs.ErrPermission) {
@@ -132,6 +127,20 @@ func kfdNodes() ([]kfdNode, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].node < out[j].node })
 	return out, nil
+}
+
+// Sysfs can describe every card on the host while the container has one
+// render node. Use the same device visibility rule as libkfdreplay.
+func visibleRenderNode(props map[string]uint64) (bool, error) {
+	minor, ok := props["drm_render_minor"]
+	if !ok || props["simd_count"] == 0 || props["gfx_target_version"] == 0 {
+		return false, nil
+	}
+	_, err := os.Stat(path.Join(DRIDir, fmt.Sprintf("renderD%d", minor)))
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // kfdMemory is the node's VRAM: the sum of its memory banks. local_mem_size

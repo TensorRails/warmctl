@@ -12,6 +12,11 @@ warmctl build --profile qwen3-8b-mi350x-tp1 --model-dir /models/qwen3-8b --outpu
 warmctl up /snap/q8
 ```
 
+The Qwen3.8 profiles use vLLM `0.33.0+rocm100`. Build the 0.33 runtime
+before using them. The shared ROCm defaults shown by `profile show` name
+the 0.29 base used by the Qwen3 profiles. An in-place bake records the base
+of the running container. [Local build instructions](../deploy/images/vllm-rocm-0.33/README.md#local-build)
+
 ## How it works
 
 There is no `cuda-checkpoint` for AMD. The kernel's own checkpoint interface
@@ -82,7 +87,7 @@ the library that snapshot recorded.
 | GPU | MI350X (gfx950), one per engine |
 | Driver | amdgpu DKMS 7.1.3 |
 | ROCm | 10.1 (TheRock), PyTorch 2.13, vLLM 0.29 (`rocm/vllm` image, `_defaults-rocm.yaml`); 10.0 (TheRock wheels), PyTorch 2.13, vLLM `0.33.0+rocm100` in a Python 3.12 venv |
-| libkfdreplay | v0.1.1 (`internal/kfdreplay`), which tracks live GEM handles without a limit, as vLLM 0.33's sleep-mode allocator needs |
+| libkfdreplay | v0.1.1 for the vLLM 0.33 runs |
 | Models | Qwen3-0.6B, Qwen3-8B; on vLLM 0.33, one MI350X each: Qwen3.8-27B FP8 (29.4 GiB of weights, MTP): 39.7 GiB snapshot, served 13–20 s after `up`; Qwen3.8-Flash-Next FP8 (180B-A6B, 173 GiB of weights): 184.6 GiB snapshot, served 26–40 s after `up` |
 | DMTCP | `v5.0.0-warmctl.2` |
 

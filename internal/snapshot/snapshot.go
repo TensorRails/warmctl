@@ -202,16 +202,8 @@ func (b *bake) preflight(ctx context.Context) error {
 		b.p.Printf("warning: kernel.io_uring_disabled is %d, not 2 (%v): the engine runs with UV_USE_IO_URING=0, "+
 			"and a process that sets up io_uring anyway will not restart", disabled, err)
 	}
-	all, err := host.Inventory(ctx)
-	if err != nil {
-		return err
-	}
-	// In-place AMD launches inherit the container's devices. Selecting a
-	// host index alone cannot bind HIP or the other ROCm processes to it.
-	if b.vendor == accel.AMD && len(all) != 1 {
-		return fmt.Errorf("AMD bake needs exactly one visible GPU render node, found %d; expose only the target GPU in the container", len(all))
-	}
-	if b.gpus, err = host.Select(all, b.o.GPUs); err != nil {
+	var err error
+	if b.gpus, err = b.selectGPUs(ctx); err != nil {
 		return err
 	}
 	if b.row, err = Hardware(b.table, b.gpus, b.launch.Profile.Parallel.Ranks()); err != nil {
@@ -248,6 +240,19 @@ func (b *bake) preflight(ctx context.Context) error {
 		return err
 	}
 	return b.dk.CheckInit(ctx)
+}
+
+func (b *bake) selectGPUs(ctx context.Context) ([]host.GPU, error) {
+	all, err := host.Inventory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// In-place AMD launches inherit the container's devices.
+	if b.vendor == accel.AMD && len(all) != 1 {
+		return nil, fmt.Errorf("AMD bake needs exactly one visible GPU render node, found %d; "+
+			"expose only the target GPU in the container", len(all))
+	}
+	return host.Select(all, b.o.GPUs)
 }
 
 // inPlaceImage names the image an in-place engine runs in: the runtime

@@ -171,30 +171,12 @@ func Cover(pids []int, trees []string, modelDir, lib string, started time.Time) 
 				p == lib || under(p, trees) {
 				continue
 			}
-			isModel := modelDir != "" && under(p, []string{modelDir})
-			// A read-only container root can supply its image files. A bind
-			// mount below it is a separate dependency even if also read-only.
-			mount := mounts.at(p)
-			if !isModel && mount.path == "/" && mount.readOnly {
-				continue
+			file, missing := externalFile(p, mounts.at(p), modelDir, started)
+			if missing != "" {
+				uncovered[missing] = true
+			} else if file.Path != "" {
+				mapped[p] = file
 			}
-			info, err := os.Stat(p)
-			if err != nil {
-				uncovered[p+" ("+err.Error()+")"] = true
-				continue
-			}
-			// Files newly created on the writable container layer (JIT
-			// caches, for example) belong in an archived tree. A mapped
-			// model or a separate volume can be supplied at restore.
-			onVolume := mount.path != "" && mount.path != "/"
-			if !isModel && (!info.Mode().IsRegular() || (!onVolume && !info.ModTime().Before(started))) {
-				uncovered[p] = true
-				continue
-			}
-			// /proc names the actual file, including the blobs behind
-			// Hugging Face snapshot links. For a writable or unknown root,
-			// age alone cannot prove the base image contains the file.
-			mapped[p] = manifest.MappedFile{Path: p, Size: info.Size(), MtimeNS: info.ModTime().UnixNano()}
 		}
 	}
 	for p := range uncovered {
@@ -206,6 +188,27 @@ func Cover(pids []int, trees []string, modelDir, lib string, started time.Time) 
 	sort.Strings(c.Uncovered)
 	sort.Slice(c.Mapped, func(i, j int) bool { return c.Mapped[i].Path < c.Mapped[j].Path })
 	return c, nil
+}
+
+// externalFile describes a receiver dependency or names an uncovered path.
+// Files supplied by a read-only image root need no separate record.
+func externalFile(p string, mount mountPoint, modelDir string, started time.Time) (manifest.MappedFile, string) {
+	isModel := modelDir != "" && under(p, []string{modelDir})
+	if !isModel && mount.path == "/" && mount.readOnly {
+		return manifest.MappedFile{}, ""
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return manifest.MappedFile{}, p + " (" + err.Error() + ")"
+	}
+	// New files on the writable root belong in an archived tree. A model
+	// or separate volume can be supplied at restore. /proc names the real
+	// file, including the blob behind a Hugging Face snapshot symlink.
+	onVolume := mount.path != "" && mount.path != "/"
+	if !isModel && (!info.Mode().IsRegular() || (!onVolume && !info.ModTime().Before(started))) {
+		return manifest.MappedFile{}, p
+	}
+	return manifest.MappedFile{Path: p, Size: info.Size(), MtimeNS: info.ModTime().UnixNano()}, ""
 }
 
 type mountPoint struct {
