@@ -60,6 +60,8 @@ ENV PATH=/opt/warmctl/dmtcp/bin:${PATH}
 # The extension for engines started from this image; a restore mounts the
 # snapshot's own copy over it.
 COPY python/warmctl_vllm /opt/warmctl/adapter/warmctl_vllm
+# Its vLLM plugin entry point (warmctl_vllm.plugin), as warmctl places it.
+COPY python/warmctl_vllm-2.0.0a0.dist-info /opt/warmctl/adapter/warmctl_vllm-2.0.0a0.dist-info
 # Mount points of a read-only root: the restore bind-mounts the snapshot's
 # cuInterpose build at /opt/warmctl/ipc, the pod mounts its volumes on the
 # others. /tmp starts empty: the base leaves its build files there, and an
