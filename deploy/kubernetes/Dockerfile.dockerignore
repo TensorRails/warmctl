@@ -8,6 +8,7 @@
 !profiles
 !hardware
 !python/warmctl_vllm
+!python/warmctl_vllm-*.dist-info
 !scripts/fetch-dmtcp.sh
 **/*_test.go
 **/__pycache__
